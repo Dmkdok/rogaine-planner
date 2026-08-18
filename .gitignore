@@ -1,0 +1,41 @@
+# Map corpus — never committed (ADR-010)
+data/maps/
+data/**/*.ocd
+data/**/*.png
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.tif
+data/**/*.tiff
+data/**/*.pdf
+
+# Run artefacts
+runs/
+out/
+*.npz
+*.npy
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Models and checkpoints
+ml/checkpoints/
+*.pt
+*.pth
+*.safetensors
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Serena
+.serena/cache/

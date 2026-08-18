@@ -1,0 +1,24 @@
+{
+  "attribution": {
+    "commit": ""
+  },
+  "permissions": {
+    "deny": [
+      "Read(docs/qa/screenshots/**)",
+      "Read(docs/qa/*.jpg)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-context.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

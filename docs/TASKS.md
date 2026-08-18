@@ -1,0 +1,163 @@
+# Tasks
+
+Requirement IDs (F1-F19) refer to [SPEC.md](SPEC.md). Workstreams (WS-A vision, WS-B routing,
+WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open tasks share a path.
+
+## M0 — Scaffold, contract, synthetic fixture
+
+- [ ] T001 — Repo scaffold and toolchain — paths: `pyproject.toml`, `Dockerfile`,
+  `docker-compose.yml`, `.gitignore`, `.dockerignore`, `ruff.toml` — deps: none —
+  DoD: `docker compose run --rm tests` runs pytest and exits 0 on an empty suite; image contains
+  tesseract and opencv runtime libs; `app` and `tests` services share one image.
+- [ ] T002 — Frozen data contract — paths: `src/rogaine/models.py` — deps: T001 —
+  DoD: pydantic v2 models for `TerrainClass`, `MapContext`, `Control`, `TerrainMap`, `CostField`,
+  `TravelMatrix`, `Leg`, `Route`, `RunConfig`; every field typed and documented; a round-trip test
+  serialises and reloads each model. **Changes after M0 require an ADR** — three workstreams build
+  on it.
+- [ ] T003 — Config system and ISOM terrain table — paths: `config/default.toml`,
+  `src/rogaine/config.py` — deps: T002 — DoD: TOML loads into pydantic; terrain table carries
+  `isom_code`, `color_rgb`, `speed_factor`, `passable` for all 17 classes; CMYK values sourced from
+  the IOF ISOM 2017-2 Appendix 1 (colour definitions) and cited in the file; `--config` override and
+  per-flag override both tested (F18).
+- [ ] T004 — Synthetic ISOM map fixture generator — paths: `tests/fixtures/synth_map.py` — deps:
+  T003 — DoD: renders a map at a requested size with known terrain polygons, path/road polylines,
+  contour lines and purple control circles; returns per-pixel ground-truth labels, control
+  coordinates, numbers and the true scale; deterministic under a seed; a "full size" 4000x3000 preset
+  exists for the performance guards.
+- [ ] T005 — Real map corpus intake — paths: `data/README.md`, `.gitignore` — deps: T001 —
+  DoD: `data/maps/` layout documented (raster, its scale and DPI, optional controls CSV, optional
+  reference route); the directory is gitignored so no map is ever committed; a loader lists the
+  corpus and reports what metadata each entry is missing. Owner supplies 10-20 scans covering the
+  map styles they actually meet (ADR-010).
+- [ ] T006 — Spike: `.ocd` to raster plus ground-truth mask — paths: `tools/ocd_render.md`,
+  `tools/ocd_render.py` — deps: T003 — DoD: a documented route from the owner's `.ocd` files to
+  (a) a rendered raster at a known DPI and (b) per-symbol-class masks, using OCAD itself or
+  OpenOrienteering Mapper's command-line export. Timeboxed: if neither exports usably, record the
+  finding in the spike doc and fall back to T004 alone — this task never blocks M1.
+
+## M1 — Terrain segmentation (WS-A)
+
+- [ ] T010 — Raster loading — paths: `src/rogaine/io/raster.py` — deps: T002 —
+  DoD: PNG/JPG/BMP/TIFF and PDF (via pypdfium2, `--page`) load to identical RGB arrays within 1 LSB;
+  corrupt and oversized files fail with a clear error, not a traceback (F1).
+- [ ] T011 — Scale and calibration — paths: `src/rogaine/io/scale.py` — deps: T002 —
+  DoD: `mpp = (25.4/dpi) * N / 1000` exact to 1e-6; two-point calibration agrees within 1% on the
+  fixture's known scale; invalid inputs (zero DPI, coincident points) rejected (F2, F3).
+- [ ] T012 — Normalisation — paths: `src/rogaine/vision/normalize.py` — deps: T010 —
+  DoD: grey-world white balance plus illumination flattening; a synthetically tinted and vignetted
+  fixture classifies at least as well as the clean one.
+- [ ] T013 — ISOM palette classifier — paths: `src/rogaine/vision/palette.py` — deps: T003, T012 —
+  DoD: CIELAB nearest-colour with a distance threshold and an `unknown` class; per-class IoU at least
+  0.95 for area classes on the fixture; `unknown` filled by neighbourhood majority; runs a 4000x3000
+  map in under 30 s on CPU (F4).
+- [ ] T014 — Linear feature extraction — paths: `src/rogaine/vision/linear.py` — deps: T013 —
+  DoD: roads, tracks and footpaths recovered as connected corridors via elongation and skeleton
+  filters; a fixture path end-to-end is one component covering at least 90% of its length; map text
+  and point symbols are rejected, measured as false-positive corridor area on the fixture (F5).
+- [ ] T015 — Contour density and slope factor — paths: `src/rogaine/vision/contours.py` — deps: T013 —
+  DoD: brown contour mask, density by Gaussian blur, `k_slope` from config; a contour-dense fixture
+  region yields a strictly higher cost than a flat region of the same class; coefficient documented
+  as direction-blind (F6).
+- [ ] T016 — Segmentation orchestration and preview — paths: `src/rogaine/vision/segment.py`,
+  `src/rogaine/render/preview.py` — deps: T013, T014, T015 —
+  DoD: produces a `TerrainMap` plus a legible preview PNG; `terrain.npz` round-trips; IoU report
+  printed per class.
+- [ ] T017 — Palette validation across the real corpus — paths: `tools/palette_report.py`,
+  `docs/palette-findings.md` — deps: T005, T016 —
+  DoD: runs the classifier over every corpus map and reports per-map `unknown` fraction and the
+  colour clusters that failed to match; identifies which map styles (ISOM 2000, ISOM 2017,
+  topo-based rogaine maps, scanner colour shift) need their own palette profile; the outcome is
+  either "one palette suffices" or a per-profile table added to `config/default.toml`. This task,
+  not the fixture, is what retires SPEC risk 1.
+
+## M2 — Control detection (WS-A)
+
+- [ ] T020 — Control circle detection — paths: `src/rogaine/vision/controls.py` — deps: T011, T012 —
+  DoD: HSV purple mask plus HoughCircles with the radius range derived from `mpp` (ISOM 5-6 mm);
+  start triangle and finish double-circle recognised; on the fixture recall at least 0.95, precision
+  at least 0.90, centre error at most a quarter radius (F7).
+- [ ] T021 — Number OCR and points rule — paths: `src/rogaine/vision/ocr.py` — deps: T020 —
+  DoD: digits read from a crop beside each circle with a confidence; points rule `first_digit` /
+  `constant` / CSV; unreadable numbers emit `points: null` and a flag, never a guess; OCR failure
+  degrades the run, never aborts it (F8).
+- [ ] T022 — Controls CSV round-trip — paths: `src/rogaine/io/controls_csv.py` — deps: T002 —
+  DoD: `id,x,y,number,points,confidence` reads and writes losslessly; a hand-edited CSV fully
+  replaces detection; malformed rows are reported with line numbers (F9).
+
+## M3 — Cost field and travel matrix (WS-B)
+
+- [ ] T030 — Cost field — paths: `src/rogaine/cost/field.py` — deps: T002, T003 —
+  DoD: `t = mpp / (v_base * k_terrain * k_slope)` as float32 seconds per pixel plus a passability
+  mask; impassable classes excluded; a hand-checked 5x5 case matches the formula exactly (F10).
+- [ ] T031 — Grid graph — paths: `src/rogaine/cost/graph.py` — deps: T030 —
+  DoD: 8-connected CSR graph with sqrt(2) diagonals and configurable `graph_downsample`; node/pixel
+  mapping is exact both ways; a 4000x3000 map at downsample 4 builds in under 15 s and stays under
+  1 GB.
+- [ ] T032 — Travel matrix and path reconstruction — paths: `src/rogaine/cost/travel.py` — deps: T031 —
+  DoD: `scipy.sparse.csgraph.dijkstra` from each control; matrix symmetric within tolerance;
+  per-pair polylines reconstructed from predecessors and simplified for rendering; unreachable pairs
+  marked infinite, not zero; 60 controls on a full-size map in under 60 s (F11).
+
+## M4 — Solvers and bench (WS-B)
+
+- [ ] T040 — Objective and feasibility — paths: `src/rogaine/solve/objective.py` — deps: T002 —
+  DoD: `score = sum(points) - penalty_per_min * max(0, T - limit)`; hub start and end enforced;
+  unit-tested on hand-computed cases including exactly-on-limit (F14).
+- [ ] T041 — Exact Held-Karp — paths: `src/rogaine/solve/exact.py` — deps: T040 —
+  DoD: optimal for N up to 15 within memory; agrees with brute force for N up to 9 on random
+  matrices; refuses N above the configured cap with a clear message instead of exhausting RAM (F12).
+- [ ] T042 — Heuristic solver — paths: `src/rogaine/solve/heuristic.py` — deps: T040 —
+  DoD: GRASP construction plus 2-opt / or-opt / insert / remove / swap local search under a time
+  budget; seeded and deterministic; gap versus T041 at most 5% across a suite of random instances
+  with N up to 15; handles 80 controls inside the budget (F13, F19).
+- [ ] T043 — Alternative routes and interestingness — paths: `src/rogaine/solve/alternatives.py` —
+  deps: T042 — DoD: top-K routes differing by at least one control, each with its score; K
+  configurable; the score spread is reported as the map's interestingness measure (F16).
+- [ ] T044 — `bench` command — paths: `src/rogaine/cli.py` (bench subcommand only) — deps: T041,
+  T042 — DoD: runs both solvers on a reduced instance and prints points, time, and the gap; a test
+  asserts the fixture gap stays within F13.
+
+## M5 — CLI end-to-end and renders (WS-C)
+
+- [ ] T050 — CLI commands — paths: `src/rogaine/cli.py` — deps: T016, T022, T032, T042 —
+  DoD: `segment`, `detect`, `plan`, `bench`, `serve` with typer; `--seed` everywhere randomness
+  exists; rich summary table of legs, time, points, penalty; non-zero exit on failure.
+- [ ] T051 — Route JSON schema and writer — paths: `src/rogaine/io/route_json.py` — deps: T002 —
+  DoD: documented schema with order, per-leg time/distance/polyline, cumulative time, points,
+  penalty, score, and the config that produced it; validated on write; golden test on the fixture
+  (F15).
+- [ ] T052 — Route overlay render — paths: `src/rogaine/render/overlay.py` — deps: T051 —
+  DoD: route drawn over the map with numbered visit order and leg times, legible over dark and light
+  terrain; rendered legs match the JSON polylines pixel for pixel (F15).
+- [ ] T053 — Determinism and performance guards — paths: `tests/e2e/test_cli.py`,
+  `tests/perf/test_budgets.py` — deps: T050, T051, T052 —
+  DoD: same inputs and seed give byte-identical JSON; the four NFR budgets are asserted on the
+  full-size synthetic map (F19).
+
+## M6 — Web viewer (WS-C)
+
+- [ ] T060 — FastAPI backend — paths: `src/rogaine/web/app.py` — deps: T050 —
+  DoD: upload, segment, detect, plan and export endpoints; long runs execute in a background task
+  with a poll endpoint; binds 127.0.0.1; uploads validated by magic bytes and size, stored under
+  `runs/<uuid>/` with a server-generated name (F17, security).
+- [ ] T061 — Canvas viewer UI — paths: `src/rogaine/web/static/**` — deps: T060 —
+  DoD: pan/zoom map canvas, calibration line tool, control markers that can be dragged, added,
+  deleted and edited, parameter panel, run button, leg table, JSON/PNG/CSV export; keyboard
+  operable with visible focus; Russian UI strings; legible in light and dark.
+- [ ] T062 — Playwright end-to-end — paths: `tests/e2e/test_viewer.py` — deps: T061 —
+  DoD: upload fixture, calibrate, move one control, run, assert the leg table and the exported JSON;
+  runs headless inside the tests service (F17).
+
+## M7 — Optional, only after the owner accepts the route
+
+- [ ] T070 — Tiling and mask export — paths: `ml/dataset.py` — deps: T016, T017 —
+  DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over the owner's
+  200+ scan corpus, with rotation, blur and JPEG augmentation, matching the article's data recipe;
+  tiles whose `unknown` fraction exceeds a threshold are dropped rather than taught as noise;
+  train/val split is by source map, never by tile, so the same map cannot appear on both sides.
+- [ ] T071 — SegFormer training — paths: `ml/train.py` — deps: T070 —
+  DoD: MiT-B4 fine-tune with CE + Dice + Lovasz and rare-class weights, mixed precision, batch sized
+  for 8 GB VRAM; per-class IoU reported on a held-out split.
+- [ ] T072 — Inference path — paths: `ml/infer.py`, `src/rogaine/vision/segment.py` (backend switch)
+  — deps: T071 — DoD: `--segmenter palette|segformer`; palette stays the default; the CPU-only path
+  keeps working without torch installed.

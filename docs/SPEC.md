@@ -1,0 +1,118 @@
+# Product Spec — Rogaine Route Planner
+
+## Summary
+A local, offline tool that turns a rogaine map raster into a scored route plan. It classifies the
+map's terrain from ISOM colours, finds the purple control circles, builds a per-pixel travel-time
+field for a given runner speed, computes exact travel times between all controls, and solves the
+Orienteering Problem (maximise points inside a time limit, start = finish, points lost per minute
+late). Delivered as a Python CLI plus a local web viewer.
+
+Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
+
+## Users & scenarios
+### Primary
+- Competitor planning a route before a start: has the map raster and the time limit, knows their own
+  pace, wants the best loop and its predicted time.
+### Secondary
+- Same person analysing a past event: "how many points did I leave on the table?", "how much does
+  the far cluster cost?"
+
+## User flows
+
+1. **CLI, one shot**
+   `plan --map map.png --scale 10000 --dpi 300 --limit 4h --speed 2.0 --hub 1240,890`
+   produces `out/route.json`, `out/route.png`, and a terminal summary (points, time, penalty, legs).
+
+2. **CLI, staged (review between steps)**
+   `segment` produces `terrain.npz` + `terrain_preview.png`;
+   `detect` produces `controls.csv` (editable by hand);
+   `plan --controls controls.csv` produces the route artefacts.
+
+3. **Web viewer**
+   Open `http://localhost:8000`, drop a map file, set scale (enter 1:N + DPI, **or** drag a
+   calibration line and type its length in metres). The map renders with detected controls as
+   markers; the user fixes them (drag / add / delete / edit number and points), sets time limit,
+   speed and penalty, presses Run, and gets the route drawn over the map with a leg table plus
+   JSON/PNG/CSV export.
+
+4. **Solver honesty check**
+   `bench --controls controls.csv --limit 2h` runs both solvers on a reduced instance and prints the
+   heuristic-vs-exact gap.
+
+## Functional requirements
+
+| ID | Requirement | Acceptance |
+|----|-------------|------------|
+| F1 | Load map raster from PNG/JPG/BMP/TIFF and from a single PDF page | Each format loads to the same RGB array within 1 LSB; a multi-page PDF loads page 1 by default and `--page N` selects another |
+| F2 | Scale from 1:N plus DPI | `mpp = (25.4 / dpi) * N / 1000`; 1:10000 at 300 dpi gives 0.08467 m/px within 1e-6 |
+| F3 | Scale by two-point calibration | User gives two pixel points and a ground length; resulting `mpp` matches F2 within 1% on a synthetic map of known scale |
+| F4 | Classify every pixel into the ISOM terrain classes (open land, rough open, runnable forest, slow-run green, walk green, fight green, marsh, uncrossable water, shallow water, bare rock, paved road, road, vehicle track, footpath, out-of-bounds, contour, unknown) | On the synthetic fixture with known ground truth: per-class IoU at least 0.95 for area classes and 0.80 for linear classes |
+| F5 | Recover linear features (roads, tracks, paths) as connected corridors, not scattered black pixels | On the fixture, a path drawn end-to-end is recovered as one connected component covering at least 90% of its length |
+| F6 | Derive a slope penalty from contour density, without reconstructing elevation | Contour-dense regions cost strictly more to traverse than flat regions of the same terrain class; the coefficient is config-driven |
+| F7 | Detect control circles (purple, ISOM 5-6 mm) and the start marker | On the fixture: recall at least 0.95, precision at least 0.90, centre error at most a quarter of the circle radius |
+| F8 | Read control numbers and derive points | OCR per control; points rule configurable (first_digit, constant, or from CSV). Unreadable numbers are emitted with null points and flagged, never silently guessed |
+| F9 | Import/export controls as CSV (`id,x,y,number,points,confidence`) | Round-trip is lossless; a hand-edited CSV overrides detection entirely |
+| F10 | Build a per-pixel travel-time field, `t = mpp / (v_base * k_terrain * k_slope)` | Impassable classes are excluded from the graph; the graph is 8-connected with sqrt(2) diagonal weighting |
+| F11 | Compute travel time between every pair of controls plus the hub, and keep the actual paths | Dijkstra from each control over the cost grid; the matrix is symmetric within numeric tolerance; every pair's polyline is reconstructible |
+| F12 | Exact Orienteering Problem solver (Held-Karp over subsets) | Provably optimal for N up to 15 controls; brute force agrees for N up to 9 |
+| F13 | Heuristic solver for 30-80 controls | Returns a feasible route within a configurable time budget; gap versus exact at most 5% on instances where exact is computable |
+| F14 | Objective `score = sum(points) - penalty_per_min * max(0, T - limit)`, route starts and ends at the hub | A very large `penalty_per_min` produces a route strictly inside the limit; zero lets the solver overrun |
+| F15 | Route artefacts: JSON (order, per-leg time and distance, cumulative time, points, penalty, polylines) and PNG (route over the map, numbered) | JSON validates against the documented schema; PNG legs match the JSON polylines |
+| F16 | Alternative routes: top-K structurally distinct solutions with their scores | K configurable; alternatives differ by at least one visited control; doubles as the map's "interestingness" measure |
+| F17 | Local web viewer: upload, calibrate, edit controls, run, inspect, export | A Playwright script completes the full flow on the fixture map with no manual steps |
+| F18 | Every tunable (terrain coefficients, slope factor, circle radius range, solver budgets, penalty) lives in one config file, overridable per run | Changing a coefficient in the config changes the route with no code edit |
+| F19 | Deterministic runs | Same inputs and same seed produce byte-identical JSON |
+
+## Non-functional
+- Performance on a 4000x3000 map at 1:10000, CPU only: segmentation at most 30 s, all-pairs travel
+  times for 60 controls at most 60 s, heuristic solve at most 30 s.
+- Security: no network calls at runtime; the viewer binds to `127.0.0.1` only; uploaded files stay in
+  a run directory under the project; nothing shells out to user-controlled strings.
+- A11y: viewer is keyboard-operable, focus is visible, controls are labelled, legible in light and dark.
+- SEO: not applicable (local tool).
+
+## Content / data model
+- `TerrainClass` — enum plus config entry (`speed_factor`, `passable`, `color_rgb`, `isom_code`).
+- `MapContext` — raster, `meters_per_pixel`, source path, page.
+- `Control` — `id`, `x`, `y` (pixels), `number`, `points`, `confidence`, `source` (detected/manual),
+  `is_hub`.
+- `CostField` — float32 seconds-per-pixel raster, passability mask, and the parameters behind it.
+- `TravelMatrix` — (N+1)x(N+1) seconds plus a per-pair polyline reference.
+- `Route` — ordered control ids, legs (time, distance, polyline), total time, points, penalty, score.
+- `RunConfig` — speed, time limit, penalty, solver choice and budget, seed.
+
+## Integrations
+None. No external APIs, no VLM, no telemetry.
+
+## Non-goals
+- GPS georeferencing, GPX export, GeoTIFF, world files.
+- VLM-based control detection (the article's Yandex Cloud Qwen path).
+- Fatigue or time-varying speed.
+- Automatic detection of the map's scale bar.
+- Hosting, accounts, multi-user, persistence beyond local run directories.
+- Parsing OCAD `.ocd` vector geometry (rasters rendered from OCAD are in scope; the binary format is
+  not).
+
+## Risks & assumptions
+1. **Palette classification breaks on photos.** Assumption: inputs are renders and scans, not phone
+   photos. Mitigation: white-balance and illumination normalisation before classification; the
+   optional SegFormer milestone exists precisely for this, trained on palette-generated masks.
+2. **Map text and symbols pollute the terrain classes.** Black numbers and symbols look like rock or
+   path. Mitigation: size and elongation filters plus an `unknown` class filled from its neighbourhood.
+3. **Contour density is a proxy, not a slope.** It cannot tell uphill from downhill, so route
+   direction does not change cost. Accepted for v1 and stated in the output.
+4. **OCR of control numbers is the most fragile step.** Mitigation: it is never load-bearing — points
+   fall back to a constant, and the CSV/viewer edit path is a first-class flow, not a repair hatch.
+5. **No real map fixture exists yet.** Mitigation: a synthetic ISOM map generator produces a fixture
+   with exact ground truth; the owner's own maps then serve as the acceptance check.
+6. **Heuristic optimality is unverifiable at 60 controls.** Mitigation: report the gap wherever exact
+   is computable, always report the objective, never claim optimality.
+7. **8 GB VRAM caps SegFormer training** (MiT-B4 at 512 px needs mixed precision and a small batch).
+   Affects only the optional milestone.
+
+## Launch checklist
+- `docker compose run --rm tests` green, including the synthetic-fixture end-to-end test.
+- Playwright viewer flow green.
+- `bench` prints a heuristic-versus-exact gap on the fixture, within F13.
+- Owner runs their own map through both CLI and viewer and accepts the route.
+- README covers install, run, config reference, JSON schema, and known limitations.
