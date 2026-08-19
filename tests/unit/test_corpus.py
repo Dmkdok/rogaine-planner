@@ -1,0 +1,128 @@
+"""The corpus loader (T005). Its job is to be honest about half-configured maps, not to reject
+them — files arrive from the owner over time.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from rogaine.io.corpus import Calibration, list_corpus, read_controls, read_entry
+
+
+def _map_dir(root, map_id: str, meta: str = "", *, raster: str = "map.png"):
+    d = root / map_id
+    d.mkdir(parents=True)
+    if raster:
+        (d / raster).write_bytes(b"\x89PNG\r\n\x1a\n")
+    if meta:
+        (d / "meta.toml").write_text(meta, encoding="utf-8")
+    return d
+
+
+class TestScale:
+    def test_scale_and_dpi_give_meters_per_pixel(self, tmp_path) -> None:
+        _map_dir(tmp_path, "ivanovo", "scale_denominator = 30000\ndpi = 300\n")
+        entry = read_entry(tmp_path / "ivanovo")
+        assert entry.meters_per_pixel == pytest.approx(2.54)
+        assert entry.is_plannable
+
+    def test_calibration_overrides_the_nominal_dpi(self, tmp_path) -> None:
+        # A cropped or resampled scan: the nominal 300 dpi no longer describes the file.
+        _map_dir(
+            tmp_path,
+            "cropped",
+            "scale_denominator = 30000\ndpi = 300\n"
+            "[calibration]\nx1 = 100\ny1 = 500\nx2 = 600\ny2 = 500\nmeters = 1000\n",
+        )
+        entry = read_entry(tmp_path / "cropped")
+        assert entry.meters_per_pixel == pytest.approx(2.0)
+
+    def test_a_map_without_scale_is_listed_but_not_plannable(self, tmp_path) -> None:
+        _map_dir(tmp_path, "nameless", 'name = "no scale here"\n')
+        entry = read_entry(tmp_path / "nameless")
+        assert entry.meters_per_pixel is None
+        assert not entry.is_plannable
+        assert any("scale" in m for m in entry.missing)
+
+    def test_calibration_rejects_coincident_points(self) -> None:
+        with pytest.raises(ValueError, match="distinct"):
+            Calibration(x1=1, y1=1, x2=1, y2=1, meters=100)
+
+
+class TestReporting:
+    def test_a_broken_meta_is_reported_not_raised(self, tmp_path) -> None:
+        _map_dir(tmp_path, "broken", "scale_denominator = = 30000\n")
+        entry = read_entry(tmp_path / "broken")
+        assert entry.problems and "unreadable" in entry.problems[0]
+        assert not entry.is_plannable
+
+    def test_a_nonpositive_dpi_is_a_problem_not_a_silent_zero(self, tmp_path) -> None:
+        _map_dir(tmp_path, "zero", "scale_denominator = 30000\ndpi = 0\n")
+        entry = read_entry(tmp_path / "zero")
+        assert entry.dpi is None
+        assert any("dpi must be positive" in p for p in entry.problems)
+
+    def test_missing_lists_the_optional_extras_too(self, tmp_path) -> None:
+        _map_dir(tmp_path, "bare", "scale_denominator = 30000\ndpi = 300\n")
+        missing = read_entry(tmp_path / "bare").missing
+        assert any("controls.csv" in m for m in missing)
+        assert any("reference.json" in m for m in missing)
+
+    def test_a_directory_without_a_raster_says_so(self, tmp_path) -> None:
+        _map_dir(tmp_path, "empty", "scale_denominator = 30000\ndpi = 300\n", raster="")
+        entry = read_entry(tmp_path / "empty")
+        assert entry.raster is None
+        assert "raster" in entry.missing
+
+    def test_ocd_is_preferred_over_a_derived_raster(self, tmp_path) -> None:
+        d = _map_dir(tmp_path, "both", "scale_denominator = 30000\ndpi = 300\n")
+        (d / "map.ocd").write_bytes(b"OCAD")
+        assert read_entry(d).raster.name == "map.ocd"
+
+
+class TestListing:
+    def test_an_absent_corpus_is_empty_not_an_error(self, tmp_path) -> None:
+        assert list_corpus(tmp_path / "nope") == []
+
+    def test_one_broken_map_does_not_hide_the_others(self, tmp_path) -> None:
+        _map_dir(tmp_path, "good", "scale_denominator = 30000\ndpi = 300\n")
+        _map_dir(tmp_path, "bad", "dpi = oops\n")
+        entries = list_corpus(tmp_path)
+        assert [e.map_id for e in entries] == ["bad", "good"]
+        assert [e.is_plannable for e in entries] == [False, True]
+
+
+class TestControlsCsv:
+    HEADER = "id,x,y,number,points,is_hub\n"
+
+    def test_reads_and_puts_the_hub_first(self, tmp_path) -> None:
+        csv_path = tmp_path / "controls.csv"
+        csv_path.write_text(
+            self.HEADER + "1,842,410,73,7,false\n0,1600,1200,,0,true\n2,2150,980,45,,false\n",
+            encoding="utf-8",
+        )
+        controls = read_controls(csv_path)
+        assert controls[0].id == 0 and controls[0].is_hub
+        assert [c.id for c in controls] == [0, 1, 2]
+        assert controls[1].points == 7
+        assert controls[2].points is None  # blank means "apply the config's points rule"
+        assert all(c.source == "manual" for c in controls)
+
+    def test_exactly_one_hub_is_required(self, tmp_path) -> None:
+        csv_path = tmp_path / "controls.csv"
+        rows = "0,10,10,,0,false\n1,20,20,45,4,false\n"
+        csv_path.write_text(self.HEADER + rows, encoding="utf-8")
+        with pytest.raises(ValueError, match="exactly one row must set is_hub"):
+            read_controls(csv_path)
+
+    def test_duplicate_ids_are_rejected(self, tmp_path) -> None:
+        csv_path = tmp_path / "controls.csv"
+        csv_path.write_text(self.HEADER + "0,10,10,,0,true\n0,20,20,45,4,false\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="not unique"):
+            read_controls(csv_path)
+
+    def test_a_bad_row_names_its_line(self, tmp_path) -> None:
+        csv_path = tmp_path / "controls.csv"
+        csv_path.write_text(self.HEADER + "0,10,10,,0,true\n1,x,20,45,4,false\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="line 3"):
+            read_controls(csv_path)

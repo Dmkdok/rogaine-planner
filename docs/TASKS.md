@@ -5,35 +5,45 @@ WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open task
 
 ## M0 — Scaffold, contract, synthetic fixture
 
-- [ ] T001 — Repo scaffold and toolchain — paths: `pyproject.toml`, `Dockerfile`,
-  `docker-compose.yml`, `.gitignore`, `.dockerignore`, `ruff.toml` — deps: none —
+- [x] T001 — Repo scaffold and toolchain — paths: `pyproject.toml`, `Dockerfile`,
+  `docker-compose.yml`, `.gitignore`, `.dockerignore` — deps: none —
   DoD: `docker compose run --rm tests` runs pytest and exits 0 on an empty suite; image contains
   tesseract and opencv runtime libs; `app` and `tests` services share one image.
-- [ ] T002 — Frozen data contract — paths: `src/rogaine/models.py` — deps: T001 —
+  Landed: ruff configured in `pyproject.toml` rather than a separate `ruff.toml`, so the
+  toolchain lives in one file. Verified: `ruff check` clean, 87 tests pass, `tesseract 5.5.0`
+  and `cv2 5.0.0` present, `docker compose run --rm app` prints the CLI help.
+- [x] T002 — Frozen data contract — paths: `src/rogaine/models.py` — deps: T001 —
   DoD: pydantic v2 models for `TerrainClass`, `MapContext`, `Control`, `TerrainMap`, `CostField`,
   `TravelMatrix`, `Leg`, `Route`, `RunConfig`; every field typed and documented; a round-trip test
   serialises and reloads each model. **Changes after M0 require an ADR** — three workstreams build
   on it.
-- [ ] T003 — Config system and ISOM terrain table — paths: `config/default.toml`,
+- [x] T003 — Config system and ISOM terrain table — paths: `config/default.toml`,
   `src/rogaine/config.py` — deps: T002 — DoD: TOML loads into pydantic; terrain table carries
   `isom_code`, `color_rgb`, `speed_factor`, `passable` for all 17 classes; CMYK values sourced from
   the IOF ISOM 2017-2 Appendix 1 (colour definitions) and cited in the file; `--config` override and
   per-flag override both tested (F18).
-- [ ] T004 — Synthetic ISOM map fixture generator — paths: `tests/fixtures/synth_map.py` — deps:
+- [x] T004 — Synthetic ISOM map fixture generator — paths: `tests/fixtures/synth_map.py` — deps:
   T003 — DoD: renders a map at a requested size with known terrain polygons, path/road polylines,
   contour lines and purple control circles; returns per-pixel ground-truth labels, control
   coordinates, numbers and the true scale; deterministic under a seed; a "full size" 4000x3000 preset
   exists for the performance guards.
-- [ ] T005 — Real map corpus intake — paths: `data/README.md`, `.gitignore` — deps: T001 —
+- [x] T005 — Real map corpus intake — paths: `data/README.md`, `.gitignore` — deps: T001 —
   DoD: `data/maps/` layout documented (raster, its scale and DPI, optional controls CSV, optional
   reference route); the directory is gitignored so no map is ever committed; a loader lists the
-  corpus and reports what metadata each entry is missing. Owner supplies 10-20 scans covering the
+  corpus and reports what metadata each entry is missing.
+  Landed: loader in `src/rogaine/io/corpus.py`, surfaced as `rogaine corpus list` /
+  `rogaine corpus check` in `src/rogaine/cli.py` — a minimal app that T050 (WS-C) extends
+  rather than replaces. Owner supplies 10-20 scans covering the
   map styles they actually meet (ADR-010).
-- [ ] T006 — Spike: `.ocd` to raster plus ground-truth mask — paths: `tools/ocd_render.md`,
+- [x] T006 — Spike: `.ocd` to raster plus ground-truth mask — paths: `tools/ocd_render.md`,
   `tools/ocd_render.py` — deps: T003 — DoD: a documented route from the owner's `.ocd` files to
   (a) a rendered raster at a known DPI and (b) per-symbol-class masks, using OCAD itself or
   OpenOrienteering Mapper's command-line export. Timeboxed: if neither exports usably, record the
   finding in the spike doc and fall back to T004 alone — this task never blocks M1.
+  **Closed as documented-not-executed:** no `.ocd` file has reached `data/maps/` yet, so
+  `tools/ocd_render.md` records the route and its failure table and `tools/ocd_render.py`
+  drives the raster export; mask export is deliberately unwritten until there is a real file
+  to develop against. Reopen when the owner supplies one.
 
 ## M1 — Terrain segmentation (WS-A)
 
@@ -49,7 +59,11 @@ WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open task
 - [ ] T013 — ISOM palette classifier — paths: `src/rogaine/vision/palette.py` — deps: T003, T012 —
   DoD: CIELAB nearest-colour with a distance threshold and an `unknown` class; per-class IoU at least
   0.95 for area classes on the fixture; `unknown` filled by neighbourhood majority; runs a 4000x3000
-  map in under 30 s on CPU (F4).
+  map in under 30 s on CPU (F4). The nominal shade table is derived from published CMYK, so it sits
+  a measurable distance from what any given map actually prints — largest for green. If a fixed
+  palette proves brittle across the corpus, **fit it per map** (cluster the map's own dominant
+  colours in Lab, assign each cluster to its nearest nominal shade) rather than widening the
+  threshold until `unknown` stops meaning anything.
 - [ ] T014 — Linear feature extraction — paths: `src/rogaine/vision/linear.py` — deps: T013 —
   DoD: roads, tracks and footpaths recovered as connected corridors via elongation and skeleton
   filters; a fixture path end-to-end is one component covering at least 90% of its length; map text

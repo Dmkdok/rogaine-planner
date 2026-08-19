@@ -1,0 +1,28 @@
+services:
+  # The product. Port is published on loopback only — the container binds 0.0.0.0
+  # because that is the only address reachable from the host, but nothing outside
+  # this machine can reach it (SPEC non-functional / security).
+  app:
+    build:
+      context: .
+      target: base
+    image: rogaine-planner:base
+    volumes:
+      - ./:/app
+    ports:
+      - "127.0.0.1:8000:8000"
+    # M6 replaces this with: ["rogaine", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["rogaine", "--help"]
+
+  # The suite. CLAUDE.md: this is the only supported way to run tests —
+  # pytest hangs on the Windows host.
+  tests:
+    build:
+      context: .
+      target: test
+    image: rogaine-planner:test
+    volumes:
+      - ./:/app
+    command: ["pytest"]
+
+  # M7 only: SegFormer training on the local RTX 3060 Ti. Added by T071.

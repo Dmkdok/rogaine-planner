@@ -1,0 +1,320 @@
+# Rogaine route planner — default configuration.
+#
+# Everything tunable lives here (SPEC F18). Override with `--config my.toml`, or per run with
+# individual CLI flags.
+#
+# Sources for the numbers below:
+#   [A1] IOF, "ISOM 2017 Appendix 1 — CMYK Printing and Colour Definitions", version 3, 2018-11-07,
+#        section 4 "CMYK Colour Definition" and the colour-order list.
+#   [ISOM] IOF, "ISOM 2017-2" (adjusted January 2019), symbol descriptions.
+#   [ART] https://habr.com/ru/articles/1065342/ — the reference implementation's rough ratios
+#        ("forest almost three times slower than road, vegetation five times").
+
+[map]
+# Used when the raster carries no DPI of its own and the user gives none.
+default_dpi = 300
+
+# --------------------------------------------------------------------------------------------
+# Palette (T013)
+# --------------------------------------------------------------------------------------------
+[palette]
+# A pixel further than this from every known shade in CIELAB (CIE76) becomes `unknown`
+# and is filled from its neighbourhood. Provisional: the shade table below is derived from the
+# published CMYK, and the residual between derived and actually-printed colour is largest for
+# green. T013 sets this from measured distances and T017 confirms it against the real corpus.
+lab_distance_threshold = 35.0
+# Kernel (pixels) for the neighbourhood majority vote that fills `unknown`.
+unknown_fill_radius = 3
+
+# The six ISOM inks, as CMYK percentages. Verbatim from [A1] section 4.
+[palette.ink]
+black = [0, 0, 0, 100]
+blue = [100, 0, 0, 0]
+yellow = [0, 27, 79, 0]
+green = [76, 0, 91, 0]
+brown = [0, 56, 100, 18]      # [A1]: for CMYK+B printing this is PMS 471
+purple = [35, 85, 0, 0]       # [A1]: or PMS "Purple"
+
+# The printed shades that actually appear on an ISOM map, from the colour-order list in [A1]
+# section 4. `tint` is the screen percentage of the named ink.
+[[palette.shade]]
+name = "white"
+ink = "none"
+tint = 0
+
+[[palette.shade]]
+name = "yellow_100"
+ink = "yellow"
+tint = 100
+
+[[palette.shade]]
+name = "yellow_50"
+ink = "yellow"
+tint = 50
+
+[[palette.shade]]
+name = "green_100"
+ink = "green"
+tint = 100
+
+[[palette.shade]]
+name = "green_60"
+ink = "green"
+tint = 60
+
+[[palette.shade]]
+name = "green_30"
+ink = "green"
+tint = 30
+
+[[palette.shade]]
+name = "blue_100"
+ink = "blue"
+tint = 100
+
+[[palette.shade]]
+name = "blue_70"
+ink = "blue"
+tint = 70
+
+[[palette.shade]]
+name = "blue_50"
+ink = "blue"
+tint = 50
+
+[[palette.shade]]
+name = "brown_100"
+ink = "brown"
+tint = 100
+
+[[palette.shade]]
+name = "brown_50"
+ink = "brown"
+tint = 50
+
+[[palette.shade]]
+name = "black_100"
+ink = "black"
+tint = 100
+
+[[palette.shade]]
+name = "black_30"
+ink = "black"
+tint = 30
+
+[[palette.shade]]
+name = "purple_100"
+ink = "purple"
+tint = 100
+
+# --------------------------------------------------------------------------------------------
+# Terrain classes (T013, T014, T030)
+# --------------------------------------------------------------------------------------------
+# `speed_factor` is the fraction of the runner's *road* speed. Road = 1.0 by definition, so the
+# user states one number they actually know ("I run 3 m/s on a road") and everything scales off it.
+#
+# `shade` is the colour a pixel of this class is printed in. Several classes share `black_100`:
+# colour alone cannot tell a footpath from a cliff from a map label. T014 separates those
+# geometrically (width, elongation, skeleton length); the palette classifier only produces the
+# colour class, never the final linear class.
+
+[[terrain]]
+name = "open_land"
+isom = "401"
+shade = "yellow_100"
+speed_factor = 0.55
+passable = true
+note = "[ISOM] ground cover offering better runnability than typical open forest"
+
+[[terrain]]
+name = "rough_open"
+isom = "403"
+shade = "yellow_50"
+speed_factor = 0.35
+passable = true
+note = "[ISOM] 'offering the same runnability as typical open forest' — hence equal to forest"
+
+[[terrain]]
+name = "forest_runnable"
+isom = "405"
+shade = "white"
+speed_factor = 0.35
+passable = true
+note = "[ART] forest is almost three times slower than road; this is the baseline for greens"
+
+[[terrain]]
+name = "veg_slow_run"
+isom = "406"
+shade = "green_30"
+speed_factor = 0.25
+passable = true
+note = "[ISOM] 60-80% of normal speed -> 0.7 x forest"
+
+[[terrain]]
+name = "veg_walk"
+isom = "408"
+shade = "green_60"
+speed_factor = 0.14
+passable = true
+note = "[ISOM] 20-60% of normal speed -> 0.4 x forest"
+
+[[terrain]]
+name = "veg_fight"
+isom = "410"
+shade = "green_100"
+speed_factor = 0.05
+passable = true
+note = "[ISOM] less than about 20% of normal speed -> 0.15 x forest"
+
+[[terrain]]
+name = "marsh"
+isom = "308"
+shade = "blue_50"
+speed_factor = 0.15
+passable = true
+note = "[ISOM] crossable marsh"
+
+[[terrain]]
+name = "water_shallow"
+isom = "302"
+shade = "blue_70"
+speed_factor = 0.08
+passable = true
+note = "[ISOM] shallow body of water — wadeable, very slow"
+
+[[terrain]]
+name = "water_uncrossable"
+isom = "301"
+shade = "blue_100"
+speed_factor = 0.0
+passable = false
+note = "[ISOM] uncrossable body of water, emphasised by a black bank line"
+
+[[terrain]]
+name = "bare_rock"
+isom = "214"
+shade = "black_30"
+speed_factor = 0.45
+passable = true
+note = "[ISOM] 'a runnable area of rock without earth or vegetation'"
+
+[[terrain]]
+name = "paved_area"
+isom = "501"
+shade = "brown_50"
+speed_factor = 1.0
+passable = true
+note = "[ISOM] firm surface; [A1] road infill is brown 50% with black outlines"
+
+[[terrain]]
+name = "road"
+isom = "502,503"
+shade = "black_100"
+speed_factor = 1.0
+passable = true
+note = "road speed is the definition of v_base"
+
+[[terrain]]
+name = "vehicle_track"
+isom = "504"
+shade = "black_100"
+speed_factor = 0.95
+passable = true
+
+[[terrain]]
+name = "footpath"
+isom = "505"
+shade = "black_100"
+speed_factor = 0.9
+passable = true
+
+[[terrain]]
+name = "out_of_bounds"
+isom = "709"
+shade = "purple_100"
+speed_factor = 0.0
+passable = false
+note = "[ISOM] printed in purple, same ink as the control circles — T020 must not confuse them"
+
+[[terrain]]
+name = "contour"
+isom = "101"
+shade = "brown_100"
+speed_factor = 0.0
+passable = true
+note = "not an area class: contours only feed the slope penalty (T015), never the speed table"
+
+[[terrain]]
+name = "unknown"
+isom = ""
+shade = "none"
+speed_factor = 0.35
+passable = true
+note = "unclassified pixels are assumed to be forest — the most common terrain, and not optimistic"
+
+# --------------------------------------------------------------------------------------------
+# Slope from contour density (T015, ADR-006)
+# --------------------------------------------------------------------------------------------
+[slope]
+# Gaussian sigma (pixels) used to turn the contour mask into a local density field.
+density_sigma = 12.0
+# Density is normalised to [0, 1], then speed is divided by (1 + penalty * density).
+# 2.0 means the steepest ground on the map costs three times the flat equivalent.
+penalty = 2.0
+
+# --------------------------------------------------------------------------------------------
+# Control detection (T020, T021)
+# --------------------------------------------------------------------------------------------
+[detector]
+# [ISOM] symbol 703 control circle, in millimetres on the printed map. The pixel radius follows
+# from the map's DPI, so the detector never guesses a scale. T020 verifies these against the spec
+# drawings and the real corpus.
+circle_diameter_mm = 6.0
+circle_diameter_tolerance = 0.35
+# Purple in HSV (OpenCV ranges: H 0-179, S 0-255, V 0-255), around ISOM purple 35_85_0_0.
+purple_hue_range = [140, 175]
+purple_min_saturation = 60
+purple_min_value = 60
+hough_dp = 1.2
+hough_param1 = 100
+hough_param2 = 30
+# [ISOM] symbol 704 control number: Arial 4.0 mm, non-bold, non-italic, oriented north.
+number_font_height_mm = 4.0
+# How far from the circle edge to look for the number, in circle radii.
+number_search_radius = 1.8
+# first_digit — the usual rogaine convention (control 45 is worth 4 points)
+# constant    — every control worth `points_constant`
+# csv         — points come from the controls CSV and nothing is inferred
+points_rule = "first_digit"
+points_constant = 1
+min_ocr_confidence = 0.6
+
+# --------------------------------------------------------------------------------------------
+# Cost field and graph (T030, T031, T032)
+# --------------------------------------------------------------------------------------------
+[graph]
+# One graph node per NxN block of pixels. 4 keeps a 4000x3000 map at ~750k nodes (ADR-002).
+downsample = 4
+# Cost assigned to impassable ground when `strict_impassable` is false: high enough that the
+# solver never routes through it unless there is no alternative at all.
+impassable_cost_multiplier = 1000.0
+strict_impassable = true
+
+# --------------------------------------------------------------------------------------------
+# Solvers (T040-T043)
+# --------------------------------------------------------------------------------------------
+[solver]
+# "auto" picks exact below `exact_max_controls`, heuristic above it.
+strategy = "auto"
+exact_max_controls = 15
+# Seconds. The heuristic returns the best route found when this runs out.
+heuristic_time_budget_s = 30.0
+grasp_restarts = 40
+grasp_candidate_size = 5
+seed = 0
+# Number of structurally distinct alternatives to report (T043).
+alternatives = 3
+
+[rules]
+# Points lost per minute of late return. Large values effectively forbid overrunning.
+penalty_per_min = 1.0

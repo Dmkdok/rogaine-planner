@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rogaine-planner"
+version = "0.1.0"
+description = "Plan the highest-scoring rogaine route from a map raster"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.1",
+    "opencv-python-headless>=4.10",
+    "scipy>=1.14",
+    "scikit-image>=0.24",
+    "pillow>=10.4",
+    "pypdfium2>=4.30",
+    "pydantic>=2.9",
+    "typer>=0.15",
+    "rich>=13.9",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.20",
+    "pytesseract>=0.3.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "playwright>=1.49",
+    "pytest-playwright>=0.6",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+rogaine = "rogaine.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rogaine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "perf: performance budget guards, slow (SPEC non-functional section)",
+    "e2e: end-to-end flows through CLI or browser",
+    "corpus: needs the owner's real map corpus under data/maps (ADR-010)",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer declares options as call-valued defaults; that is its API, not a bug (B008).
+"src/rogaine/cli.py" = ["B008"]
+
+[tool.coverage.run]
+source = ["src/rogaine"]
