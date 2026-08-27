@@ -13,6 +13,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rogaine.io.scale import Calibration, mpp_from_dpi
 from rogaine.models import Control
 
 #: Files a map directory may hold as its source raster, in the order they are preferred.
@@ -22,27 +23,8 @@ META_NAME = "meta.toml"
 CONTROLS_NAME = "controls.csv"
 REFERENCE_NAME = "reference.json"
 
-
-@dataclass(frozen=True)
-class Calibration:
-    """Two points on the raster and the true ground distance between them (SPEC F3)."""
-
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    meters: float
-
-    def __post_init__(self) -> None:
-        if self.meters <= 0:
-            raise ValueError("calibration distance must be positive")
-        if (self.x1, self.y1) == (self.x2, self.y2):
-            raise ValueError("calibration points must be distinct")
-
-    @property
-    def meters_per_pixel(self) -> float:
-        pixels = ((self.x2 - self.x1) ** 2 + (self.y2 - self.y1) ** 2) ** 0.5
-        return self.meters / pixels
+#: ``Calibration`` here is the same type as ``rogaine.io.scale.Calibration`` (T011's canonical
+#: home for the maths) — imported, not redefined, so the two never drift apart.
 
 
 @dataclass(frozen=True)
@@ -66,7 +48,7 @@ class CorpusEntry:
         if self.calibration is not None:
             return self.calibration.meters_per_pixel
         if self.scale_denominator and self.dpi:
-            return (25.4 / self.dpi) * self.scale_denominator / 1000.0
+            return mpp_from_dpi(self.dpi, self.scale_denominator)
         return None
 
     @property

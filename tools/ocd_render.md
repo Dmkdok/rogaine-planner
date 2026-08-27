@@ -1,9 +1,10 @@
 # Spike T006 — `.ocd` to raster and per-class masks
 
-**Status: route documented and scripted, not yet executed** — no `.ocd` file has reached
-`data/maps/` at the time of writing. Timeboxed by design: if the export turns out not to work on
-the owner's files, M1 proceeds on the synthetic fixture alone (T004) and this task is closed with
-the finding recorded here. It never blocks M1.
+**Status: route documented and scripted, not yet executed.** `data/maps/rfar2016-for-stroganov/map.ocd`
+arrived 2026-08-25, but OpenOrienteering Mapper is a host-installed GUI/CLI tool this environment
+does not have — see "Installing Mapper" below. Timeboxed by design: if the export turns out not to
+work on the owner's files, M1 proceeds on the synthetic fixture alone (T004) and this task is
+closed with the finding recorded here. It never blocks M1.
 
 ## Why bother
 
@@ -52,6 +53,7 @@ downstream reads those, never the `.ocd`.
 
 ## Findings
 
-_(To be filled in when the owner's `.ocd` files arrive. Record: Mapper version, OCAD file version,
-whether raster export worked, whether symbol hiding worked, the observed symbol codes, and the
-per-class pixel counts of the first mask set.)_
+_(To be filled in once `tools/ocd_render.py` actually runs against
+`data/maps/rfar2016-for-stroganov/map.ocd` on a host with Mapper installed. Record: Mapper version,
+OCAD file version, whether raster export worked, whether symbol hiding worked, the observed symbol
+codes, and the per-class pixel counts of the first mask set.)_

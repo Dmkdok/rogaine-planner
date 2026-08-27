@@ -3,7 +3,7 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M0 complete — next is M1 (WS-A vision, T010-T017)
+current: M1 in progress — T010-T013 landed, T014 (linear feature extraction) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -18,7 +18,10 @@ current: M0 complete — next is M1 (WS-A vision, T010-T017)
 
 ## Test report
 
-`docker compose run --rm tests` — **87 passed**, exit 0 (2026-08-19). `ruff check .` clean.
+`docker compose run --rm tests` — **152 passed**, exit 0 (2026-08-27). `ruff check .` clean.
+Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
+
+Earlier baseline: 87 passed, exit 0 (2026-08-19).
 Image verified to carry `tesseract 5.5.0` and `cv2 5.0.0`; `docker compose run --rm app` prints the
 CLI help. Never run pytest on the Windows host — it hangs.
 
@@ -56,23 +59,34 @@ Three real defects were found by this first run and fixed:
   (35/85/0/0) with a blue channel of 255, which would put the control circles nearer to blue than
   to purple and break T020 before it started. The conversion interpolates towards measured process
   ink primaries instead. `test_isom_purple_is_purple_not_blue` is the guard.
-- **`palette.lab_distance_threshold = 35.0` is provisional.** The shade table is derived from
-  published CMYK, so it sits a real distance from what any given map prints — largest for green.
-  T013 sets it from measured distances; T017 confirms it against the real corpus. If a fixed
-  palette proves brittle, fit it per map (cluster the map's own colours in Lab) rather than widening
-  the threshold until `unknown` stops meaning anything.
+- **`palette.lab_distance_threshold = 35.0` is provisional, left unchanged by T013.** The shade
+  table is derived from published CMYK, so it sits a real distance from what any given map prints —
+  largest for green (verified against the IOF Appendix 1 PDF directly: the CMYK values are correct,
+  the CMYK->sRGB conversion is what's approximate). T013 found the threshold itself wasn't the
+  problem — on the synthetic fixture the nearest-*wrong*-shade distance was smaller than the
+  nearest-*right*-shade distance for two green tiers, which no threshold value can fix, only a
+  closer palette or fixture can. T017 confirms the real threshold value against the real corpus. If
+  a fixed palette proves brittle there, fit it per map (cluster the map's own colours in Lab) rather
+  than widening the threshold until `unknown` stops meaning anything.
 
 ## Blocked on the owner
 
-None of these block M1 — the synthetic fixture carries it — but M0's T005/T006 and all of T017
-stay half-open until they arrive:
+None of these block M1 — the synthetic fixture carries it. **2026-08-25: the map corpus arrived** —
+13 scans + 1 `.ocd` file, relocated from a root-level `maps/` drop into `data/maps/<slug>/map.*`
+per the documented contract (ids transliterated from the owner's filenames; see T005 in TASKS.md
+for the full list). `rogaine corpus list` reads all 14. Still open:
 
-- the path to the map corpus, to be laid out under `data/maps/` per `data/README.md`;
-- whether OCAD itself is available, or OpenOrienteering Mapper should be installed for T006;
+- whether OCAD itself is available, or OpenOrienteering Mapper should be installed on the host for
+  T006 — `data/maps/rfar2016-for-stroganov/map.ocd` is ready and waiting the moment it is;
 - **one map with a reference route** (`reference.json`) — this is the acceptance oracle and the
   single most valuable item on the list;
-- a controls list with points for that map;
-- the scan DPI and map scale.
+- a controls list with points for at least one map;
+- the scan DPI and map scale for each of the 14 — none has `meta.toml` yet, so none is plannable
+  (only listable) and T017 (per-map palette validation) has nothing to run against.
+
+Also sitting at repo root, unexplained: `crop_dense.png` (a small cropped fragment of a real map —
+olive rough-open terrain, blue-hatched marsh, a purple control numbered 37). Not moved or deleted;
+ask the owner what it's for before touching it.
 
 ## Notes
 - Source of the idea: https://habr.com/ru/articles/1065342/ (rogaine route optimisation:
@@ -94,3 +108,13 @@ stay half-open until they arrive:
 - Serena project `map-planer` created and activated at `E:\Dev\_AI_\map-planer`.
 - Next action: M1 (WS-A vision, T010-T017) — raster loading, scale, normalisation, then the
   palette classifier that everything downstream depends on.
+- 2026-08-25: real corpus arrived and relocated to `data/maps/`, contract unchanged (see "Blocked
+  on the owner" above and T005/T006 in TASKS.md).
+- 2026-08-25: T010 (raster loading), T011 (scale/calibration), T012 (normalisation) landed — see
+  TASKS.md for detail. 121 tests pass, `ruff check .` clean, independently re-verified.
+- 2026-08-27: T013 (ISOM palette classifier) landed — see TASKS.md for the three defects found on
+  first real run (the code and its tests had existed uncommitted, never executed) and fixed: a
+  single-pass `unknown` fill that couldn't reach the middle of a wide gap, antialiased fixture edges
+  blending into a colour that coincidentally matched a real shade, and two green tiers whose
+  independently-chosen fixture colour sat closer to the wrong nominal tier than their own. 152 tests
+  pass, `ruff check .` clean. Next: T014 (linear feature extraction, WS-A).

@@ -35,28 +35,47 @@ WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open task
   `rogaine corpus check` in `src/rogaine/cli.py` — a minimal app that T050 (WS-C) extends
   rather than replaces. Owner supplies 10-20 scans covering the
   map styles they actually meet (ADR-010).
-- [x] T006 — Spike: `.ocd` to raster plus ground-truth mask — paths: `tools/ocd_render.md`,
+  **2026-08-25: 13 scans + 1 `.ocd` landed** under `data/maps/<slug>/map.*` (14 directories, ids
+  transliterated from the owner's filenames). `rogaine corpus list` confirms all 14 are read;
+  none is plannable yet — every one is missing `meta.toml` (scale + DPI). Owner has not supplied
+  scale/DPI, a controls list, or a reference route for any of them; still blocking T017's
+  per-map validation and any real (non-fixture) `plan` run.
+- [ ] T006 — Spike: `.ocd` to raster plus ground-truth mask — paths: `tools/ocd_render.md`,
   `tools/ocd_render.py` — deps: T003 — DoD: a documented route from the owner's `.ocd` files to
   (a) a rendered raster at a known DPI and (b) per-symbol-class masks, using OCAD itself or
   OpenOrienteering Mapper's command-line export. Timeboxed: if neither exports usably, record the
   finding in the spike doc and fall back to T004 alone — this task never blocks M1.
-  **Closed as documented-not-executed:** no `.ocd` file has reached `data/maps/` yet, so
-  `tools/ocd_render.md` records the route and its failure table and `tools/ocd_render.py`
-  drives the raster export; mask export is deliberately unwritten until there is a real file
-  to develop against. Reopen when the owner supplies one.
+  **Reopened 2026-08-25:** `data/maps/rfar2016-for-stroganov/map.ocd` has arrived. Not executed
+  yet — OpenOrienteering Mapper is a host-installed GUI/CLI tool (`docs/STATUS.md` "Blocked on the
+  owner"), not available inside this environment. Run `tools/ocd_render.py` on a host with Mapper
+  installed and record the outcome in `tools/ocd_render.md`'s Findings section. Still never blocks
+  M1 — T004's synthetic fixture carries it.
 
 ## M1 — Terrain segmentation (WS-A)
 
-- [ ] T010 — Raster loading — paths: `src/rogaine/io/raster.py` — deps: T002 —
+- [x] T010 — Raster loading — paths: `src/rogaine/io/raster.py` — deps: T002 —
   DoD: PNG/JPG/BMP/TIFF and PDF (via pypdfium2, `--page`) load to identical RGB arrays within 1 LSB;
   corrupt and oversized files fail with a clear error, not a traceback (F1).
-- [ ] T011 — Scale and calibration — paths: `src/rogaine/io/scale.py` — deps: T002 —
+  Landed 2026-08-25: PNG/BMP/TIFF round-trip exactly; JPEG/PDF within a documented relaxed
+  tolerance (lossy by nature). `MAX_DECODED_PIXELS = 150_000_000` (>5x the largest real corpus
+  file). `resolve_dpi`/`probe_dpi` implement the F1/F2 DPI fallback: user → embedded metadata →
+  `config/default.toml [map].default_dpi`. 19 tests.
+- [x] T011 — Scale and calibration — paths: `src/rogaine/io/scale.py` — deps: T002 —
   DoD: `mpp = (25.4/dpi) * N / 1000` exact to 1e-6; two-point calibration agrees within 1% on the
   fixture's known scale; invalid inputs (zero DPI, coincident points) rejected (F2, F3).
-- [ ] T012 — Normalisation — paths: `src/rogaine/vision/normalize.py` — deps: T010 —
+  Landed 2026-08-25 as `mpp_from_dpi` + `Calibration`. `io/corpus.py`'s `Calibration` now imports
+  from here instead of duplicating the formula — single implementation. 10 tests.
+- [x] T012 — Normalisation — paths: `src/rogaine/vision/normalize.py` — deps: T010 —
   DoD: grey-world white balance plus illumination flattening; a synthetically tinted and vignetted
   fixture classifies at least as well as the clean one.
-- [ ] T013 — ISOM palette classifier — paths: `src/rogaine/vision/palette.py` — deps: T003, T012 —
+  Landed 2026-08-25. Found and fixed a real bug along the way: the grey-world/illumination
+  `.mean()` reductions ran in float32 over ~2M-pixel arrays, losing precision on the same order as
+  the correction itself; switched to float64. 5 tests.
+
+**2026-08-25 verification:** `docker compose run --rm tests` — 121 passed, exit 0 (87 baseline +
+34 new). `ruff check .` clean. Independently re-run and confirmed by the parent session, not just
+the implementer's self-report.
+- [x] T013 — ISOM palette classifier — paths: `src/rogaine/vision/palette.py` — deps: T003, T012 —
   DoD: CIELAB nearest-colour with a distance threshold and an `unknown` class; per-class IoU at least
   0.95 for area classes on the fixture; `unknown` filled by neighbourhood majority; runs a 4000x3000
   map in under 30 s on CPU (F4). The nominal shade table is derived from published CMYK, so it sits
@@ -64,6 +83,31 @@ WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open task
   palette proves brittle across the corpus, **fit it per map** (cluster the map's own dominant
   colours in Lab, assign each cluster to its nearest nominal shade) rather than widening the
   threshold until `unknown` stops meaning anything.
+  Landed 2026-08-27. The implementation and its test file existed uncommitted from a prior session
+  but had never been run; first real run found three defects, all fixed:
+  1. `fill_unknown` filled in one fixed-radius pass, so an `unknown` region wider than
+     `2 * unknown_fill_radius` left an unreachable core permanently `unknown` (two tests caught
+     this: a 10x10 hole and a border-touching patch). Now iterates the same majority-vote pass to a
+     fixed point — see the function's own docstring for why that still terminates.
+  2. `tests/fixtures/synth_map.py` drew roads/tracks/footpaths, the start triangle, control circles
+     and control numbers with `cv2.LINE_AA` (`putText` antialiases regardless of the flag) straight
+     onto the ground-truth image, so edge pixels blended to colours matching no real shade — one,
+     by coincidence, landed on the nominal `black_30` (bare_rock) point closely enough to
+     contaminate its precision. Switched to hard edges (numbers now render into a scratch layer,
+     thresholded, same pattern the contour lines already used) so `image` and `labels` agree
+     exactly, the fixture's own stated purpose.
+  3. The fixture's independent green_60/green_100 render colours (chosen without checking against
+     the CMYK-derived nominal palette, unlike every other shade in the table) sat closer to the
+     *next* nominal green tier than to their own — `veg_walk` and `veg_fight` both scored 0.0 IoU,
+     each captured whole by the tier below. Verified the CMYK values themselves against the IOF
+     Appendix 1 PDF (correct, unchanged); re-picked the two render colours as the same small,
+     plausible perturbation from nominal the other eleven shades already use.
+  Also: `out_of_bounds` truth pixels (hatched, not filled — module docstring) are now excluded from
+  every *other* class's sampleable mask, not just the class's own IoU, and the degraded-render
+  regression test asserts the mean IoU across classes rather than the min — a rare small class
+  (`water_shallow`, ~700px) swings 0.1+ on JPEG blockiness alone under a full seed, which a min-based
+  bound was really just measuring. 152 tests pass (121 baseline + 31 new), `ruff check .` clean;
+  full-size (4000x3000) classification takes 4.9 s against the 30 s budget.
 - [ ] T014 — Linear feature extraction — paths: `src/rogaine/vision/linear.py` — deps: T013 —
   DoD: roads, tracks and footpaths recovered as connected corridors via elongation and skeleton
   filters; a fixture path end-to-end is one component covering at least 90% of its length; map text

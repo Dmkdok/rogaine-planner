@@ -37,8 +37,8 @@ RENDER_SRGB: dict[str, tuple[int, int, int]] = {
     "white": (255, 255, 255),
     "yellow_100": (253, 187, 63),
     "yellow_50": (254, 221, 160),
-    "green_100": (0, 158, 78),
-    "green_60": (128, 202, 156),
+    "green_100": (75, 175, 40),
+    "green_60": (150, 205, 128),
     "green_30": (194, 229, 208),
     "blue_100": (0, 158, 224),
     "blue_70": (77, 184, 233),
@@ -201,7 +201,11 @@ def make_synthetic_map(
         for _ in range(2):
             pts = _wandering_path(rng, width, height)
             thickness = max(1, round(LINE_WIDTH_MM[cls] * ppm))
-            cv2.polylines(image, [pts], False, RENDER_SRGB[SHADE_OF[cls]], thickness, cv2.LINE_AA)
+            # No LINE_AA: an antialiased blend against the white background would put edge pixels
+            # at intermediate colours that match no real shade (or, worse, one that coincidentally
+            # does -- see the module docstring). `labels` is drawn hard-edged at the same thickness;
+            # matching that here keeps every drawn pixel's colour and ground truth consistent.
+            cv2.polylines(image, [pts], False, RENDER_SRGB[SHADE_OF[cls]], thickness)
             cv2.polylines(labels, [pts], False, terrain_label(cls), thickness)
 
     # Out-of-bounds: purple hatching over ground that stays forbidden underneath (see docstring).
@@ -315,7 +319,7 @@ def _place_controls(
         ],
         dtype=np.int32,
     )
-    cv2.polylines(image, [tri], True, purple, ring, cv2.LINE_AA)
+    cv2.polylines(image, [tri], True, purple, ring)  # no LINE_AA -- see the roads/tracks comment
 
     controls = [
         Control(id=0, x=hub[0], y=hub[1], number=None, points=0, source="detected", is_hub=True)
@@ -329,17 +333,22 @@ def _place_controls(
             number = int(rng.integers(2, 10)) * 10 + int(rng.integers(0, 10))
         used_numbers.add(number)
 
-        cv2.circle(image, (round(x), round(y)), round(radius), purple, ring, cv2.LINE_AA)
+        cv2.circle(image, (round(x), round(y)), round(radius), purple, ring)  # no LINE_AA, ditto
+        # `cv2.putText` antialiases Hershey glyphs regardless of `lineType` (an OpenCV quirk, unlike
+        # `line`/`circle`/`polylines`), so it can't write hard-edged purple directly onto `image`
+        # the way the other overprint symbols above do. Render into a scratch layer and threshold
+        # it instead, the same mask-then-hard-set pattern the contour lines below already use.
+        number_layer = np.zeros((height, width), dtype=np.uint8)
         cv2.putText(
-            image,
+            number_layer,
             str(number),
             (round(x + radius * 1.15), round(y - radius * 0.6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             font_scale,
-            purple,
+            255,
             max(1, round(0.3 * ppm)),
-            cv2.LINE_AA,
         )
+        image[number_layer > 40] = purple
         controls.append(
             Control(id=i, x=x, y=y, number=number, points=number // 10, source="detected")
         )
