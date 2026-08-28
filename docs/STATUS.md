@@ -3,8 +3,8 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 T010-T016 landed (T017 blocked on owner data); M2 T020-T021 landed, T022 (controls CSV
-  round-trip) next
+current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3's
+  T030 (cost field, deps T002/T003, both landed) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -19,7 +19,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 T020-T021 landed, 
 
 ## Test report
 
-`docker compose run --rm tests` — **223 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **229 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -189,4 +189,20 @@ ask the owner what it's for before touching it.
   the way. Also cleaned up: a `.tmp_dev/` directory of ad hoc debug scripts from that prior session's
   OCR-tuning exploration, superseded by the two findings above now written into `ocr.py`'s docstring
   and no longer needed. See TASKS.md T021 for full detail. 223 tests pass, `ruff check .` clean.
-  Next: T022 (controls CSV round-trip, deps T002, unblocked).
+- 2026-08-28: T022 (controls CSV round-trip, M2 — milestone now complete) landed —
+  `io/controls_csv.py`'s `read_controls`/`write_controls` are the single canonical home for the CSV
+  contract, moved from `io/corpus.py` (which now re-exports the name rather than owning a second
+  copy). Real discrepancy found and resolved: the DoD's literal `id,x,y,number,points,confidence`
+  header cannot round-trip losslessly alone — `is_hub` is structurally required (SPEC F14) and
+  `source` (`detected`/`manual`) is a full `Control` field per SPEC's own data-model section, so both
+  are appended after the DoD's six columns rather than silently dropped; `confidence` itself was
+  previously hardcoded to `1.0` on every CSV read (`source` to `"manual"`) since nothing produced a
+  real value at T005 time — now that T020/T021 do, this module reads and writes the real number
+  instead of overwriting it. Optional columns still default on a blank cell or an absent column
+  (`confidence` -> `1.0`, `source` -> `"manual"`), so `data/README.md`'s documented bare
+  `id,x,y,number,points,is_hub` example keeps reading exactly as before; `id`/`x`/`y` are never
+  defaulted. `data/README.md`'s own example header is now stale (pre-T022, no `confidence` column) —
+  flagged, not fixed here (outside T022's assigned paths). See TASKS.md T022 for full detail. 229
+  tests pass (223 baseline - 4 moved out of `test_corpus.py` + 10 new in
+  `tests/unit/io/test_controls_csv.py`), `ruff check .` clean.
+  Next: T030 (cost field, M3, deps T002/T003, unblocked).

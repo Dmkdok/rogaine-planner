@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from rogaine.io.corpus import Calibration, list_corpus, read_controls, read_entry
+from rogaine.io.corpus import Calibration, list_corpus, read_entry
 
 
 def _map_dir(root, map_id: str, meta: str = "", *, raster: str = "map.png"):
@@ -90,39 +90,3 @@ class TestListing:
         entries = list_corpus(tmp_path)
         assert [e.map_id for e in entries] == ["bad", "good"]
         assert [e.is_plannable for e in entries] == [False, True]
-
-
-class TestControlsCsv:
-    HEADER = "id,x,y,number,points,is_hub\n"
-
-    def test_reads_and_puts_the_hub_first(self, tmp_path) -> None:
-        csv_path = tmp_path / "controls.csv"
-        csv_path.write_text(
-            self.HEADER + "1,842,410,73,7,false\n0,1600,1200,,0,true\n2,2150,980,45,,false\n",
-            encoding="utf-8",
-        )
-        controls = read_controls(csv_path)
-        assert controls[0].id == 0 and controls[0].is_hub
-        assert [c.id for c in controls] == [0, 1, 2]
-        assert controls[1].points == 7
-        assert controls[2].points is None  # blank means "apply the config's points rule"
-        assert all(c.source == "manual" for c in controls)
-
-    def test_exactly_one_hub_is_required(self, tmp_path) -> None:
-        csv_path = tmp_path / "controls.csv"
-        rows = "0,10,10,,0,false\n1,20,20,45,4,false\n"
-        csv_path.write_text(self.HEADER + rows, encoding="utf-8")
-        with pytest.raises(ValueError, match="exactly one row must set is_hub"):
-            read_controls(csv_path)
-
-    def test_duplicate_ids_are_rejected(self, tmp_path) -> None:
-        csv_path = tmp_path / "controls.csv"
-        csv_path.write_text(self.HEADER + "0,10,10,,0,true\n0,20,20,45,4,false\n", encoding="utf-8")
-        with pytest.raises(ValueError, match="not unique"):
-            read_controls(csv_path)
-
-    def test_a_bad_row_names_its_line(self, tmp_path) -> None:
-        csv_path = tmp_path / "controls.csv"
-        csv_path.write_text(self.HEADER + "0,10,10,,0,true\n1,x,20,45,4,false\n", encoding="utf-8")
-        with pytest.raises(ValueError, match="line 3"):
-            read_controls(csv_path)

@@ -8,13 +8,15 @@ unknown. See ``data/README.md`` for the on-disk contract.
 
 from __future__ import annotations
 
-import csv
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+#: Re-exported, not duplicated: T022 moved the real parsing to ``io/controls_csv`` (the canonical
+#: home for the CSV contract), this module still exposes the name for anything that imports
+#: ``read_controls`` from here.
+from rogaine.io.controls_csv import read_controls as read_controls
 from rogaine.io.scale import Calibration, mpp_from_dpi
-from rogaine.models import Control
 
 #: Files a map directory may hold as its source raster, in the order they are preferred.
 RASTER_SUFFIXES: tuple[str, ...] = (".ocd", ".pdf", ".png", ".tif", ".tiff", ".jpg", ".jpeg")
@@ -139,41 +141,3 @@ def list_corpus(root: Path) -> list[CorpusEntry]:
     if not root.is_dir():
         return []
     return [read_entry(d) for d in sorted(root.iterdir()) if d.is_dir()]
-
-
-def read_controls(csv_path: Path) -> list[Control]:
-    """Load ``controls.csv``. Raises — a controls file that is present must be correct."""
-    with csv_path.open(encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    if not rows:
-        raise ValueError(f"{csv_path} has a header but no controls")
-
-    controls: list[Control] = []
-    for line, row in enumerate(rows, start=2):
-        try:
-            number = int(row["number"]) if (row.get("number") or "").strip() else None
-            points = int(row["points"]) if (row.get("points") or "").strip() else None
-            controls.append(
-                Control(
-                    id=int(row["id"]),
-                    x=float(row["x"]),
-                    y=float(row["y"]),
-                    number=number,
-                    points=points,
-                    confidence=1.0,
-                    source="manual",
-                    is_hub=(row.get("is_hub") or "").strip().lower() in {"true", "1", "yes"},
-                )
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"{csv_path} line {line}: {exc}") from exc
-
-    hubs = [c for c in controls if c.is_hub]
-    if len(hubs) != 1:
-        raise ValueError(f"{csv_path}: exactly one row must set is_hub, found {len(hubs)}")
-    ids = [c.id for c in controls]
-    if len(set(ids)) != len(ids):
-        raise ValueError(f"{csv_path}: control ids are not unique")
-    # The hub is index 0 everywhere downstream (SPEC F14), so put it there once, here.
-    controls.sort(key=lambda c: (not c.is_hub, c.id))
-    return controls

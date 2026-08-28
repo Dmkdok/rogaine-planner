@@ -284,9 +284,39 @@ the implementer's self-report.
   module's own precedent, not the degraded standard fixture (OCR is more noise-sensitive than
   circle/shape detection; the docstring documents why). 223 tests pass (207 baseline + 16 new),
   `ruff check .` clean.
-- [ ] T022 — Controls CSV round-trip — paths: `src/rogaine/io/controls_csv.py` — deps: T002 —
+- [x] T022 — Controls CSV round-trip — paths: `src/rogaine/io/controls_csv.py` — deps: T002 —
   DoD: `id,x,y,number,points,confidence` reads and writes losslessly; a hand-edited CSV fully
   replaces detection; malformed rows are reported with line numbers (F9).
+  Landed 2026-08-28. `read_controls`/`write_controls` in the new module are the single canonical
+  home for the CSV contract, matching the repo map. Real discrepancy found and resolved: the DoD's
+  literal `id,x,y,number,points,confidence` header cannot round-trip losslessly on its own — `is_hub`
+  is structurally required (`Control`/SPEC F14 need exactly one hub, sorted first) and `source`
+  (`detected`/`manual`) is listed as a full `Control` field in SPEC's own "Content / data model"
+  section, on equal footing with `confidence`; dropping either loses real information on a
+  write-detected -> read-back cycle (a re-loaded detected control would become indistinguishable
+  from a hand-typed one). The real written column set is
+  `id,x,y,number,points,confidence,source,is_hub` — the DoD's six columns first, in the DoD's own
+  order, with the two additions appended rather than interleaved. `confidence` itself was the other
+  half of the discrepancy: T005's original `read_controls` (moved here from `io/corpus.py`, which now
+  re-exports the name rather than owning a second copy) hardcoded every row's `confidence` to `1.0`
+  and `source` to `"manual"`, because at the time nothing produced any other value — now T020's Hough
+  ring-coverage score and T021's `min(detection, ocr)` combination do, and this module reads/writes
+  the real value instead of overwriting it. Hand-editing stays ergonomic: `number`, `points`,
+  `confidence`, `source` and `is_hub` all default on a blank cell or an entirely absent column
+  (`confidence` -> `1.0`, `source` -> `"manual"`, matching the old hardcoded behaviour), so
+  `data/README.md`'s documented bare `id,x,y,number,points,is_hub` example still reads exactly as it
+  always did; `id`/`x`/`y` are never defaulted, and a missing or malformed one of those three raises
+  with the line number, same as any other malformed row. Note: `data/README.md`'s own `controls.csv`
+  example is now stale (still shows the pre-T022 6-column header without `confidence`) — out of this
+  task's assigned paths, left for a follow-up rather than touched here.
+  Moved `tests/unit/test_corpus.py::TestControlsCsv`'s 4 tests into the new
+  `tests/unit/io/test_controls_csv.py` (10 tests: a full-field round trip mixing detected/manual
+  and a null number/points control, hub-not-first-on-write still reading hub-first, the bare
+  DoD-header leniency case, and six malformed-row cases including confidence-out-of-range and an
+  invalid `source` value, both now real checks now that `confidence`/`source` are live columns
+  instead of hardcoded). `corpus.py` no longer imports `csv` or `Control` directly — both were only
+  ever used by the function that moved. 229 tests pass (223 baseline - 4 moved + 10 new), `ruff
+  check .` clean.
 
 ## M3 — Cost field and travel matrix (WS-B)
 
