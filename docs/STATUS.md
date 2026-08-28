@@ -4,7 +4,8 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); T040 (objective and feasibility, M4, deps T002) next
+  complete (T030-T032 landed); T040 (objective and feasibility, M4) landed; T041 (exact Held-Karp,
+  M4, deps T040) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -267,3 +268,25 @@ ask the owner what it's for before touching it.
   Measured on the real 4000x3000/downsample=4 preset with 61 controls: 11.2s wall time against the
   60s budget. See TASKS.md T032 for full detail. 270 tests pass (256 baseline + 14 new), `ruff
   check .` clean. Next: T040 (objective and feasibility, M4, deps T002, unblocked).
+- 2026-08-29: T040 (objective and feasibility, M4) landed — new `src/rogaine/solve/` package;
+  `score_order` in `objective.py` scores one candidate visit order against a `TravelMatrix` and
+  `RunConfig`, returning a `ScoredOrder` (totals, points, penalty, score, feasible), deliberately
+  no `Route`/`Leg` construction (left to T041/T042). Five design decisions, each documented in the
+  module's own docstring: units (`penalty_per_min` is per-minute, so the seconds-denominated
+  overrun is divided by 60 before multiplying — a literal transcription would overcharge 60x); a
+  visited control with `points is None` raises rather than scoring `0` (ADR-009 — same class of
+  guess as the reading itself), with the hub exempt from that check and from the points sum since
+  it is a waypoint, not a scored control; an unreachable leg surfaces as a cheap `feasible: bool`
+  plus `score = -inf`, never a raised exception (unlike `points is None`, unreachable pairs are a
+  per-order property the heuristic solver's hot loop will hit often), with feasibility decided
+  before the per-minute formula runs so `penalty_per_min == 0.0` combined with an infinite overrun
+  never hits IEEE-754's `0 * inf = nan`; hub enforcement resolves the actual `is_hub` control and
+  checks both ends against its id specifically, not just that they match each other. One real
+  defect found and fixed: an initial `zip(order, order[1:], strict=True)` raised on every call
+  (the two sequences are one element apart by construction) — replaced with `itertools.pairwise`
+  per `ruff`'s own `RUF007`. See TASKS.md T040 for full detail. 11 new tests
+  (`tests/unit/solve/test_objective.py`), all hand-computed against a uniform 300s/500m fixture
+  matrix, covering exactly-on-limit, just/well past the limit, `penalty_per_min == 0.0` overrun,
+  the unreachable-leg nan regression, hub-mismatch rejection, unresolved-points rejection, and the
+  hub's own `None` points not being flagged. 281 tests pass (270 baseline + 11 new), `ruff check .`
+  clean. Next: T041 (exact Held-Karp, M4, deps T040, unblocked).

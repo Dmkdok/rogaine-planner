@@ -463,9 +463,49 @@ the implementer's self-report.
 
 ## M4 — Solvers and bench (WS-B)
 
-- [ ] T040 — Objective and feasibility — paths: `src/rogaine/solve/objective.py` — deps: T002 —
+- [x] T040 — Objective and feasibility — paths: `src/rogaine/solve/objective.py` — deps: T002 —
   DoD: `score = sum(points) - penalty_per_min * max(0, T - limit)`; hub start and end enforced;
   unit-tested on hand-computed cases including exactly-on-limit (F14).
+  Landed 2026-08-29. New `src/rogaine/solve/` package; `score_order` in `objective.py` scores one
+  candidate visit `order` against a `TravelMatrix` and `RunConfig`, returning a `ScoredOrder`
+  dataclass (`order`, `total_seconds`, `total_meters`, `points`, `penalty`, `score`, `feasible`) —
+  no `Route`/`Leg` construction. Five documented design decisions, each with its own docstring
+  section: (1) **units** — `penalty_per_min` is per-*minute*, every duration elsewhere is seconds,
+  so `penalty = penalty_per_min * max(0, T_seconds - limit_seconds) / 60.0`; a literal
+  transcription of the DoD's formula against raw seconds would overcharge by 60x. (2) **`points is
+  None`** — a visited non-hub control with unresolved points (ADR-009) makes `score_order` raise
+  `ValueError` naming the id(s), not score as `0`; scoring an unknown number as zero is the same
+  class of guess ADR-009 refuses for the reading itself, one layer downstream. The hub is exempt
+  from this check and from the points sum (it is a waypoint, not a scored control, and its own
+  `points` is almost always `None` since OCR never reads a number off the start/finish marker).
+  (3) **feasibility** — an unreachable leg (`TravelMatrix.seconds == inf`) surfaces as
+  `ScoredOrder.feasible = False` plus `score = -inf`, never a raised exception: unlike `points is
+  None` (a static per-control property a caller filters out of its search space once), an
+  unreachable pair is a dynamic property of a specific order the heuristic solver (T042) will
+  re-encounter many times a second, and exception handling in that hot loop is a real cost.
+  Feasibility is decided first, from `total_seconds` being a finite sum of non-negative legs, and
+  short-circuits to `penalty = inf` / `score = -inf` before the per-minute formula runs — otherwise
+  an infeasible order combined with `penalty_per_min == 0.0` hits IEEE-754's `0 * inf = nan`
+  instead of the intended `-inf`; that combination is tested explicitly as a regression. (4) **only
+  the cheap scoring path is built** — the DoD asks for the formula and hub enforcement, not full
+  `Route` construction (which needs `solver`/`optimal`/`seed`, all solver-owned concerns); building
+  simplified polylines for every candidate a solver's inner loop touches is unrequested work, left
+  to T041/T042. (5) **hub enforcement checks the actual hub** — `Route`'s own validator only checks
+  `order[0] == order[-1]`, true for *any* self-loop; `score_order` additionally resolves the one
+  `Control` with `is_hub=True` and checks both ends equal that id specifically, raising a clear
+  error otherwise, checked first before any matrix arithmetic. One real defect found and fixed
+  during development: an initial `zip(order, order[1:], strict=True)` for the pairwise-leg loop
+  raised `ValueError` on every call (the two sequences are one element apart by construction, same
+  "ragged on purpose: N-1 pairs" pattern `Route._legs_match_order` already comments on) — replaced
+  with `itertools.pairwise`, which is also what `ruff`'s `RUF007` recommends over the raw `zip`
+  idiom. Tests (`tests/unit/solve/test_objective.py`, 11 new, all hand-computed against a uniform
+  300s/500m fixture matrix so `n_legs * 300` / `n_legs * 500` needs no calculator): exactly-on-limit
+  (penalty exactly `0`), just-over-limit, well-under-limit, `penalty_per_min == 0.0` overrunning
+  freely, an unreachable-leg order both with a normal rate and with `penalty_per_min == 0.0` (the
+  nan regression), a non-hub self-loop rejected, a visited `points=None` control rejected, the
+  hub's own `None` points *not* flagged, no-hub-in-controls rejected, and an unknown control id
+  rejected. 281 tests pass (270 baseline + 11 new), `ruff check .` clean.
+  Next: T041 (exact Held-Karp, M4, deps T040, unblocked).
 - [ ] T041 — Exact Held-Karp — paths: `src/rogaine/solve/exact.py` — deps: T040 —
   DoD: optimal for N up to 15 within memory; agrees with brute force for N up to 9 on random
   matrices; refuses N above the configured cap with a clear message instead of exhausting RAM (F12).
