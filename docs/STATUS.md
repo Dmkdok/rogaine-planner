@@ -4,7 +4,7 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3's
-  T030 (cost field) landed; T031 (grid graph, deps T030) next
+  T030-T031 (cost field, grid graph) landed; T032 (travel matrix, deps T031) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -19,8 +19,9 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **236 passed**, exit 0 (2026-08-28). `ruff check .` clean.
-Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
+`docker compose run --rm tests` — **256 passed**, exit 0 (2026-08-29). `ruff check .` clean.
+Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
+graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
 Image verified to carry `tesseract 5.5.0` and `cv2 5.0.0`; `docker compose run --rm app` prints the
@@ -225,3 +226,25 @@ ask the owner what it's for before touching it.
   `base_speed_mps <= 0` rejection. See TASKS.md T030 for full detail. 236 tests pass (229 baseline +
   7 new), `ruff check .` clean.
   Next: T031 (grid graph, M3, deps T030).
+- 2026-08-29: T031 (grid graph, M3) landed — new `build_grid_graph` in `src/rogaine/cost/graph.py`
+  turns a `CostField` into an 8-connected `scipy.sparse` CSR grid graph, one node per
+  `downsample x downsample` block, built vectorised (numpy reshape/sum aggregation, four slice-pair
+  calls for the 8-connected edge set, no Python loop over nodes or edges). Four documented judgement
+  calls: edge weight = `spacing * avg(rate_u, rate_v)` (`downsample` orthogonal, `downsample *
+  sqrt(2)` diagonal) — the standard trapezoidal cost-distance discretisation, dimensionally
+  consistent with T030's per-pixel formula and exact at `downsample == 1`; a block is passable iff
+  it has at least one passable original pixel, rated by the mean over only those pixels (rejected a
+  naive full-block mean, which would let one impassable pixel poison an otherwise-open block, and
+  stride-sampling, which could step clean over a one-pixel barrier); `strict_impassable=true`
+  creates no edge touching an impassable block (node index unchanged, just degree zero) while
+  `false` substitutes `impassable_cost_multiplier * (mean rate of every passable block)` as a
+  single global reference rate, chosen over a literal per-edge local one because that is ill-defined
+  for an edge between two impassable blocks; node/pixel mapping uses this codebase's `(x, y)`
+  pixel convention (`Control.x`/`Control.y`, `Leg.polyline`), floors sub-pixel input, and returns
+  each block's top-left pixel as the canonical representative, with `node -> pixel -> node`
+  round-tripping exactly always and `pixel -> node -> pixel` exactly only at `downsample == 1`. No
+  further defects found — the vectorised implementation matched hand-computed values on first run.
+  Measured on the real 4000x3000/downsample=4 preset (750,000 nodes, ~5.99M CSR nonzeros): 0.34-0.53s
+  wall time, ~406 MiB tracemalloc peak, against the 15s/1GB budget. See TASKS.md T031 for full detail.
+  256 tests pass (236 baseline + 20 new in `tests/unit/cost/test_graph.py`), `ruff check .` clean.
+  Next: T032 (travel matrix and path reconstruction, M3, deps T031).

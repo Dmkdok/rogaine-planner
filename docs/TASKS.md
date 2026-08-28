@@ -350,10 +350,57 @@ the implementer's self-report.
   bijection (`isfinite(seconds_per_pixel) == passable` exactly, no `nan` anywhere), and
   `base_speed_mps <= 0` rejection. 236 tests pass (229 baseline + 7 new), `ruff check .` clean.
   Next: T031 (grid graph, deps T030, unblocked).
-- [ ] T031 — Grid graph — paths: `src/rogaine/cost/graph.py` — deps: T030 —
+- [x] T031 — Grid graph — paths: `src/rogaine/cost/graph.py` — deps: T030 —
   DoD: 8-connected CSR graph with sqrt(2) diagonals and configurable `graph_downsample`; node/pixel
   mapping is exact both ways; a 4000x3000 map at downsample 4 builds in under 15 s and stays under
   1 GB.
+  Landed 2026-08-29. New `build_grid_graph(cost_field, config=None) -> GridGraph`, a local frozen
+  dataclass (not `models.py` — this graph type is T031/T032's own internal handoff) wrapping a
+  symmetric `scipy.sparse.csr_matrix` plus grid shape/downsample/block arrays and the node<->pixel
+  conversion. Vectorised throughout (numpy reshape/sum for aggregation, four slice-pair calls for
+  the 8-connected edge set) — no Python loop over nodes or edges. Four judgement calls, all
+  documented in the module docstring: (1) **edge weight** = `spacing * avg(rate_u, rate_v)`, spacing
+  `downsample` orthogonal / `downsample * sqrt(2)` diagonal — the standard trapezoidal
+  cost-distance discretisation, dimensionally consistent with `t = mpp / (v_base * k_terrain *
+  k_slope)` being seconds-per-pixel times pixels crossed; reduces exactly to the finest per-pixel
+  grid at `downsample == 1`. (2) **downsample aggregation**: a block is passable iff it has >=1
+  passable original pixel, and its rate is the mean of `seconds_per_pixel` over only that block's
+  passable pixels (`+inf` pixels excluded from the mean, not averaged in) — rejected both a naive
+  full-block mean (one impassable pixel would poison an otherwise-open block to `+inf`, defeating
+  `downsample`'s whole point as a performance knob per ADR-002) and stride-sampling (could step
+  clean over a one-pixel barrier); the vectorised reshape+sum still inspects every constituent
+  pixel, so a barrier is only invisible when it fills an entire block. (3) **`strict_impassable`**:
+  true (default) creates no edge touching an impassable block — the node index still exists so
+  numbering never shifts with the flag, but degree zero keeps Dijkstra out; false substitutes
+  `impassable_cost_multiplier * (mean rate of every passable block on the map)` as that block's
+  effective rate, a single global reference chosen over a literal per-edge local one because the
+  latter is ill-defined for an edge between two impassable blocks or an impassable region with no
+  passable neighbour at all — `multiplier > 1.0` (config-validated) guarantees the result is always
+  finite, never zero, never equal to an ordinary edge. (4) **node/pixel mapping**: nodes numbered
+  row-major over the block grid; `pixel_to_node(x, y)` floors sub-pixel `(x=col, y=row)` input
+  (`Control`'s own convention) then floor-divides by `downsample`; `node_to_pixel`/`nodes_to_pixels`
+  return each block's top-left pixel as `(x, y)` (matching `Leg.polyline`/`TravelMatrix.paths`'
+  documented convention, not array `(row, col)`) — top-left rather than centre because it's always a
+  real in-bounds pixel even for a partial trailing block. `node -> pixel -> node` round-trips
+  exactly always (what T032 needs for placing a `Control` and reading a path's pixels back);
+  `pixel -> node -> pixel` only round-trips exactly at `downsample == 1`, by design. No additional
+  defects found beyond these four documented judgement calls — the initial implementation matched
+  hand-computed expected values on first run (verified via an ad hoc smoke script against the real
+  formula before the pytest suite was written). Tests (`tests/unit/cost/test_graph.py`, 20 new):
+  8-connectivity/corner-vs-interior degree/symmetry/diagonal-sqrt(2)-ratio at `downsample=1`;
+  strict-vs-relaxed impassable edges with an exact hand-computed weight
+  (`1 * (2 + multiplier*2) / 2`); `downsample=2` aggregation over a block with 3 passable + 1
+  impassable pixel and a fully-impassable block; node<->pixel round trip at `downsample=1` and at
+  `downsample=3` over an irregular 7x5 grid (exercises the partial trailing block); float
+  sub-pixel flooring; out-of-bounds rejection; `nodes_to_pixels` vectorised match. Perf test builds
+  an equivalent-size synthetic `CostField` directly (not the full segmentation pipeline, to keep
+  this budget isolated from `test_palette.py`'s own 30s segmentation budget) at the real
+  4000x3000/downsample=4 preset: measured 0.34-0.53 s wall time and ~406 MiB tracemalloc peak
+  against the 15s/1GB budget (750,000 nodes, ~5.99M CSR nonzeros); `tracemalloc` only tracks
+  Python-heap allocations, but numpy/scipy normally allocate through the same allocator, so this
+  reading looks representative rather than a severe undercount — comfortably inside budget either way.
+  256 tests pass (236 baseline + 20 new), `ruff check .` clean.
+  Next: T032 (travel matrix and path reconstruction, deps T031, unblocked).
 - [ ] T032 — Travel matrix and path reconstruction — paths: `src/rogaine/cost/travel.py` — deps: T031 —
   DoD: `scipy.sparse.csgraph.dijkstra` from each control; matrix symmetric within tolerance;
   per-pair polylines reconstructed from predecessors and simplified for rendering; unreachable pairs
