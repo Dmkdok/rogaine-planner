@@ -258,10 +258,32 @@ the implementer's self-report.
   numbers: recall 1.000, precision 1.000, max centre error 3.85px against a floor of 8.86px
   (radius/4); hub triangle centroid within a few px of true hub position.
   207 tests pass (198 baseline + 9 new), `ruff check .` clean.
-- [ ] T021 — Number OCR and points rule — paths: `src/rogaine/vision/ocr.py` — deps: T020 —
+- [x] T021 — Number OCR and points rule — paths: `src/rogaine/vision/ocr.py` — deps: T020 —
   DoD: digits read from a crop beside each circle with a confidence; points rule `first_digit` /
   `constant` / CSV; unreadable numbers emit `points: null` and a flag, never a guess; OCR failure
   degrades the run, never aborts it (F8).
+  Landed 2026-08-28. `read_control_number`/`read_control_numbers` in `vision/ocr.py` build a
+  purple-only crop around each non-hub `Control` (`purple_mask`, reused from T020), blank the
+  control's own circle ring, run `pytesseract.image_to_data` (psm 7, digit whitelist), and combine
+  OCR confidence with T020's detection confidence by `min()`. Two crop-geometry findings, both
+  measured against `clean_synthetic_map` end to end rather than tuned blind: the printed circle ring
+  is the same purple ink as the number, so left in the crop Tesseract reads the ring itself as
+  garbage text (fixed by masking a disk sized off `_CIRCLE_MASK_RADIUS_FACTOR`); a crop sized to
+  exactly `number_search_radius` clips the second digit of a two-digit number (1/12 read correctly),
+  fixed by `_CROP_MARGIN_FACTOR` headroom (11/12). The twelfth control sits close enough to the
+  course boundary that its purple out-of-bounds hatching lands inside even the widened crop — stated
+  as a real, documented limitation (flagged `number=None`, never a guess) rather than chased with a
+  wider margin, which measured worse (catches neighbouring ink instead).
+  The DoD's "unreadable numbers emit `points: null`" reads as a blanket rule, but ADR-009 carves out
+  `constant` in the same breath ("the points rule can fall back to a constant") — a constant-points
+  control's score never depended on the reading, so this module assigns `points_constant` under
+  `constant` even when the number itself stays unreadable and flagged; `first_digit` (the DoD's
+  literal case) and `csv` (T022's placeholder, always `points=None` here) are unaffected. See the
+  module's own docstring for the full reasoning.
+  16 new tests (`tests/unit/vision/test_ocr.py`), all measured against `clean_synthetic_map` per the
+  module's own precedent, not the degraded standard fixture (OCR is more noise-sensitive than
+  circle/shape detection; the docstring documents why). 223 tests pass (207 baseline + 16 new),
+  `ruff check .` clean.
 - [ ] T022 — Controls CSV round-trip — paths: `src/rogaine/io/controls_csv.py` — deps: T002 —
   DoD: `id,x,y,number,points,confidence` reads and writes losslessly; a hand-edited CSV fully
   replaces detection; malformed rows are reported with line numbers (F9).

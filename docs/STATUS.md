@@ -3,8 +3,8 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 T010-T016 landed (T017 blocked on owner data); M2 in progress — T020 landed, T021
-  (number OCR) next
+current: M1 T010-T016 landed (T017 blocked on owner data); M2 T020-T021 landed, T022 (controls CSV
+  round-trip) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -19,7 +19,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 in progress — T0
 
 ## Test report
 
-`docker compose run --rm tests` — **207 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **223 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -168,4 +168,25 @@ ask the owner what it's for before touching it.
   max centre error 3.85px against an 8.86px floor. The DoD's "finish double-circle" has nothing to
   test: this project's start = finish convention means the fixture (and the project) has only one hub
   marker, stated plainly rather than fabricated. See TASKS.md T020 for full detail. 207 tests pass,
-  `ruff check .` clean. Next: T021 (number OCR and points rule, deps T020, landed).
+  `ruff check .` clean.
+- 2026-08-28: T021 (number OCR and points rule, M2) landed — `vision/ocr.py`'s
+  `read_control_number`/`read_control_numbers` crop each non-hub control's number from a purple-only
+  mask (T020's `purple_mask` reused), erase the circle's own ring, run `pytesseract` (psm 7, digit
+  whitelist), and take `min(detection confidence, OCR confidence)` as the combined trust. Two
+  crop-geometry findings, both measured end to end against `clean_synthetic_map` rather than tuned
+  blind: the circle ring is the same purple ink as the number and reads as garbage text left in the
+  crop (fixed by masking a ring-sized disk); a crop sized to exactly `number_search_radius` clips the
+  second digit (1/12 read correctly), fixed by added margin headroom (11/12). The twelfth control's
+  purple out-of-bounds hatching sits close enough to the course boundary to land inside even the
+  widened crop — documented as a real limitation (flagged, `number=None`, never a guess) rather than
+  chased with a wider margin, which measures worse. ADR-009 carves the `constant` points rule out of
+  the DoD's blanket "unreadable emits null" wording — a constant-points control's score never
+  depended on the reading, so `constant` still assigns `points_constant` even when the number itself
+  stays unreadable and flagged; `first_digit` and `csv` are unaffected. This module's implementation
+  and its 16 tests (`tests/unit/vision/test_ocr.py`) both existed uncommitted from a prior session
+  when this one picked the work back up — verified against the tree rather than trusted, per this
+  file's own standing instruction, and a stray `ruff` finding (`zip()` without `strict=`) fixed along
+  the way. Also cleaned up: a `.tmp_dev/` directory of ad hoc debug scripts from that prior session's
+  OCR-tuning exploration, superseded by the two findings above now written into `ocr.py`'s docstring
+  and no longer needed. See TASKS.md T021 for full detail. 223 tests pass, `ruff check .` clean.
+  Next: T022 (controls CSV round-trip, deps T002, unblocked).
