@@ -160,10 +160,35 @@ the implementer's self-report.
   masks now also exclude `noise_mask`, the same treatment already given to `contour_mask` and for
   the same reason: black overprint classifies as `road`, not the area class underneath.
   166 tests pass (152 baseline + 14 new), `ruff check .` clean.
-- [ ] T015 — Contour density and slope factor — paths: `src/rogaine/vision/contours.py` — deps: T013 —
+- [x] T015 — Contour density and slope factor — paths: `src/rogaine/vision/contours.py` — deps: T013 —
   DoD: brown contour mask, density by Gaussian blur, `k_slope` from config; a contour-dense fixture
   region yields a strictly higher cost than a flat region of the same class; coefficient documented
   as direction-blind (F6).
+  Landed 2026-08-28. `contour_mask` picks out `classify_palette`'s `contour` label; `contour_density`
+  Gaussian-blurs it (sigma configured in mm, converted via DPI like every other geometric tunable in
+  `config/default.toml` — `LinearSettings.nominal_width_px`, `DetectorSettings.circle_radius_px`) and
+  clips to `[0, 1]` for `TerrainMap.contour_density`; `k_slope(density) = 1 / (1 + penalty*density)`,
+  the reciprocal of the config's own "speed divided by (1 + penalty*density)" so T030 can apply it by
+  multiplication alongside `k_terrain`. Direction-blindness (ADR-006) is stated in both functions'
+  docstrings, not just the ADR. Fixture acceptance test reuses `test_synth_map.py`'s own top-quarter
+  (steep) vs bottom-quarter (flat) split, sampled on `forest_runnable` pixels in both bands after a
+  real `classify_palette` pass (no ground-truth shortcut): dense-region cost is ~4.4% above flat, gate
+  set at 2% margin, not a bare inequality.
+  Independent review (before any code was called done) found no defect in the DoD itself but four
+  real issues, all fixed: (1) `config/default.toml`'s original comment claimed density is "normalised
+  to [0, 1]" and the steepest ground reaches a 3x cost multiplier — false on any real map, since
+  contour-line gaps dominate real area; the fixture's own density never exceeds ~0.40. Wording fixed
+  to describe density as a clipped area fraction with a stated theoretical (not reachable) floor.
+  (2) `k_slope` validated array shape only, not dtype or range — an out-of-contract input (wrong
+  dtype, or a density outside `[0, 1]`) silently produced `inf`/negative factors, which would read as
+  a zero-cost or negative graph edge to T031/T032's Dijkstra rather than raising. Added dtype and
+  range checks. (3) the Gaussian sigma was a raw pixel constant with no `dpi` parameter, unlike every
+  other physical size in this config — the same terrain scanned at a different DPI got a different
+  smoothing scale in real millimetres. `SlopeSettings.density_sigma` (px) became `density_sigma_mm`
+  plus a `density_sigma_px(dpi)` helper; `contour_density` gained a `dpi` parameter, mirroring
+  `extract_linear_features(labels, dpi, config)`. (4) a docstring referenced a README and route output
+  that do not exist yet in this repo — changed to future tense pointing at M5/M6.
+  184 tests pass (166 baseline + 18 new), `ruff check .` clean.
 - [ ] T016 — Segmentation orchestration and preview — paths: `src/rogaine/vision/segment.py`,
   `src/rogaine/render/preview.py` — deps: T013, T014, T015 —
   DoD: produces a `TerrainMap` plus a legible preview PNG; `terrain.npz` round-trips; IoU report

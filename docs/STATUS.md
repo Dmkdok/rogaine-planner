@@ -3,7 +3,7 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 in progress — T010-T014 landed, T015 (contour density and slope factor) next
+current: M1 in progress — T010-T015 landed, T016 (segmentation orchestration and preview) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -18,7 +18,7 @@ current: M1 in progress — T010-T014 landed, T015 (contour density and slope fa
 
 ## Test report
 
-`docker compose run --rm tests` — **166 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **184 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -129,5 +129,15 @@ ask the owner what it's for before touching it.
   (`minAreaRect` aspect ratio) was added. See TASKS.md T014 for the full detail. Fixture extended
   with black map-text/point-symbol noise so F5's false-positive bar has something real to measure
   (0.0% false-positive corridor area; 100% single-component coverage on an isolated path, both
-  against their DoD bars). 166 tests pass, `ruff check .` clean. Next: T015 (contour density and
-  slope factor, WS-A).
+  against their DoD bars). 166 tests pass, `ruff check .` clean.
+- 2026-08-28: T015 (contour density and slope factor) landed — `contour_density` Gaussian-blurs the
+  palette's `contour` label (sigma in mm, converted via DPI, matching every other physical tunable in
+  `config/default.toml`) into `TerrainMap.contour_density`; `k_slope(density) = 1/(1 + penalty *
+  density)` is the reciprocal T030 will multiply into `k_terrain`. Independent review before landing
+  found four real issues, all fixed: a config comment claiming density reaches 1.0 on a real map
+  (it tops out near 0.40 on the fixture — contour-line gaps dominate real area); `k_slope` accepting
+  out-of-contract input (wrong dtype, outside `[0, 1]`) and silently producing `inf`/negative factors
+  instead of raising; the blur sigma being a raw pixel constant instead of mm+DPI like every sibling
+  setting; a docstring pointing at a README and route output that don't exist yet. See TASKS.md T015
+  for full detail. 184 tests pass, `ruff check .` clean. Next: T016 (segmentation orchestration and
+  preview, WS-A).

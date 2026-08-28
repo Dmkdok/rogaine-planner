@@ -288,10 +288,15 @@ close_radius_px = 2
 # Slope from contour density (T015, ADR-006)
 # --------------------------------------------------------------------------------------------
 [slope]
-# Gaussian sigma (pixels) used to turn the contour mask into a local density field.
-density_sigma = 12.0
-# Density is normalised to [0, 1], then speed is divided by (1 + penalty * density).
-# 2.0 means the steepest ground on the map costs three times the flat equivalent.
+# Gaussian sigma, in millimetres on paper (converted to pixels via the map's own DPI -- never
+# hardcoded in pixels, the same convention [linear] uses), for blurring the contour mask into a
+# local density field. 1.0mm @ 300dpi ~= 11.8px, close to the originally hand-tuned 12px value.
+density_sigma_mm = 1.0
+# Density is a locally-blurred contour-ink area fraction, clipped to [0, 1] -- not normalised to
+# span it: gaps between contour lines are most of any real area, so a real map's steepest terrain
+# never gets close to 1.0 (this project's own fixture measures well under 0.5 at its densest).
+# Speed is divided by (1 + penalty * density); 1/(1 + penalty) is a theoretical floor reached only
+# under solid, wall-to-wall contour ink, not a bound any real map's density actually reaches.
 penalty = 2.0
 
 # --------------------------------------------------------------------------------------------

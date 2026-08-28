@@ -185,8 +185,17 @@ class LinearSettings(BaseModel):
 class SlopeSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    density_sigma: float = Field(gt=0.0)
+    density_sigma_mm: float = Field(gt=0.0)
     penalty: float = Field(ge=0.0)
+
+    def density_sigma_px(self, dpi: float) -> float:
+        """Gaussian blur sigma in pixels, for a raster at *dpi*.
+
+        The blur radius is a fixed size *on paper*, like every other geometric tunable in this
+        config (``LinearSettings.nominal_width_px``, ``DetectorSettings.circle_radius_px``) -- so
+        its pixel size follows from the scan resolution alone, never a hardcoded pixel constant.
+        """
+        return self.density_sigma_mm * dpi / 25.4
 
 
 class DetectorSettings(BaseModel):
