@@ -3,7 +3,7 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 in progress — T010-T015 landed, T016 (segmentation orchestration and preview) next
+current: M1 in progress — T010-T016 landed, T017 (palette validation across the real corpus) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -18,7 +18,7 @@ current: M1 in progress — T010-T015 landed, T016 (segmentation orchestration a
 
 ## Test report
 
-`docker compose run --rm tests` — **184 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **198 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -139,5 +139,17 @@ ask the owner what it's for before touching it.
   out-of-contract input (wrong dtype, outside `[0, 1]`) and silently producing `inf`/negative factors
   instead of raising; the blur sigma being a raw pixel constant instead of mm+DPI like every sibling
   setting; a docstring pointing at a README and route output that don't exist yet. See TASKS.md T015
-  for full detail. 184 tests pass, `ruff check .` clean. Next: T016 (segmentation orchestration and
-  preview, WS-A).
+  for full detail. 184 tests pass, `ruff check .` clean.
+- 2026-08-28: T016 (segmentation orchestration and preview) landed — `vision/segment.py`'s
+  `segment()` chains normalize -> classify_palette -> extract_linear_features -> contour_density
+  into one `TerrainMap`, plus a `terrain.npz` round-trip and a shared `iou_report` helper T017 will
+  reuse; new `render/preview.py` colours labels by their nominal printed colour via a vectorised
+  lookup table and writes the PNG. Two real findings: `unknown` and `forest_runnable` both render
+  white (both classes' shades resolve there independently — a legitimate config fact, documented and
+  regression-tested, not a bug); the first IoU-floor test measured against the clean fixture and
+  failed hard because `segment()`'s unconditional `normalize()` step measurably hurts an
+  already-clean render (`test_normalize.py` already documented this), fixed by measuring on the
+  degraded fixture instead, matching `test_palette.py`'s own precedent. See TASKS.md T016 for full
+  detail. 198 tests pass, `ruff check .` clean. Next: T017 (palette validation across the real
+  corpus) — blocked on the owner for scale/DPI/controls/reference route on the real maps (see
+  "Blocked on the owner" below); until then, only the fixture side of T017 is workable.

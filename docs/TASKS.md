@@ -189,10 +189,37 @@ the implementer's self-report.
   `extract_linear_features(labels, dpi, config)`. (4) a docstring referenced a README and route output
   that do not exist yet in this repo — changed to future tense pointing at M5/M6.
   184 tests pass (166 baseline + 18 new), `ruff check .` clean.
-- [ ] T016 — Segmentation orchestration and preview — paths: `src/rogaine/vision/segment.py`,
+- [x] T016 — Segmentation orchestration and preview — paths: `src/rogaine/vision/segment.py`,
   `src/rogaine/render/preview.py` — deps: T013, T014, T015 —
   DoD: produces a `TerrainMap` plus a legible preview PNG; `terrain.npz` round-trips; IoU report
   printed per class.
+  Landed 2026-08-28. `segment()` chains `normalize` -> `classify_palette` -> `extract_linear_features`
+  -> `contour_density` into one `TerrainMap`, taking `dpi` and `meters_per_pixel` as separate explicit
+  parameters (neither derives from the other: `dpi` is scan resolution for the config's mm-based
+  tunables, `meters_per_pixel` is ground distance per pixel from either `dpi`+scale or two-point
+  calibration, and `MapContext` carries only the latter). `save_terrain_map`/`load_terrain_map`
+  round-trip `terrain.npz` via `np.savez_compressed`, exact on `labels` and `contour_density`.
+  `iou_report`/`format_iou_report` promote the per-class IoU pattern T013-T015's fixture tests each
+  wrote by hand into one shared function, for `tools/palette_report.py` (T017) to reuse. New
+  `src/rogaine/render/` package: `render_preview` colours `TerrainMap.labels` by each class's nominal
+  printed colour via a vectorised `TERRAIN_ORDER`-indexed lookup table (no per-pixel Python loop —
+  matters at the 4000x3000 full-size preset); `write_preview` writes it as a PNG (BGR-swapped for
+  `cv2.imwrite`, which fails silently on a bad path — checked and raised explicitly instead).
+  Two real findings, both from failing assertions, not hunches:
+  1. `unknown`'s shade is literally `"none"` (`config/default.toml`), which resolves to white —
+     the same white `forest_runnable` renders via its own shade (`white`, ink `"none"`, tint 0). Both
+     are legitimate, independently-justified config choices (ISOM convention for unmarked forest vs.
+     this project's "no classification" marker), so `render_preview` does not invent an unrequested
+     colour to separate them; documented in the module docstring and locked in with a regression test.
+  2. The first IoU-floor test asserted `min(area IoU) >= 0.85` against the *clean* fixture and failed
+     hard (`veg_slow_run=0.156`, `water_shallow=0.276`, several linear classes 0.22-0.45): `segment()`
+     unconditionally runs `normalize()`, and `test_normalize.py`'s own docstring already documents
+     that grey-world white balance run on an already-clean, zero-tint render moves area classes
+     *away* from the classifier's true CMYK palette, not towards it. Fixed by measuring on the
+     *degraded* fixture instead — the realistic scan case `segment()` exists for — at the same 0.60
+     mean-not-min floor `test_palette.py`'s own normalize+classify composition test already
+     established (measured here: 0.63).
+  198 tests pass (184 baseline + 14 new), `ruff check .` clean.
 - [ ] T017 — Palette validation across the real corpus — paths: `tools/palette_report.py`,
   `docs/palette-findings.md` — deps: T005, T016 —
   DoD: runs the classifier over every corpus map and reports per-map `unknown` fraction and the
