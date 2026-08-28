@@ -320,9 +320,36 @@ the implementer's self-report.
 
 ## M3 — Cost field and travel matrix (WS-B)
 
-- [ ] T030 — Cost field — paths: `src/rogaine/cost/field.py` — deps: T002, T003 —
+- [x] T030 — Cost field — paths: `src/rogaine/cost/field.py` — deps: T002, T003 —
   DoD: `t = mpp / (v_base * k_terrain * k_slope)` as float32 seconds per pixel plus a passability
   mask; impassable classes excluded; a hand-checked 5x5 case matches the formula exactly (F10).
+  Landed 2026-08-28. New `src/rogaine/cost/` package; `compute_cost_field(terrain, base_speed_mps,
+  config=None)` gathers `k_terrain = config.speed_factors()[labels]` and `passable =
+  config.passability()[labels]`, calls T015's `k_slope(contour_density, config)` unchanged, and
+  divides with `out=`/`where=passable` so the division literally never executes at an impassable
+  cell. Two real judgement calls, both documented in the module docstring rather than decided
+  silently: (1) impassable pixels store `+inf`, never `nan` — proved never reachable, since `mpp`
+  is always positive and finite and `k_slope` is always strictly positive for a finite
+  non-negative `penalty`, so the only zero factor the denominator can ever have is `k_terrain`,
+  giving a positive number over zero; `+inf` satisfies `CostField`'s own finite-only-if-passable
+  invariant and fails loudly if future code ever sums the raw array without checking `passable`
+  first, rather than silently reading as a plausible finite cost. (2) a real defect found and
+  fixed before it ever crashed: `contour` is `passable = true` with `speed_factor = 0.0` by
+  design (`TerrainSpec`'s own validator carves out exactly this exception; the config comment
+  reads "not an area class: contours only feed the slope penalty, never the speed table") — the
+  raw formula literally divides by zero at a *passable* cell there, which would have raised inside
+  `CostField.__post_init__` on any map with contour ink, i.e. nearly every real map. Fixed by
+  neutralising `k_terrain` to `1.0` wherever a pixel is passable yet its gathered `k_terrain` is
+  `0.0` (by `TerrainSpec`'s validator this can only be the contour case), leaving only `k_slope`'s
+  density-driven penalty at those pixels, exactly as the config comment prescribes. Hand-checked
+  5x5 fixture (`tests/unit/cost/test_field.py`) covers five homogeneous rows — `forest_runnable`,
+  `road`, `water_uncrossable` (impassable), `contour` (the neutralised case), `road` again at a
+  different density — with per-pixel expected cost computed independently in the test from
+  `config.terrain_of(cls).speed_factor` and the plain `1/(1+penalty*density)` formula, never by
+  calling `compute_cost_field` itself; also covers dtype (float32/bool), the passable/finite
+  bijection (`isfinite(seconds_per_pixel) == passable` exactly, no `nan` anywhere), and
+  `base_speed_mps <= 0` rejection. 236 tests pass (229 baseline + 7 new), `ruff check .` clean.
+  Next: T031 (grid graph, deps T030, unblocked).
 - [ ] T031 — Grid graph — paths: `src/rogaine/cost/graph.py` — deps: T030 —
   DoD: 8-connected CSR graph with sqrt(2) diagonals and configurable `graph_downsample`; node/pixel
   mapping is exact both ways; a 4000x3000 map at downsample 4 builds in under 15 s and stays under

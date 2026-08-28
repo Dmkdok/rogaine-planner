@@ -4,7 +4,7 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3's
-  T030 (cost field, deps T002/T003, both landed) next
+  T030 (cost field) landed; T031 (grid graph, deps T030) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -19,7 +19,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **229 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **236 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -205,4 +205,23 @@ ask the owner what it's for before touching it.
   flagged, not fixed here (outside T022's assigned paths). See TASKS.md T022 for full detail. 229
   tests pass (223 baseline - 4 moved out of `test_corpus.py` + 10 new in
   `tests/unit/io/test_controls_csv.py`), `ruff check .` clean.
-  Next: T030 (cost field, M3, deps T002/T003, unblocked).
+- 2026-08-28: T030 (cost field, M3) landed — new `src/rogaine/cost/` package; `compute_cost_field`
+  gathers `k_terrain`/`passable` from `AppConfig.speed_factors()`/`passability()`, reuses T015's
+  `k_slope` unchanged, and divides with `out=`/`where=passable` so the division never executes at
+  an impassable cell. Two real judgement calls, both documented in the module docstring: impassable
+  pixels store `+inf`, never `nan` (proved unreachable — `mpp` is always positive finite, `k_slope`
+  is always strictly positive for a finite non-negative `penalty`, so only `k_terrain` can ever be
+  the zero factor); and a real defect caught before it ever crashed — `contour` is `passable = true`
+  with `speed_factor = 0.0` by design (`TerrainSpec`'s own validator exception, config's own "not an
+  area class" note), so the raw formula would divide by zero at a *passable* cell and raise inside
+  `CostField.__post_init__` on any map with contour ink; fixed by neutralising `k_terrain` to `1.0`
+  wherever a pixel is passable yet its gathered `k_terrain` is `0.0` (by that same validator this
+  can only be the contour case), leaving only `k_slope`'s density-driven penalty there. Hand-checked
+  5x5 fixture (`tests/unit/cost/test_field.py`) covers five homogeneous rows — `forest_runnable`,
+  `road`, `water_uncrossable` (impassable), `contour` (the neutralised case), `road` again at a
+  different density — with per-pixel expected cost computed independently from
+  `config.terrain_of(cls).speed_factor` and the plain `1/(1+penalty*density)` formula, never by
+  calling `compute_cost_field` itself; also covers dtype, the exact passable/finite bijection, and
+  `base_speed_mps <= 0` rejection. See TASKS.md T030 for full detail. 236 tests pass (229 baseline +
+  7 new), `ruff check .` clean.
+  Next: T031 (grid graph, M3, deps T030).
