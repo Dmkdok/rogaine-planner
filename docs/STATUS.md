@@ -3,8 +3,8 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3's
-  T030-T031 (cost field, grid graph) landed; T032 (travel matrix, deps T031) next
+current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
+  complete (T030-T032 landed); T040 (objective and feasibility, M4, deps T002) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -19,9 +19,10 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **256 passed**, exit 0 (2026-08-29). `ruff check .` clean.
+`docker compose run --rm tests` — **270 passed**, exit 0 (2026-08-29). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
-graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031).
+graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
+travel matrix, 61 controls: 11.2s against the 60s budget (T032).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
 Image verified to carry `tesseract 5.5.0` and `cv2 5.0.0`; `docker compose run --rm app` prints the
@@ -248,3 +249,21 @@ ask the owner what it's for before touching it.
   wall time, ~406 MiB tracemalloc peak, against the 15s/1GB budget. See TASKS.md T031 for full detail.
   256 tests pass (236 baseline + 20 new in `tests/unit/cost/test_graph.py`), `ruff check .` clean.
   Next: T032 (travel matrix and path reconstruction, M3, deps T031).
+- 2026-08-29: T032 (travel matrix and path reconstruction, M3 — milestone now complete) landed —
+  new `build_travel_matrix` in `src/rogaine/cost/travel.py` runs one `scipy.sparse.csgraph.dijkstra`
+  call with `indices` set to every control's node (ADR-002), reading `seconds` off the returned
+  distance matrix in one vectorised fancy-index op and reconstructing each pairwise polyline from
+  the matching predecessors matrix. Five documented design calls: `meters_per_pixel` is this
+  function's own explicit parameter (`GridGraph` carries no ground scale, and `cost/graph.py` /
+  `models.py` were both off-limits); `meters[i,j]` is the physical length of the *actual*
+  reconstructed time-optimal path, not an independently shortest distance; self-pairs are `0.0`
+  with no `paths` entry; symmetry is asserted within tolerance (`rtol=1e-7`/`atol=1e-6`) rather
+  than forced, since `seconds` comes from two independent sweeps and forcing it would hide a real
+  directed-edge bug; each unordered pair is reconstructed once and mirrored for its reverse
+  direction, cheaper and exact by construction rather than post-hoc symmetrisation. Polyline
+  simplification reuses `vision/controls.py`'s `cv2.approxPolyDP` idiom at a plain pixel constant
+  (no new config section — checked first, confirmed nothing existing to extend, and this is
+  cosmetic-only, unlike every existing config-driven geometric tunable). No other defects found.
+  Measured on the real 4000x3000/downsample=4 preset with 61 controls: 11.2s wall time against the
+  60s budget. See TASKS.md T032 for full detail. 270 tests pass (256 baseline + 14 new), `ruff
+  check .` clean. Next: T040 (objective and feasibility, M4, deps T002, unblocked).

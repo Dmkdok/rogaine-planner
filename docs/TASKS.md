@@ -401,10 +401,65 @@ the implementer's self-report.
   reading looks representative rather than a severe undercount — comfortably inside budget either way.
   256 tests pass (236 baseline + 20 new), `ruff check .` clean.
   Next: T032 (travel matrix and path reconstruction, deps T031, unblocked).
-- [ ] T032 — Travel matrix and path reconstruction — paths: `src/rogaine/cost/travel.py` — deps: T031 —
+- [x] T032 — Travel matrix and path reconstruction — paths: `src/rogaine/cost/travel.py` — deps: T031 —
   DoD: `scipy.sparse.csgraph.dijkstra` from each control; matrix symmetric within tolerance;
   per-pair polylines reconstructed from predecessors and simplified for rendering; unreachable pairs
   marked infinite, not zero; 60 controls on a full-size map in under 60 s (F11).
+  Landed 2026-08-29. New `build_travel_matrix(controls, graph, meters_per_pixel, config=None)` in
+  `src/rogaine/cost/travel.py` (M3 now complete). One `scipy.sparse.csgraph.dijkstra` call with
+  `indices` set to every control's node (ADR-002) — `seconds` is a single vectorised fancy-index
+  read off the returned `(n, n_nodes)` distance matrix (`dist_matrix[:, nodes]`), never a Python
+  loop. Five documented judgement calls, all in the module docstring: (1) `GridGraph` carries no
+  `meters_per_pixel` (edge weights are time, not distance) — solved with an explicit
+  `meters_per_pixel` parameter on this function rather than touching `cost/graph.py` or
+  `models.py`, since the `CostField` that built the graph already carries the value and a caller
+  holding both just forwards it. (2) `meters[i,j]` is the physical length of the *actual*
+  reconstructed time-optimal path (hop lengths from `GridGraph.nodes_to_pixels`, summed via
+  `np.hypot` before conversion — not a separate orthogonal/diagonal branch, since `hypot(dx,dy)`
+  already equals `cost/graph.py`'s `spacing` for either case given the graph only connects
+  immediate neighbours), explicitly not the geometrically shortest distance between two points,
+  which can differ from the time-optimal route. (3) self-pairs: `seconds[i,i]`/`meters[i,i]` are
+  `0.0` (scipy already reports distance-to-self as `0.0`, no special-casing needed; the diagonal of
+  `meters` is filled once via `np.fill_diagonal`), and `paths` holds no `(id,id)` entry at all — a
+  self-visit needs no reconstructed geometry, and omitting the diagonal keeps the reconstruction
+  loop a plain `i < j` iteration with no self-pair branch. (4) symmetry is not forced: `seconds`
+  comes from two independent per-source Dijkstra sweeps summing the same symmetric edges
+  (`GridGraph.csr`, T031) in a different order, so near-exact agreement is a real, tested property
+  (`np.testing.assert_allclose`, `rtol=1e-7`, `atol=1e-6` — float64 summation-order rounding stays
+  far inside that band, while a genuinely directed-edge bug would blow it by orders of magnitude),
+  never manufactured by averaging with the transpose (would hide exactly that bug). (5) each
+  unordered pair `{i,j}` is reconstructed once (walking source `i`'s own predecessor row) and the
+  reverse-direction polyline is the same array reversed — cheaper than reconstructing both
+  directions independently, and guarantees `(i,j)`/`(j,i)` are exact mirrors, which is a property
+  of the algorithm choice, not post-hoc symmetrisation. Polyline simplification for `paths` uses
+  `cv2.approxPolyDP` (open, `closed=False`), the same idiom `vision/controls.py` already uses for
+  its triangle contour, at a plain module constant `_SIMPLIFY_EPSILON_PX = 1.5` rather than a new
+  `[travel]` config section — checked `config/default.toml`/`config.py` first and confirmed no
+  existing epsilon-like knob; this value is cosmetic only (shrinks stored point count for
+  rendering, never touches `seconds`/`meters`, computed from the raw chain first), unlike every
+  existing config-driven geometric tunable which carries a real DoD floor. Unreachable pairs: read
+  straight off scipy's `+inf` in `dist_matrix` without any clipping/conversion (`seconds`); `meters`
+  is initialised to `+inf` and only overwritten for pairs the reconstruction loop actually visits,
+  so it stays `+inf` too, never defaulting to `0.0`; `paths` gets no entry for that pair (absent,
+  not an empty array — a missing key makes "no path" unambiguous). scipy's predecessor sentinel
+  (`-9999`) was verified empirically against the installed scipy 1.18.0 rather than assumed — this
+  version has no `csgraph.NULL_IDX` to import instead. No other defects found; the implementation
+  matched hand-computed expected values on first run. Tests
+  (`tests/unit/cost/test_travel.py`, 14 new): a 3x3 uniform-rate hand-checked case at
+  `downsample=1` where the time-optimal route is the two-hop diagonal, `seconds`/`meters` matching
+  the edge-weight formula exactly by hand computation; a 21-pixel straight corridor showing the
+  raw 21-point chain simplifies to exactly its 2 endpoints while `seconds`/`meters` still reflect
+  the un-simplified 20-hop chain; an unreachable pair (one impassable cell severing a 1x5 row under
+  `strict_impassable=True`) with `seconds`/`meters` both `+inf` and no `paths` entry; symmetry
+  within tolerance on a 6-control random passable grid; `meters_per_pixel <= 0` rejected. Perf test
+  mirrors `test_graph.py::TestPerformance`'s precedent — an equivalent-size synthetic `CostField`
+  built directly with numpy (not the full vision + T030 pipeline), `build_grid_graph` at the real
+  4000x3000/downsample=4 preset, then 61 controls (60 + hub) at random in-bounds pixel positions
+  (fixed seed, not guaranteed passable): measured 11.2s wall time for `build_travel_matrix` alone
+  against the 60s budget (all 1830 unordered pairs happened to be reachable on this seed — not
+  required, just what this run measured). 270 tests pass (256 baseline + 14 new), `ruff check .`
+  clean.
+  Next: T040 (objective and feasibility, M4, deps T002, unblocked). M3 (WS-B) is now complete.
 
 ## M4 — Solvers and bench (WS-B)
 
