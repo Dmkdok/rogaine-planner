@@ -230,10 +230,34 @@ the implementer's self-report.
 
 ## M2 — Control detection (WS-A)
 
-- [ ] T020 — Control circle detection — paths: `src/rogaine/vision/controls.py` — deps: T011, T012 —
+- [x] T020 — Control circle detection — paths: `src/rogaine/vision/controls.py` — deps: T011, T012 —
   DoD: HSV purple mask plus HoughCircles with the radius range derived from `mpp` (ISOM 5-6 mm);
   start triangle and finish double-circle recognised; on the fixture recall at least 0.95, precision
   at least 0.90, centre error at most a quarter radius (F7).
+  Landed 2026-08-28. `detect_controls(image, dpi, config)` runs two detectors on one HSV `purple_mask`
+  (`config.detector.purple_hue_range`/`purple_min_saturation`/`purple_min_value`): `cv2.HoughCircles`
+  (radius bounds from `config.detector.circle_radius_px(dpi)` — `dpi`, not `mpp`; the DoD's "`mpp`"
+  was stale plan-time wording, corrected to match the convention T014-T016 already established: ISOM
+  symbol sizes are fixed on paper, the map's ground scale never enters into it) for the 703 control
+  circles, and `cv2.findContours` + `cv2.approxPolyDP` (3-vertex, size-anchored to the same
+  `circle_radius_px`) for the 701 start triangle at the hub. The DoD's "finish double-circle" has
+  nothing to detect or test: this project's start = finish one-hub convention means the fixture draws
+  only the one triangle marker, never a second symbol — stated plainly rather than fabricating a test
+  for a symbol that doesn't exist in the fixture.
+  One real finding: the config's shipped Hough parameters found every true circle (recall 1.0) but
+  also fit spurious circles inside the purple out-of-bounds hatching, where crossing hatch lines
+  locally resemble arcs at a radius inside the configured tolerance band — 14 raw detections for 12
+  true controls on the standard fixture, precision 0.857 against the 0.90 floor. Retuning
+  `hough_param1`/`hough_param2` blindly was not the fix (`cv2.HoughCircles` alone cannot tell a
+  genuine drawn ring from a coincidental circular alignment of unrelated ink) — added
+  `_ring_coverage`, which samples points around each candidate's fitted circumference and rejects any
+  candidate where less than 75% of the sampled ring actually sits on purple ink. Measured true/false
+  separation before picking that threshold: real rings scored 0.822-1.000, spurious hatch-fit circles
+  0.500-0.682. Brings precision to 1.0 on both the degraded and clean fixture without touching
+  `config/default.toml`; the same coverage value doubles as each circle's `confidence`. Final measured
+  numbers: recall 1.000, precision 1.000, max centre error 3.85px against a floor of 8.86px
+  (radius/4); hub triangle centroid within a few px of true hub position.
+  207 tests pass (198 baseline + 9 new), `ruff check .` clean.
 - [ ] T021 — Number OCR and points rule — paths: `src/rogaine/vision/ocr.py` — deps: T020 —
   DoD: digits read from a crop beside each circle with a confidence; points rule `first_digit` /
   `constant` / CSV; unreadable numbers emit `points: null` and a flag, never a guess; OCR failure

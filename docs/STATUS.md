@@ -3,7 +3,8 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 in progress — T010-T016 landed, T017 (palette validation across the real corpus) next
+current: M1 T010-T016 landed (T017 blocked on owner data); M2 in progress — T020 landed, T021
+  (number OCR) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -18,7 +19,7 @@ current: M1 in progress — T010-T016 landed, T017 (palette validation across th
 
 ## Test report
 
-`docker compose run --rm tests` — **198 passed**, exit 0 (2026-08-28). `ruff check .` clean.
+`docker compose run --rm tests` — **207 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -150,6 +151,21 @@ ask the owner what it's for before touching it.
   failed hard because `segment()`'s unconditional `normalize()` step measurably hurts an
   already-clean render (`test_normalize.py` already documented this), fixed by measuring on the
   degraded fixture instead, matching `test_palette.py`'s own precedent. See TASKS.md T016 for full
-  detail. 198 tests pass, `ruff check .` clean. Next: T017 (palette validation across the real
-  corpus) — blocked on the owner for scale/DPI/controls/reference route on the real maps (see
-  "Blocked on the owner" below); until then, only the fixture side of T017 is workable.
+  detail. 198 tests pass, `ruff check .` clean. T017 (palette validation across the real corpus) is
+  next in M1 order but blocked on the owner for scale/DPI/controls/reference route on the real maps
+  (see "Blocked on the owner" below) — moved to M2 instead, which is fully unblocked (deps T011/T012,
+  both landed) and works the same way M1 did before real corpus data existed: against the synthetic
+  fixture.
+- 2026-08-28: T020 (control circle detection, M2) landed — `vision/controls.py`'s `detect_controls`
+  runs `cv2.HoughCircles` (ISOM 703 control circles) and a `cv2.approxPolyDP`-based triangle finder
+  (ISOM 701 start marker, the hub) over one shared HSV purple mask; `dpi`, not `mpp`, drives the
+  radius conversion (TASKS.md's T020 wording said `mpp`, corrected to match the established
+  printed-size-on-paper convention). One real finding: the shipped Hough parameters fit spurious
+  circles inside the purple out-of-bounds hatching pattern, dragging precision to 0.857 against the
+  0.90 floor; fixed with a ring-coverage shape check (samples each candidate's fitted circumference,
+  requires at least 75% purple coverage — real rings measured 0.822-1.000, spurious hatch-fits
+  0.500-0.682) rather than blind Hough retuning. Final fixture numbers: recall 1.000, precision 1.000,
+  max centre error 3.85px against an 8.86px floor. The DoD's "finish double-circle" has nothing to
+  test: this project's start = finish convention means the fixture (and the project) has only one hub
+  marker, stated plainly rather than fabricated. See TASKS.md T020 for full detail. 207 tests pass,
+  `ruff check .` clean. Next: T021 (number OCR and points rule, deps T020, landed).
