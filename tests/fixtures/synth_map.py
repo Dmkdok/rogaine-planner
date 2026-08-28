@@ -73,7 +73,8 @@ SHADE_OF: dict[TerrainClass, str] = {
 }
 
 #: Printed widths in millimetres, from ISOM 2017-2. Converted to pixels through the DPI, so the
-#: fixture's geometry is right at any resolution.
+#: fixture's geometry is right at any resolution -- via `stroke_thickness_px`, not a bare
+#: `round(mm * ppm)`, so the three classes stay distinguishable by actual rendered width (T014).
 LINE_WIDTH_MM: dict[TerrainClass, float] = {
     TerrainClass.ROAD: 0.60,
     TerrainClass.VEHICLE_TRACK: 0.35,
@@ -88,6 +89,15 @@ CIRCLE_WIDTH_MM = 0.35
 CIRCLE_DIAMETER_MM = 6.0
 NUMBER_HEIGHT_MM = 4.0
 
+#: Black map-text labels (T014, F5): overprint like the control numbers below, so `labels` is
+#: untouched -- these exist to give T014's false-positive rejection something real to be measured
+#: against (see its landing note in ``docs/TASKS.md`` for why the fixture drew none before).
+MAP_TEXT_LABELS: tuple[str, ...] = ("SUMMIT RIDGE", "OLD QUARRY", "PINE HOLLOW")
+TEXT_HEIGHT_MM = 3.0
+#: Black ISOM point symbols (e.g. 201 boulder) -- small filled blobs, also overprint only.
+POINT_SYMBOL_DIAMETER_MM = 1.2
+N_POINT_SYMBOLS = 6
+
 
 @dataclass(frozen=True)
 class SyntheticMap:
@@ -96,6 +106,8 @@ class SyntheticMap:
     image: np.ndarray  # (H, W, 3) uint8 RGB — what a segmenter is allowed to see
     labels: np.ndarray  # (H, W) uint8 — true terrain class per pixel
     contour_mask: np.ndarray  # (H, W) bool — where contour lines were drawn
+    noise_mask: np.ndarray  # (H, W) bool — black map-text/point-symbol ink (T014, F5); never a real
+    # linear feature, so it is what a correct pipeline must reject from the corridor output
     controls: list[Control]  # hub first, then controls; numbers and points are exact
     meters_per_pixel: float
     dpi: float
@@ -137,6 +149,31 @@ def _draw_area(
     cv2.fillPoly(labels, [poly], terrain_label(cls))
 
 
+def _actual_stroke_width(thickness: int) -> int:
+    """The width (px) `cv2.line`/`cv2.polylines` actually draws for an axis-aligned stroke asked
+    to be `thickness` px -- not the same number for `thickness >= 2` (see `stroke_thickness_px`)."""
+    if thickness <= 1:
+        return 1
+    return thickness + 1 if thickness % 2 == 0 else thickness + 2
+
+
+def stroke_thickness_px(target_width_px: float) -> int:
+    """The `thickness` to pass to `cv2.line`/`cv2.polylines` so the stroke it actually draws is as
+    close as possible to `target_width_px` (T014, F5).
+
+    OpenCV's thick-line rasterizer does not draw `thickness` pixels wide: measured directly, an
+    axis-aligned stroke is 1 px for `thickness=1` and jumps in steps of 2 from there (3, 5, 7, ...),
+    with two adjacent `thickness` values (one even, the odd one above it) landing on the same
+    actual width. Left uncorrected, `round(0.35mm * ppm)=4` and `round(0.25mm * ppm)=3` --
+    vehicle_track and footpath at the standard 300 dpi fixture -- both draw a 5 px stroke:
+    indistinguishable by width, which defeats the one thing T014 measures against this fixture.
+    This searches the achievable widths for the `thickness` that lands nearest the request.
+    """
+    target = max(1.0, target_width_px)
+    candidates = range(1, int(target) + 4)
+    return min(candidates, key=lambda t: abs(_actual_stroke_width(t) - target))
+
+
 def _wandering_path(
     rng: np.random.Generator, w: int, h: int, steps: int = 9
 ) -> np.ndarray:
@@ -148,6 +185,90 @@ def _wandering_path(
     # A vertical path drifts in x as it runs down the map; a horizontal one drifts in y.
     xs, ys = (drift * w, t * h) if vertical else (t * w, drift * h)
     return np.stack([xs, ys], axis=1).astype(np.int32)
+
+
+_LINEAR_CLASSES = (TerrainClass.ROAD, TerrainClass.VEHICLE_TRACK, TerrainClass.FOOTPATH)
+_LINEAR_LABELS: set[int] = {terrain_label(c) for c in _LINEAR_CLASSES}
+
+
+def _avoid_linear(
+    labels: np.ndarray, y0: int, y1: int, x0: int, x1: int, linear_lbls: set[int]
+) -> bool:
+    """True if the label patch ``labels[y0:y1, x0:x1]`` contains no linear-class pixel.
+
+    Keeps map-text and point-symbol noise (T014, F5) from touching a real road/track/footpath, so
+    the two never merge into one connected component and contaminate the false-positive measurement
+    the noise exists to support.
+    """
+    patch = labels[max(0, y0) : max(0, y1), max(0, x0) : max(0, x1)]
+    return not np.isin(patch, list(linear_lbls)).any()
+
+
+def _draw_map_text(
+    image: np.ndarray,
+    labels: np.ndarray,
+    rng: np.random.Generator,
+    ppm: float,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Black map-text labels. Overprint only, like the control numbers -- `labels` is untouched."""
+    noise = np.zeros((height, width), dtype=bool)
+    black = RENDER_SRGB["black_100"]
+    font_scale = (TEXT_HEIGHT_MM * ppm) / 22.0
+    thickness = max(1, round(0.12 * ppm))
+
+    for text in MAP_TEXT_LABELS:
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        x, y = int(tw * 0.6), int(th * 1.5)  # fallback if every retry below stays on a road
+        for _ in range(200):
+            lo_x, hi_x = tw * 0.6, max(tw * 0.6 + 1.0, width - tw * 1.1)
+            lo_y, hi_y = th * 1.5, max(th * 1.5 + 1.0, height - th * 0.5)
+            x, y = int(rng.uniform(lo_x, hi_x)), int(rng.uniform(lo_y, hi_y))
+            if _avoid_linear(labels, y - th - 4, y + 4, x - 4, x + tw + 4, _LINEAR_LABELS):
+                break
+        # `cv2.putText` antialiases Hershey glyphs regardless of `lineType` (the T013 landing note
+        # in docs/TASKS.md names this exact OpenCV quirk for the control numbers) -- render into a
+        # scratch layer and threshold it instead of writing straight onto `image`.
+        layer = np.zeros((height, width), dtype=np.uint8)
+        cv2.putText(layer, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, 255, thickness)
+        hit = layer > 40
+        image[hit] = black
+        noise |= hit
+    return noise
+
+
+def _draw_point_symbols(
+    image: np.ndarray,
+    labels: np.ndarray,
+    rng: np.random.Generator,
+    ppm: float,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Small filled black point symbols (e.g. ISOM 201 boulder). Overprint only, ditto."""
+    noise = np.zeros((height, width), dtype=bool)
+    black = RENDER_SRGB["black_100"]
+    radius = max(1, round(POINT_SYMBOL_DIAMETER_MM / 2.0 * ppm))
+    margin = radius * 3
+
+    placed = 0
+    for _ in range(400):
+        if placed >= N_POINT_SYMBOLS:
+            break
+        lo, hi_w, hi_h = margin, max(margin + 1, width - margin), max(margin + 1, height - margin)
+        x, y = int(rng.uniform(lo, hi_w)), int(rng.uniform(lo, hi_h))
+        patch_ok = _avoid_linear(
+            labels, y - radius - 2, y + radius + 2, x - radius - 2, x + radius + 2, _LINEAR_LABELS
+        )
+        if not patch_ok:
+            continue
+        cv2.circle(image, (x, y), radius, black, -1)  # filled, no LINE_AA -- see module docstring
+        layer = np.zeros((height, width), dtype=np.uint8)
+        cv2.circle(layer, (x, y), radius, 255, -1)
+        noise |= layer > 0
+        placed += 1
+    return noise
 
 
 def make_synthetic_map(
@@ -200,7 +321,7 @@ def make_synthetic_map(
     for cls in (TerrainClass.ROAD, TerrainClass.VEHICLE_TRACK, TerrainClass.FOOTPATH):
         for _ in range(2):
             pts = _wandering_path(rng, width, height)
-            thickness = max(1, round(LINE_WIDTH_MM[cls] * ppm))
+            thickness = stroke_thickness_px(LINE_WIDTH_MM[cls] * ppm)
             # No LINE_AA: an antialiased blend against the white background would put edge pixels
             # at intermediate colours that match no real shade (or, worse, one that coincidentally
             # does -- see the module docstring). `labels` is drawn hard-edged at the same thickness;
@@ -243,6 +364,13 @@ def make_synthetic_map(
         image, labels, rng, n_controls=n_controls, ppm=ppm, width=width, height=height
     )
 
+    # Black map-text and point-symbol noise (T014, F5): overprint only, `labels` untouched, kept
+    # clear of the linear features above so it never merges into their connected components. Drawn
+    # last, after every other rng-consuming step, so adding it here never reshuffles the geometry
+    # (out-of-bounds blob, contour waviness, control placement) any seeded fixture already produced.
+    noise_mask = _draw_map_text(image, labels, rng, ppm, width, height)
+    noise_mask |= _draw_point_symbols(image, labels, rng, ppm, width, height)
+
     if degrade:
         image = _degrade(image, rng)
 
@@ -250,6 +378,7 @@ def make_synthetic_map(
         image=image,
         labels=labels,
         contour_mask=contour_mask,
+        noise_mask=noise_mask,
         controls=controls,
         meters_per_pixel=mpp,
         dpi=dpi,

@@ -141,6 +141,47 @@ class TerrainSpec(BaseModel):
         return self
 
 
+class LinearSettings(BaseModel):
+    """Tunables for splitting the palette's shared `road` placeholder (T014, F5).
+
+    `road`, `vehicle_track` and `footpath` all print in `black_100`; the palette classifier cannot
+    tell them apart by colour (see `vision/palette.py`'s module docstring), so this module does it
+    geometrically. `*_width_mm` are the ISOM nominal printed widths (symbols 502/503, 504, 505) that
+    a corridor's measured stroke width is matched against, nearest wins.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    road_width_mm: float = Field(gt=0.0)
+    vehicle_track_width_mm: float = Field(gt=0.0)
+    footpath_width_mm: float = Field(gt=0.0)
+    min_component_area_px: int = Field(gt=0)
+    elongation_ratio_min: float = Field(gt=0.0)
+    aspect_ratio_min: float = Field(gt=0.0)
+    min_length_mm: float = Field(gt=0.0)
+    close_radius_px: int = Field(ge=0)
+
+    def nominal_width_px(self, dpi: float) -> dict[TerrainClass, float]:
+        """Nominal printed stroke width per linear class, in pixels at *dpi*."""
+        px_per_mm = dpi / 25.4
+        return {
+            TerrainClass.ROAD: self.road_width_mm * px_per_mm,
+            TerrainClass.VEHICLE_TRACK: self.vehicle_track_width_mm * px_per_mm,
+            TerrainClass.FOOTPATH: self.footpath_width_mm * px_per_mm,
+        }
+
+    def min_length_px(self, dpi: float) -> float:
+        """Shortest skeleton length (px, at *dpi*) a component must have to count as a corridor.
+
+        Text and point symbols are bounded in physical size (a font's cap height, a symbol's
+        diameter -- a few mm); a road/track/footpath is a through-route and is, on any real map,
+        much longer than that. This floor is what actually separates a single tall glyph (which can
+        have `elongation_ratio` comparable to a real corridor's) from the real thing -- see
+        `vision/linear.py`'s module docstring.
+        """
+        return self.min_length_mm * dpi / 25.4
+
+
 class SlopeSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -211,6 +252,7 @@ class AppConfig(BaseModel):
     map: MapSettings
     palette: PaletteSettings
     terrain: list[TerrainSpec]
+    linear: LinearSettings
     slope: SlopeSettings
     detector: DetectorSettings
     graph: GraphSettings

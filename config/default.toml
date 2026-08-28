@@ -253,6 +253,38 @@ passable = true
 note = "unclassified pixels are assumed to be forest — the most common terrain, and not optimistic"
 
 # --------------------------------------------------------------------------------------------
+# Linear feature extraction (T014)
+# --------------------------------------------------------------------------------------------
+[linear]
+# [ISOM] nominal printed widths for symbols 502/503 (road), 504 (vehicle track), 505 (footpath).
+# A corridor's measured stroke width (distance-transform along its skeleton) is matched to the
+# nearest of these, converted to pixels via the map's own DPI -- never hardcoded in pixels.
+road_width_mm = 0.60
+vehicle_track_width_mm = 0.35
+footpath_width_mm = 0.25
+# A `road`-labelled connected component smaller than this (px^2) is dropped as noise before the
+# shape tests below run -- they are not stable on a handful of pixels.
+min_component_area_px = 20
+# skeleton_length / sqrt(area): how much longer a shape is than it is wide, size-independent. A
+# straight corridor of width w and length L scores ~sqrt(L/w); a blob (glyph, point symbol) scores
+# close to 1. See `vision/linear.py`'s module docstring.
+elongation_ratio_min = 3.0
+# minAreaRect's long side over its short side. Catches what the elongation ratio above cannot: a
+# cluster of touching text glyphs has a branchy skeleton that can rack up enough pixels to pass the
+# ratio above, but its bounding rectangle stays close to square. Measured against the fixture:
+# touching-glyph clusters top out near 1.6, the shortest real corridor fragments start near 2.8.
+aspect_ratio_min = 2.0
+# A component's skeleton must also be at least this long on paper (mm, converted via DPI) to count
+# as a corridor. Text and point symbols are bounded by a font's cap height or a symbol's diameter --
+# a few mm; a real corridor is a through-route and is far longer. This is what actually rejects a
+# single tall glyph, whose elongation ratio alone can rival a real corridor's.
+min_length_mm = 8.0
+# Morphological close radius (px) applied before finding components, to bridge the few pixels of
+# scan noise or self-crossing a corridor can pick up. Kept small so it never merges a corridor with
+# nearby unrelated ink.
+close_radius_px = 2
+
+# --------------------------------------------------------------------------------------------
 # Slope from contour density (T015, ADR-006)
 # --------------------------------------------------------------------------------------------
 [slope]

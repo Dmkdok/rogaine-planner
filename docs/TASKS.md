@@ -108,10 +108,58 @@ the implementer's self-report.
   (`water_shallow`, ~700px) swings 0.1+ on JPEG blockiness alone under a full seed, which a min-based
   bound was really just measuring. 152 tests pass (121 baseline + 31 new), `ruff check .` clean;
   full-size (4000x3000) classification takes 4.9 s against the 30 s budget.
-- [ ] T014 — Linear feature extraction — paths: `src/rogaine/vision/linear.py` — deps: T013 —
+- [x] T014 — Linear feature extraction — paths: `src/rogaine/vision/linear.py` — deps: T013 —
   DoD: roads, tracks and footpaths recovered as connected corridors via elongation and skeleton
   filters; a fixture path end-to-end is one component covering at least 90% of its length; map text
   and point symbols are rejected, measured as false-positive corridor area on the fixture (F5).
+  Landed 2026-08-28. `extract_linear_features` takes `classify_palette`'s `road`-collapsed labels
+  and splits them by shape: a component must clear an absolute pixel-area floor, a
+  skeleton-length/sqrt(area) elongation ratio, a `minAreaRect` bounding-box aspect ratio, *and* an
+  absolute skeleton-length floor (mm, converted via DPI) to be accepted as a corridor; accepted
+  corridors are assigned `road`/`vehicle_track`/`footpath` by nearest nominal printed width
+  (distance-transform along the skeleton); rejected components become `unknown`, not left as `road`.
+  New `config/default.toml [linear]` section holds the eight tunables. DoD numbers measured on the
+  fixture: an isolated wandering path recovers as one component covering 100% of its length (bar:
+  90%); false-positive corridor area from black map-text/point-symbol ink is 0.0% (bar: under 5%).
+  Per-sub-class IoU on the full chaotic fixture scene (six wandering paths, several crossing) is
+  reported, not gated — road/vehicle_track/footpath are correctly separated on lines that never
+  cross (`TestWidthBasedClassAssignment`, exact match); a component several true classes merge into
+  at a crossing can only be assigned one of them, which mechanically caps the fixture-wide per-class
+  number regardless of estimator quality.
+  `tests/fixtures/synth_map.py` extended with black map-text labels and point symbols (`noise_mask`)
+  — the fixture drew none before (T013's landing note), so F5's false-positive bar had nothing real
+  to measure against. Three real defects found and fixed along the way:
+  1. `cv2.line`/`cv2.polylines` does not draw an axis-aligned stroke `thickness` pixels wide: the
+     actual rendered width jumps in steps of 2 (1, 3, 5, 7, ...) and two adjacent `thickness` values
+     (one even, the odd one above it) land on the same actual width. The fixture's own
+     `round(mm * ppm)` thickness for `vehicle_track` (4) and `footpath` (3) both drew a 5 px stroke
+     at 300 dpi — indistinguishable by width, which defeated the one thing this task measures.
+     Fixed with `stroke_thickness_px`, which searches for the `thickness` whose actual rendered
+     width is nearest the target.
+  2. Width estimation itself had a systematic +1 px bias: `2 * distanceTransform` at a stroke's
+     skeleton measures pixel-*centre*-to-pixel-*centre* distance, which is `ceil(width/2)`, so
+     doubling it overestimates by exactly 1 whenever the true width is odd — which, after fixing
+     defect 1 above, is every width the fixture ever draws. `road`/`vehicle_track`/`footpath` all
+     came back classified `road` until this was found. Fixed with a `- 1` correction in
+     `extract_linear_features`, exact for odd widths, off by one pixel otherwise (still smaller than
+     the gap between any two class widths).
+  3. Several letters of a word, close enough for `close_radius_px`'s gap-bridging to merge into one
+     connected component, can pass both the elongation ratio and the absolute length floor: a
+     branchy multi-stroke skeleton racks up enough total pixel count even though the component is
+     not shaped like a corridor. Neither test constrains overall shape, so both were fooled. Added a
+     third, independent test — `minAreaRect` bounding-box aspect ratio — calibrated against real
+     fixture measurements (touching-glyph clusters topped out near 1.6, the shortest real corridor
+     fragments started near 2.8; `aspect_ratio_min = 2.0` sits between them with margin both ways).
+  Also: the new noise-drawing code originally ran mid-generation, shifting every later `rng` draw
+  (out-of-bounds blob, contour waviness, control placement) for every existing seeded fixture and
+  quietly dropping a pre-existing T013 test (`rough_open` area IoU) from its passing value to 0.94
+  against the 0.95 bar — not a T014 defect, but a reminder that `make_synthetic_map` threads one
+  `rng` stream sequentially through the whole function. Moved the noise-drawing to the very end
+  (after controls, before the optional degrade step) so extending the fixture there never reshuffles
+  geometry any other seeded test already depends on. `test_palette.py`'s area-class IoU sampleable
+  masks now also exclude `noise_mask`, the same treatment already given to `contour_mask` and for
+  the same reason: black overprint classifies as `road`, not the area class underneath.
+  166 tests pass (152 baseline + 14 new), `ruff check .` clean.
 - [ ] T015 — Contour density and slope factor — paths: `src/rogaine/vision/contours.py` — deps: T013 —
   DoD: brown contour mask, density by Gaussian blur, `k_slope` from config; a contour-dense fixture
   region yields a strictly higher cost than a flat region of the same class; coefficient documented

@@ -3,7 +3,7 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 in progress — T010-T013 landed, T014 (linear feature extraction) next
+current: M1 in progress — T010-T014 landed, T015 (contour density and slope factor) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -18,7 +18,7 @@ current: M1 in progress — T010-T013 landed, T014 (linear feature extraction) n
 
 ## Test report
 
-`docker compose run --rm tests` — **152 passed**, exit 0 (2026-08-27). `ruff check .` clean.
+`docker compose run --rm tests` — **166 passed**, exit 0 (2026-08-28). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013).
 
 Earlier baseline: 87 passed, exit 0 (2026-08-19).
@@ -117,4 +117,17 @@ ask the owner what it's for before touching it.
   single-pass `unknown` fill that couldn't reach the middle of a wide gap, antialiased fixture edges
   blending into a colour that coincidentally matched a real shade, and two green tiers whose
   independently-chosen fixture colour sat closer to the wrong nominal tier than their own. 152 tests
-  pass, `ruff check .` clean. Next: T014 (linear feature extraction, WS-A).
+  pass, `ruff check .` clean.
+- 2026-08-28: T014 (linear feature extraction) landed — `extract_linear_features` splits the
+  palette's `road` placeholder into `road`/`vehicle_track`/`footpath` by shape (area, elongation,
+  bounding-box aspect ratio, absolute length floor) then by measured stroke width. Found and fixed
+  three real defects, all in the OpenCV-rendering-quirk category T013's landing note already named:
+  `cv2.line` doesn't draw an axis-aligned stroke as many pixels wide as its `thickness` argument
+  claims (making the fixture's `vehicle_track` and `footpath` render at the same width until
+  corrected); the distance-transform width estimator had a systematic +1 px bias; touching text
+  glyphs merged by gap-bridging could pass both shape tests that existed until a third
+  (`minAreaRect` aspect ratio) was added. See TASKS.md T014 for the full detail. Fixture extended
+  with black map-text/point-symbol noise so F5's false-positive bar has something real to measure
+  (0.0% false-positive corridor area; 100% single-component coverage on an isolated path, both
+  against their DoD bars). 166 tests pass, `ruff check .` clean. Next: T015 (contour density and
+  slope factor, WS-A).

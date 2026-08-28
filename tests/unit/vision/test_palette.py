@@ -207,9 +207,15 @@ class TestPaletteIoUAgainstFixture:
         labels = clean_synthetic_map.labels
         # Also excludes `out_of_bounds` truth pixels: the fixture only hatches that area rather
         # than filling it (module docstring), so a correctly-classified underlying colour there is
-        # not counted as contamination of the class it visually matches.
+        # not counted as contamination of the class it visually matches. And `noise_mask` (T014,
+        # F5): black map-text/point-symbol overprint classifies as `road`, same reasoning as
+        # `contour_mask` -- it is not the area class underneath, so it is not sampled as one.
         oob_lbl = terrain_label(TerrainClass.OUT_OF_BOUNDS)
-        sampleable = ~clean_synthetic_map.contour_mask & (labels != oob_lbl)
+        sampleable = (
+            ~clean_synthetic_map.contour_mask
+            & (labels != oob_lbl)
+            & ~clean_synthetic_map.noise_mask
+        )
         predicted = classify_palette(clean_synthetic_map.image, cfg)
 
         ious: dict[TerrainClass, float] = {}
@@ -226,9 +232,14 @@ class TestPaletteIoUAgainstFixture:
     def test_linear_union_on_the_clean_render(self, clean_synthetic_map) -> None:
         cfg = default_config()
         labels = clean_synthetic_map.labels
-        # See `test_area_classes_on_the_clean_render` above for why `out_of_bounds` is excluded too.
+        # See `test_area_classes_on_the_clean_render` above for why `out_of_bounds` and `noise_mask`
+        # are excluded too.
         oob_lbl = terrain_label(TerrainClass.OUT_OF_BOUNDS)
-        sampleable = ~clean_synthetic_map.contour_mask & (labels != oob_lbl)
+        sampleable = (
+            ~clean_synthetic_map.contour_mask
+            & (labels != oob_lbl)
+            & ~clean_synthetic_map.noise_mask
+        )
         predicted = classify_palette(clean_synthetic_map.image, cfg)
 
         linear_labels = {terrain_label(c) for c in LINEAR_CLASSES}
@@ -251,9 +262,12 @@ class TestPaletteIoUAgainstFixture:
         """
         cfg = default_config()
         labels = synthetic_map.labels
-        # See `test_area_classes_on_the_clean_render` above for why `out_of_bounds` is excluded too.
+        # See `test_area_classes_on_the_clean_render` above for why `out_of_bounds` and `noise_mask`
+        # are excluded too.
         oob_lbl = terrain_label(TerrainClass.OUT_OF_BOUNDS)
-        sampleable = ~synthetic_map.contour_mask & (labels != oob_lbl)
+        sampleable = (
+            ~synthetic_map.contour_mask & (labels != oob_lbl) & ~synthetic_map.noise_mask
+        )
         normalized = normalize(synthetic_map.image)
         predicted = classify_palette(normalized, cfg)
 

@@ -108,6 +108,20 @@ class TestDetectorGeometry:
         assert lo2 == pytest.approx(lo * 2) and hi2 == pytest.approx(hi * 2)
 
 
+class TestLinearGeometry:
+    def test_nominal_widths_scale_with_dpi(self) -> None:
+        # [ISOM] road (502/503) is 0.60mm; at 300 dpi that is 7.09 px, whatever the map scale.
+        lin = load_config().linear
+        px = lin.nominal_width_px(300.0)
+        assert px[TerrainClass.ROAD] == pytest.approx(7.0866, abs=1e-3)
+        px2 = lin.nominal_width_px(600.0)
+        assert px2[TerrainClass.ROAD] == pytest.approx(px[TerrainClass.ROAD] * 2)
+
+    def test_min_length_scales_with_dpi(self) -> None:
+        lin = load_config().linear
+        assert lin.min_length_px(600.0) == pytest.approx(lin.min_length_px(300.0) * 2)
+
+
 class TestPaletteSeparation:
     """The palette must be able to tell the fixture's colours apart.
 
