@@ -4,8 +4,9 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); T040-T043 landed (objective, exact Held-Karp, heuristic GRASP,
-  alternative routes/interestingness); T044 (`bench` command, M4, deps T041/T042) next
+  complete (T030-T032 landed); M4 complete (T040-T044 landed: objective, exact Held-Karp, heuristic
+  GRASP, alternative routes/interestingness, `bench` command); T050 (CLI end-to-end, M5, deps T016/
+  T022/T032/T042) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -20,7 +21,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **270 passed**, exit 0 (2026-08-29). `ruff check .` clean.
+`docker compose run --rm tests` — **329 passed**, exit 0 (2026-08-29). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -357,3 +358,29 @@ ask the owner what it's for before touching it.
   See TASKS.md T043 for full detail on the four design decisions and the 14 new tests. 326 tests pass
   (312 baseline + 14 new), `ruff check .` clean. Next: T044 (`bench` command, M4, deps T041/T042,
   unblocked).
+- 2026-08-29: T044 (`bench` command, M4 — milestone now complete) landed — new `bench` typer command
+  in `src/rogaine/cli.py`, built by the `implementer` subagent and independently re-verified against
+  the tree (own read of the diff, own `docker compose run --rm tests`, own `ruff check .`, own `git
+  status`). Deliberately not wired to the real vision/cost pipeline (M5/T050's `plan` command owns
+  that, not yet built) — per PLAN.md's M4 row ("M0 matrix contract" is its only real dependency),
+  `bench` builds its own small seeded synthetic OP instance (`_bench_instance`, mirroring
+  `tests/unit/solve/test_heuristic.py`'s `_random_instance` pattern rather than importing it — this
+  module is application code, not a test), runs `solve_exact` then `solve_heuristic` on it, and
+  prints a `rich` table (points, wall time, score per solver) plus the F13 gap
+  `(exact_score - heuristic_score) / exact_score` (`0.0` when `exact_score == 0.0`) colour-coded
+  against the 5% bar. `--n-candidates` (default 10) is checked against
+  `config.solver.exact_max_controls` before either solver runs, failing cleanly with both numbers
+  named rather than letting `solve_exact`'s own `ValueError` surface raw; `--seed` and
+  `--time-budget` (default 2.0s, independent of `config.solver.heuristic_time_budget_s`'s real 30s
+  default, so `bench` stays a fast CLI command) round out the options. One documented judgement
+  call: `bench` always exits 0 regardless of the measured gap — it reports, it does not gate, since
+  T042's own test suite already exhaustively verifies heuristic quality across many seeds/sizes, so
+  a bad gap here would point at `bench`'s own synthetic defaults rather than a regression; reasoning
+  recorded in the command's own docstring rather than assumed silently. No defects found in
+  `solve_exact`/`solve_heuristic`/models/config — first integration worked exactly as documented.
+  Two new tests in `tests/unit/test_cli.py`'s new `TestBench` class: gap parsed from stdout and
+  asserted `<= 0.05` at `--n-candidates 10 --seed 0 --time-budget 1.5`; `--n-candidates` above the
+  exact cap asserted to exit non-zero and name `exact_max_controls`; `bench --help` added to the
+  existing per-command help parametrize list. See TASKS.md T044 for full detail. 329 tests pass (326
+  baseline + 3 new), `ruff check .` clean. M4 (solvers and bench, F12-F14/F16) is now fully complete.
+  Next: T050 (CLI end-to-end commands, M5, deps T016/T022/T032/T042, unblocked).

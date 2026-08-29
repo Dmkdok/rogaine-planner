@@ -624,7 +624,7 @@ the implementer's self-report.
   piping through `tail` per this repo's own standing warning), own `ruff check .` (clean), own `git
   status` (only `solve/alternatives.py`, `solve/heuristic.py`, and the new test file touched).
   Next: T044 (`bench` command, M4, deps T041/T042, unblocked).
-- [ ] T044 — `bench` command — paths: `src/rogaine/cli.py` (bench subcommand only) — deps: T041,
+- [x] T044 — `bench` command — paths: `src/rogaine/cli.py` (bench subcommand only) — deps: T041,
   T042 — DoD: runs both solvers on a reduced instance and prints points, time, and the gap; a test
   asserts the fixture gap stays within F13.
 

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from typer.testing import CliRunner
 
 from rogaine import __version__
 from rogaine.cli import app
+from rogaine.config import default_config
 
 runner = CliRunner()
 
@@ -60,6 +63,29 @@ class TestCorpusCheck:
         assert result.exit_code == 2
 
 
-@pytest.mark.parametrize("command", [["corpus", "list", "--help"], ["corpus", "check", "--help"]])
+class TestBench:
+    def test_reports_a_gap_within_the_f13_bar(self) -> None:
+        result = runner.invoke(
+            app, ["bench", "--n-candidates", "10", "--seed", "0", "--time-budget", "1.5"]
+        )
+        assert result.exit_code == 0
+        assert "exact" in result.stdout and "heuristic" in result.stdout
+
+        match = re.search(r"gap:\s*(-?\d+(?:\.\d+)?)%", result.stdout)
+        assert match, f"no gap percentage found in output:\n{result.stdout}"
+        gap = float(match.group(1)) / 100.0
+        assert gap <= 0.05, f"gap {gap:.4f} exceeds the F13 5% bar:\n{result.stdout}"
+
+    def test_n_candidates_above_the_exact_cap_fails_cleanly(self) -> None:
+        cap = default_config().solver.exact_max_controls
+        result = runner.invoke(app, ["bench", "--n-candidates", str(cap + 1)])
+        assert result.exit_code != 0
+        assert "exact_max_controls" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["corpus", "list", "--help"], ["corpus", "check", "--help"], ["bench", "--help"]],
+)
 def test_help_is_available_for_every_command(command: list[str]) -> None:
     assert runner.invoke(app, command).exit_code == 0
