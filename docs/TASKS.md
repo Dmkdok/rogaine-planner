@@ -591,9 +591,39 @@ the implementer's self-report.
   `docker compose run --rm tests` — 312 passed (289 baseline + 23 new); `ruff check .` clean; `git
   status` confirmed only the two owned files were touched.
   Next: T043 (alternative routes and interestingness, M4, deps T042, unblocked).
-- [ ] T043 — Alternative routes and interestingness — paths: `src/rogaine/solve/alternatives.py` —
+- [x] T043 — Alternative routes and interestingness — paths: `src/rogaine/solve/alternatives.py` —
   deps: T042 — DoD: top-K routes differing by at least one control, each with its score; K
   configurable; the score spread is reported as the map's interestingness measure (F16).
+  Landed 2026-08-29. `solve_alternatives` in the new module returns an `AlternativesResult`
+  (`routes: list[Route]`, `interestingness: float`) — deliberately scoped to T042 only (deps say
+  T042, not T041): real corpora run 30-80 controls where exact Held-Karp is intractable, exactly the
+  regime T042 exists for. Rather than call `solve_heuristic` K separate times (K x the time budget),
+  `heuristic.py`'s GRASP restart loop was split into a new public `search_heuristic_candidates`
+  (returns every restart's refined `ScoredOrder` as a pool instead of discarding all but the winner)
+  with `solve_heuristic` reduced to a thin wrapper over it (`max(pool, key=score)`, which reproduces
+  the pre-split loop's exact tie-break by construction) — one search process, two independent
+  reducers, not two copies of GRASP. Four documented design decisions: "structurally distinct" per
+  F16 dedupes the pool by `frozenset(order[1:-1])` (visited non-hub control ids), not order, keeping
+  the higher-scoring order of any tied set; ranking is score descending with a sorted-control-id-tuple
+  tie-break for determinism; K reads only `run_config.alternatives` (already defaulted, never
+  `config.solver.alternatives` — same RunConfig-is-authoritative precedent T042 established), `K=0`
+  short-circuits before running any search, and fewer-than-K distinct candidates are returned as-is,
+  never padded or erroring; interestingness is `routes[0].score - routes[-1].score` computed only
+  over the K routes actually returned (`0.0` for `K<2`), not the full internal pool, since the DoD
+  ties it to "top-K routes ... each with its score". No defect found in the pre-existing heuristic
+  loop — the extraction is a pure, semantics-preserving refactor, confirmed by all 23 pre-existing
+  `test_heuristic.py` tests passing unchanged. 14 new tests (`tests/unit/solve/test_alternatives.py`):
+  a hand-computed 2-candidate case (K=0/1/3/50) with an exact interestingness value; hub validation;
+  zero-candidate, all-unreachable and unresolved-points-excluded fallbacks; structural-distinctness
+  and ranking invariants plus a brute-force per-subset upper bound on a random instance (independent
+  of solver internals); a cross-check that every returned `Route`'s totals agree exactly with
+  `score_order` on its own order; a cross-check that the top alternative matches `solve_heuristic` on
+  the same instance; K-prefix-consistency across K values on one instance; determinism. Independently
+  re-verified against the tree (this session's standing practice): own read of both touched files and
+  the diff to `heuristic.py`, own `docker compose run --rm tests` (326 passed, exit 0, checked without
+  piping through `tail` per this repo's own standing warning), own `ruff check .` (clean), own `git
+  status` (only `solve/alternatives.py`, `solve/heuristic.py`, and the new test file touched).
+  Next: T044 (`bench` command, M4, deps T041/T042, unblocked).
 - [ ] T044 — `bench` command — paths: `src/rogaine/cli.py` (bench subcommand only) — deps: T041,
   T042 — DoD: runs both solvers on a reduced instance and prints points, time, and the gap; a test
   asserts the fixture gap stays within F13.

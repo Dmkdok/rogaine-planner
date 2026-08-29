@@ -4,8 +4,8 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); T040-T042 landed (objective, exact Held-Karp, heuristic GRASP); T043
-  (alternative routes and interestingness, M4, deps T042) next
+  complete (T030-T032 landed); T040-T043 landed (objective, exact Held-Karp, heuristic GRASP,
+  alternative routes/interestingness); T044 (`bench` command, M4, deps T041/T042) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -340,4 +340,20 @@ ask the owner what it's for before touching it.
   a cross-check that the winning `Route`'s totals agree exactly with an independent `score_order`
   call on the same order. See TASKS.md T042 for full detail. 312 tests pass (289 baseline + 23 new),
   `ruff check .` clean. Next: T043 (alternative routes and interestingness, M4, deps T042,
+  unblocked).
+- 2026-08-29: T043 (alternative routes and interestingness, M4) landed — new `solve_alternatives` in
+  `src/rogaine/solve/alternatives.py` returns an `AlternativesResult` (top-K structurally distinct
+  `Route`s plus `interestingness`), built by the `implementer` subagent and independently re-verified
+  against the tree. Scoped to T042 only (real corpora sit in the 30-80 control regime where exact
+  Held-Karp is intractable): rather than call `solve_heuristic` K times (K x the time budget),
+  `heuristic.py`'s GRASP restart loop was split into a new public `search_heuristic_candidates`
+  (returns every restart's pool instead of discarding all but the winner), with `solve_heuristic`
+  reduced to a thin `max(pool, key=score)` wrapper that reproduces its old tie-break exactly — one
+  search process, two reducers. "Structurally distinct" dedupes by `frozenset(order[1:-1])` (visited
+  non-hub controls, not order); K reads only `run_config.alternatives` (already defaulted ahead of
+  time by T002/T040-era config work); interestingness is `routes[0].score - routes[-1].score` over
+  only the K routes actually returned. No defect found in the pre-existing heuristic loop — the split
+  is a pure refactor, confirmed by all 23 pre-existing `test_heuristic.py` tests passing unchanged.
+  See TASKS.md T043 for full detail on the four design decisions and the 14 new tests. 326 tests pass
+  (312 baseline + 14 new), `ruff check .` clean. Next: T044 (`bench` command, M4, deps T041/T042,
   unblocked).

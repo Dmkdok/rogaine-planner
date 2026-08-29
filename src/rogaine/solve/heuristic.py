@@ -99,6 +99,16 @@ cannot remove that boundary without giving up the time budget itself; callers th
 byte-identical output across arbitrary hardware (T053) must size the budget generously enough, for
 the instance at hand, that convergence -- not the clock -- is what ends every run.
 
+**T043 split: ``search_heuristic_candidates`` vs. ``solve_heuristic``.** The restart loop described
+above (GRASP construction + local search, ``config.solver.grasp_restarts`` times) lives in the
+public ``search_heuristic_candidates`` function, which returns every restart's refined
+``ScoredOrder`` -- the "pool" -- rather than just the winner. ``solve_heuristic`` is a thin wrapper
+that takes the pool's single best-scoring entry (via ``max(pool, key=...)``, which returns the
+first-encountered maximal item and so reproduces the pre-T043 single-loop implementation's exact
+tie-break) and builds the ``Route``. This split exists so ``solve/alternatives.py`` (T043, F16) can
+reuse the identical search process to surface several structurally distinct candidates instead of
+discarding every restart but one; the "top-K distinct routes" logic itself lives there, not here.
+
 **``_build_legs`` mirrors, rather than imports, ``exact.py``'s private helper of the same name** --
 both solvers independently need the same order-to-``Leg``s translation (including the ``a == b``
 special case for the empty baseline's self-loop, where ``TravelMatrix.paths`` holds no entry by
@@ -120,18 +130,23 @@ from rogaine.solve.objective import ScoredOrder, score_order
 _Move = tuple[list[int], ScoredOrder]
 
 
-def solve_heuristic(
+def search_heuristic_candidates(
     controls: list[Control],
     matrix: TravelMatrix,
     run_config: RunConfig,
     config: AppConfig | None = None,
-) -> Route:
-    """Solve the Orienteering Problem heuristically via seeded GRASP + local search (F13, F19).
+) -> list[ScoredOrder]:
+    """Run the GRASP construct + local-search restart loop and return every restart's refined
+    result as a pool, in generation order (T043).
 
-    Returns a ``Route`` with ``solver="heuristic"`` and ``optimal=False`` -- this solver never
-    proves optimality, only reports the best score it found within the time budget. Raises
-    ``ValueError`` if *controls* does not carry exactly one hub (same contract as ``solve_exact``
-    and ``score_order``); never raises for running out of time or for finding no improving route.
+    ``pool[0]`` is always the baseline empty hub-to-hub route (``score_order([hub, hub], ...)``,
+    score ``0.0``); each following entry is one completed restart's locally-optimised
+    ``ScoredOrder`` (``config.solver.grasp_restarts`` of them, fewer if the time budget cuts the
+    restart loop short -- see the module docstring's time-budget section). Never deduped or sorted:
+    ``solve_heuristic`` (below) and ``solve/alternatives.py`` (T043) are this pool's two consumers,
+    and each reduces it differently -- see the module docstring's "T043 split" paragraph.
+
+    Raises ``ValueError`` under the same hub-count contract as ``score_order``/``solve_exact``.
     """
     cfg = config or default_config()
 
@@ -142,7 +157,7 @@ def solve_heuristic(
 
     candidate_ids = sorted(c.id for c in controls if not c.is_hub and c.points is not None)
 
-    best = score_order([hub.id, hub.id], controls, matrix, run_config)
+    pool = [score_order([hub.id, hub.id], controls, matrix, run_config)]
 
     if candidate_ids:
         rng = np.random.default_rng(run_config.seed)
@@ -164,8 +179,29 @@ def solve_heuristic(
             refined = _local_search(
                 constructed, candidate_ids, controls, matrix, run_config, deadline
             )
-            if refined.score > best.score:
-                best = refined
+            pool.append(refined)
+
+    return pool
+
+
+def solve_heuristic(
+    controls: list[Control],
+    matrix: TravelMatrix,
+    run_config: RunConfig,
+    config: AppConfig | None = None,
+) -> Route:
+    """Solve the Orienteering Problem heuristically via seeded GRASP + local search (F13, F19).
+
+    Returns a ``Route`` with ``solver="heuristic"`` and ``optimal=False`` -- this solver never
+    proves optimality, only reports the best score it found within the time budget. Raises
+    ``ValueError`` if *controls* does not carry exactly one hub (same contract as ``solve_exact``
+    and ``score_order``); never raises for running out of time or for finding no improving route.
+
+    A thin wrapper over ``search_heuristic_candidates`` (above, T043): runs the identical GRASP
+    restart loop and takes the resulting pool's single best-scoring entry.
+    """
+    pool = search_heuristic_candidates(controls, matrix, run_config, config)
+    best = max(pool, key=lambda so: so.score)
 
     legs = _build_legs(best.order, matrix)
     return Route(
