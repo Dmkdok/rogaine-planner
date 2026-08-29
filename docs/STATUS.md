@@ -4,8 +4,8 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); T040 (objective and feasibility, M4) landed; T041 (exact Held-Karp,
-  M4) landed; T042 (heuristic solver, M4, deps T040) next
+  complete (T030-T032 landed); T040-T042 landed (objective, exact Held-Karp, heuristic GRASP); T043
+  (alternative routes and interestingness, M4, deps T042) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -314,3 +314,30 @@ ask the owner what it's for before touching it.
   reachable control's round trip still nets negative, and the cap satisfied at the limit /
   refused one above it. See TASKS.md T041 for full detail. 289 tests pass (281 baseline + 8 new),
   `ruff check .` clean. Next: T042 (heuristic solver, M4, deps T040, unblocked).
+- 2026-08-29: T042 (heuristic solver, M4) landed — `solve_heuristic` in
+  `src/rogaine/solve/heuristic.py`, built by the `implementer` subagent and independently
+  re-verified against the tree (own read of both files, own Docker test run, own `ruff check .`,
+  own `git status`) rather than trusted on report alone. Seeded GRASP construction (cheapest-time
+  insertion proxy picks *where* to trial a candidate, `score_order` ranks *which* one enters the RCL,
+  one seeded `numpy.random.Generator` draws from it) plus five-move first-improvement local search
+  (insert, remove, 2-opt, or-opt, swap — insert/remove first, since OP's lever is control selection,
+  not just order) refines every restart, keeping the best across `config.solver.grasp_restarts`.
+  Mirrors T041's structure (same candidate filter — hub excluded, `points is None` excluded per
+  ADR-009 — same empty-route floor via `score_order`, same private `_build_legs`-mirrors-not-imports
+  choice) so T044's `bench` can call both solvers interchangeably. One real defect found and fixed
+  during development: an initial design gated each insertion on `score_delta > 0`, which reliably
+  trapped construction in tiny 1-3-control routes (54% gap on one seed) because a control that looks
+  locally bad against an arbitrary partial order can still belong in the globally best tour once
+  local search has reordered it — fixed by inserting every reachable candidate unconditionally and
+  handing subset pruning to the `remove` move instead. Determinism holds exactly whenever the time
+  budget is generous enough that convergence, not the wall clock, ends every run — documented as an
+  explicit boundary, not a blanket guarantee, since RNG only feeds construction's RCL draw but a
+  mid-scan deadline interruption is host-speed-dependent. Tests
+  (`tests/unit/solve/test_heuristic.py`, 23 new): gap vs. `solve_exact` across 3 seeds x N in
+  {3,6,9,12,15} — every one of the 15 combinations matched the exact optimum exactly (gap 0.0000),
+  well inside the 5% DoD floor; same-seed determinism; an 80-control smoke test within budget; the
+  usual edge-case trio (zero candidates, unresolved-points exclusion, all-unreachable fallback); and
+  a cross-check that the winning `Route`'s totals agree exactly with an independent `score_order`
+  call on the same order. See TASKS.md T042 for full detail. 312 tests pass (289 baseline + 23 new),
+  `ruff check .` clean. Next: T043 (alternative routes and interestingness, M4, deps T042,
+  unblocked).

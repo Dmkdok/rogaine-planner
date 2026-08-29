@@ -542,10 +542,55 @@ the implementer's self-report.
   trip nets deeply negative; the cap satisfied exactly at the limit and refused with a clear message
   one above it. 289 tests pass (281 baseline + 8 new), `ruff check .` clean.
   Next: T042 (heuristic solver, M4, deps T040, unblocked).
-- [ ] T042 — Heuristic solver — paths: `src/rogaine/solve/heuristic.py` — deps: T040 —
+- [x] T042 — Heuristic solver — paths: `src/rogaine/solve/heuristic.py` — deps: T040 —
   DoD: GRASP construction plus 2-opt / or-opt / insert / remove / swap local search under a time
   budget; seeded and deterministic; gap versus T041 at most 5% across a suite of random instances
   with N up to 15; handles 80 controls inside the budget (F13, F19).
+  Landed 2026-08-29. `solve_heuristic` in `heuristic.py` mirrors `solve_exact`'s signature and
+  candidate-filtering (hub excluded, `points is None` excluded, ADR-009) so T044's `bench` can call
+  both interchangeably, but never proves optimality — it returns the best route a bounded search
+  finds (`Route.optimal=False`). GRASP construction inserts every reachable candidate one at a time:
+  a constant-time cheapest-insertion proxy picks *where* to trial each candidate, but `score_order`
+  (T040) — never a reimplemented formula — ranks *which* candidates enter the restricted candidate
+  list (RCL, size `config.solver.grasp_candidate_size`), and one is drawn uniformly at random from
+  it via a single seeded `numpy.random.Generator`. Local search then refines every restart (not just
+  the best) through five first-improvement move types — insert, remove, 2-opt, or-opt (1-3 length
+  chunks), swap, insert/remove run first each pass since OP's real lever is *which* controls are
+  visited — repeating full passes until one improves nothing or the deadline hits.
+  One real defect found and fixed during development: construction originally gated each insertion
+  on `score_delta > 0` ("stop growing once the next insertion looks locally bad"), which reliably
+  trapped it in tiny 1-3-control routes (54% gap on `seed=0, n_candidates=6`) — a control that looks
+  like a net loss against an arbitrary, not-yet-reordered partial route can still belong in the
+  globally best tour once 2-opt/or-opt have straightened it out, so marginal-delta-right-now is not
+  a reliable OP *selection* signal. Fixed by inserting every reachable candidate unconditionally
+  (the proxy only orders trials, never gates them) and handing subset selection to local search's
+  `remove` move working against an already-improved order instead — pruning a good-enough superset
+  being strictly easier than guessing the right set to grow into one locally-negative step at a
+  time. Documented design calls: time budget and seed come from `RunConfig` (not `AppConfig.solver`,
+  which carries its own defaults for constructing one), matching T041's own precedent that a
+  resolved `RunConfig` is authoritative for one run; `grasp_restarts`/`grasp_candidate_size` have no
+  `RunConfig` equivalent so those stay config-sourced; gap is
+  `(exact.score - heuristic.score) / exact.score`, defined as `0.0` when `exact.score == 0.0` since
+  both solvers share the same empty-route floor there; determinism holds exactly whenever the time
+  budget is generous enough that convergence, not the clock, ends every run — RNG is consumed only
+  by construction's RCL draw, local search is a pure function of its input order, but a deadline that
+  actually interrupts a run mid-scan makes the stopping point (and therefore the result) depend on
+  host speed, an explicitly documented boundary rather than a claimed guarantee; `_build_legs`
+  mirrors (does not import) `exact.py`'s private helper of the same name, since a leading-underscore
+  name isn't meant for cross-module reuse. Tests (`tests/unit/solve/test_heuristic.py`, 23 new): a
+  hand-computed optimum on the same asymmetric-cost fixture `test_exact.py` uses; gap vs. `solve_exact`
+  across 3 seeds x N in {3,6,9,12,15} (15 combinations, each with an explicit small
+  `heuristic_time_budget_s` so the parametrized suite stays fast rather than using
+  `config/default.toml`'s real 30s budget) — every combination matched the exact optimum exactly
+  (gap 0.0000), well inside the 5% floor; same-seed determinism (`route_a == route_b`); an 80-control
+  smoke test asserting completion within budget plus slack and a non-negative score; zero-candidate,
+  unresolved-points-exclusion, and all-unreachable-falls-back-to-empty edge cases; a cross-check that
+  `Route` totals for the winning order agree exactly with an independent `score_order` call on that
+  same order, confirming the solver reports the real formula's output and never a value computed
+  some other way. Independently re-verified against the tree (this session's standing practice):
+  `docker compose run --rm tests` — 312 passed (289 baseline + 23 new); `ruff check .` clean; `git
+  status` confirmed only the two owned files were touched.
+  Next: T043 (alternative routes and interestingness, M4, deps T042, unblocked).
 - [ ] T043 — Alternative routes and interestingness — paths: `src/rogaine/solve/alternatives.py` —
   deps: T042 — DoD: top-K routes differing by at least one control, each with its score; K
   configurable; the score spread is reported as the map's interestingness measure (F16).
