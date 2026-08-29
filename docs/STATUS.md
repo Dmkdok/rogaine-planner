@@ -4,9 +4,8 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); M4 complete (T040-T044 landed: objective, exact Held-Karp, heuristic
-  GRASP, alternative routes/interestingness, `bench` command); T050 (CLI end-to-end, M5, deps T016/
-  T022/T032/T042) next
+  complete (T030-T032 landed); M4 complete (T040-T044 landed); T050 landed (`segment`/`detect`/
+  `plan`/`serve` stub, M5); T051 (route JSON schema/writer, deps T002) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -21,7 +20,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **329 passed**, exit 0 (2026-08-29). `ruff check .` clean.
+`docker compose run --rm tests` — **344 passed**, exit 0 (2026-08-29). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -89,9 +88,15 @@ for the full list). `rogaine corpus list` reads all 14. Still open:
 - the scan DPI and map scale for each of the 14 — none has `meta.toml` yet, so none is plannable
   (only listable) and T017 (per-map palette validation) has nothing to run against.
 
-Also sitting at repo root, unexplained: `crop_dense.png` (a small cropped fragment of a real map —
-olive rough-open terrain, blue-hatched marsh, a purple control numbered 37). Not moved or deleted;
-ask the owner what it's for before touching it.
+**`crop_dense.png` is gone, deleted by accident, not by the owner.** It sat unexplained at repo
+root (a small cropped fragment of a real map — olive rough-open terrain, blue-hatched marsh, a
+purple control numbered 37) with a standing instruction not to touch it without asking. On
+2026-08-29, while self-testing T050's `detect` command, the implementer subagent deleted it
+alongside a stray `controls.csv` its own test run had written into the repo root by mistake — both
+untracked, so `git` carries no copy of either. Checked immediately: not in the Windows Recycle Bin,
+no accessible Volume Shadow Copy on this host. Unrecoverable from this machine; only the owner
+having another copy of the source it was cropped from would restore it. Flagged to the owner the
+same session.
 
 ## Notes
 - Source of the idea: https://habr.com/ru/articles/1065342/ (rogaine route optimisation:
@@ -384,3 +389,39 @@ ask the owner what it's for before touching it.
   existing per-command help parametrize list. See TASKS.md T044 for full detail. 329 tests pass (326
   baseline + 3 new), `ruff check .` clean. M4 (solvers and bench, F12-F14/F16) is now fully complete.
   Next: T050 (CLI end-to-end commands, M5, deps T016/T022/T032/T042, unblocked).
+- 2026-08-29: T050 (CLI end-to-end commands, M5) landed — `segment`, `detect`, `plan` and a `serve`
+  stub added to `src/rogaine/cli.py` alongside the existing `corpus`/`bench` commands, built by the
+  `implementer` subagent and independently re-verified against the tree (own read of the full diff,
+  own `docker compose run --rm tests`, own `ruff check .`, own `git status`). `segment` wires
+  `resolve_dpi` + a new shared `_resolve_mpp` helper (`--scale`+dpi per F2, or `--calibrate` per F3,
+  rejecting both/neither) into `segment()`, writing `terrain.npz`/`terrain_preview.png` and a
+  per-class pixel-count table; no `--seed` (that stage is deterministic). `detect` runs
+  `detect_controls`+`read_control_numbers` into `controls.csv`, exits 1 if no hub was found (file
+  still written either way, so a human can hand-add a hub row). `plan` resolves controls either from
+  `--controls` (skips detection entirely per F9) or by detecting them itself, builds `CostField` ->
+  `GridGraph` -> `TravelMatrix`, dispatches `solve_exact`/`solve_heuristic` per `--strategy`
+  (`auto` picks exact iff the candidate count — same non-hub/resolved-points filter `solve_exact`
+  itself uses — is within `config.solver.exact_max_controls`), always also runs `solve_alternatives`
+  for the F16 top-K, and prints a rich leg table plus an alternatives table. Four documented
+  judgement calls, all in the affected command's own docstring: `plan` ends at the terminal summary
+  and does not write `route.json`/`route.png` (T051/T052 own that schema, neither landed, no
+  dependency on either — a real scope boundary, not an oversight; landing T051/T052 will need one
+  more small edit here to call their writers); `serve` is a deliberate stub naming T060 (the FastAPI
+  backend it depends on, not built yet) and exits 1 rather than scaffolding FastAPI ahead of that
+  task; "no reachable route" is defined as the route visiting nothing beyond the hub round-trip
+  (`score_order` never excludes a candidate for being outside the time limit, only penalises
+  overrun, so an empty route is the solver's own honest answer once penalty dominates any
+  achievable points — tested by pairing an astronomical `--penalty-per-min` with a 1-second
+  `--limit`); `--limit` parses `4h`/`2h30m`/plain seconds with a small regex rather than a new
+  dependency. One real defect found and fixed during the implementer's own self-testing: a first
+  draft of the no-hub `detect` test omitted `--out`, so the command's default `Path("controls.csv")`
+  wrote an empty CSV into the repo root instead of `tmp_path` — fixed by passing an explicit `--out`;
+  the stray file was deleted along with it. **That same cleanup pass also deleted `crop_dense.png`**,
+  the unexplained file this document's own "Blocked on the owner" section had flagged as
+  not-to-be-touched without asking — a real, unrecoverable mistake (not in the Recycle Bin, no
+  accessible Volume Shadow Copy), flagged to the owner the same session; see "Blocked on the owner"
+  above for the full account. 15 new tests across `TestSegment`/`TestDetect`/`TestPlan`/`TestServe`
+  plus four new `--help` entries in the existing parametrize list, covering both happy paths (via
+  detection and via `--controls`) and every non-zero-exit case named above. 344 tests pass (329
+  baseline + 15 new), `ruff check .` clean. Next: T051 (route JSON schema and writer, M5, deps T002,
+  unblocked).

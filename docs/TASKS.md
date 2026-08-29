@@ -630,7 +630,7 @@ the implementer's self-report.
 
 ## M5 — CLI end-to-end and renders (WS-C)
 
-- [ ] T050 — CLI commands — paths: `src/rogaine/cli.py` — deps: T016, T022, T032, T042 —
+- [x] T050 — CLI commands — paths: `src/rogaine/cli.py` — deps: T016, T022, T032, T042 —
   DoD: `segment`, `detect`, `plan`, `bench`, `serve` with typer; `--seed` everywhere randomness
   exists; rich summary table of legs, time, points, penalty; non-zero exit on failure.
 - [ ] T051 — Route JSON schema and writer — paths: `src/rogaine/io/route_json.py` — deps: T002 —

@@ -1,14 +1,19 @@
 """Command line entry point.
 
-M0 shipped the corpus commands. T044 adds `bench`, a synthetic solver-comparison smoke check
-that depends only on T041/T042's solver contracts. T050 (WS-C) still adds `segment`, `plan` and
-`serve` to this same app.
+M0 shipped the corpus commands. T044 added `bench`, a synthetic solver-comparison smoke check
+that depends only on T041/T042's solver contracts. T050 (WS-C) adds `segment`, `detect`, `plan`
+and a deliberate `serve` stub to this same app -- see each command's own docstring for the scope
+cuts that are documented judgement calls, not oversights: `plan` ends at the terminal summary
+(SPEC F15's `route.json`/`route.png` writers are T051/T052, not landed yet) and `serve` prints
+where the real FastAPI backend lands (T060) and exits non-zero.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import typer
@@ -16,11 +21,23 @@ from rich.console import Console
 from rich.table import Table
 
 from rogaine import __version__
-from rogaine.config import default_config
+from rogaine.config import default_config, load_config
+from rogaine.cost.field import compute_cost_field
+from rogaine.cost.graph import build_grid_graph
+from rogaine.cost.travel import build_travel_matrix
+from rogaine.io.controls_csv import read_controls, write_controls
 from rogaine.io.corpus import list_corpus, read_entry
-from rogaine.models import Control, RunConfig, TravelMatrix
+from rogaine.io.raster import load_raster, resolve_dpi
+from rogaine.io.scale import Calibration, mpp_from_dpi
+from rogaine.models import TERRAIN_ORDER, Control, RunConfig, TravelMatrix
+from rogaine.render.preview import write_preview
+from rogaine.solve.alternatives import solve_alternatives
 from rogaine.solve.exact import solve_exact
 from rogaine.solve.heuristic import solve_heuristic
+from rogaine.vision.controls import detect_controls
+from rogaine.vision.ocr import read_control_numbers
+from rogaine.vision.segment import save_terrain_map
+from rogaine.vision.segment import segment as run_segmentation
 
 DEFAULT_CORPUS = Path("data/maps")
 
@@ -109,6 +126,319 @@ def corpus_check(
 
     if not entry.is_plannable:
         raise typer.Exit(code=1)
+
+
+_DURATION_RE = re.compile(
+    r"^(?:(?P<h>\d+(?:\.\d+)?)h)?(?:(?P<m>\d+(?:\.\d+)?)m)?(?:(?P<s>\d+(?:\.\d+)?)s)?$"
+)
+
+
+def _parse_duration(text: str) -> float:
+    """Parse a human time budget: '4h', '2h30m', '90s', or a bare number of seconds.
+
+    Backs `plan`'s `--limit` (SPEC's flows call for something simple here, not a new dependency).
+    """
+    text = text.strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    match = _DURATION_RE.match(text)
+    if not match or not any(match.groups()):
+        raise ValueError(f"cannot parse --limit {text!r}; use e.g. '4h', '2h30m', or seconds")
+    hours = float(match.group("h") or 0.0)
+    minutes = float(match.group("m") or 0.0)
+    seconds = float(match.group("s") or 0.0)
+    total = hours * 3600.0 + minutes * 60.0 + seconds
+    if total <= 0:
+        raise ValueError(f"--limit must be positive, got {text!r}")
+    return total
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Render seconds as `H:MM:SS`, or `M:SS` under an hour."""
+    total = max(0, round(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def _parse_calibration(text: str) -> Calibration:
+    parts = text.split(",")
+    if len(parts) != 5:
+        raise ValueError(f"--calibrate expects 'x1,y1,x2,y2,meters', got {text!r}")
+    try:
+        x1, y1, x2, y2, meters = (float(p) for p in parts)
+    except ValueError as exc:
+        raise ValueError(f"--calibrate values must all be numbers, got {text!r}") from exc
+    return Calibration(x1, y1, x2, y2, meters)
+
+
+def _resolve_mpp(dpi: float, scale: float | None, calibrate: str | None) -> float:
+    """Meters-per-pixel from either `--scale` (+ dpi) or `--calibrate` -- never both, never
+    neither. Shared by `segment` and `plan` (`detect` never needs mpp, only dpi).
+    """
+    if scale is not None and calibrate is not None:
+        raise ValueError("pass either --scale or --calibrate, not both")
+    if scale is not None:
+        return mpp_from_dpi(dpi, scale)
+    if calibrate is not None:
+        return _parse_calibration(calibrate).meters_per_pixel
+    raise ValueError("pass --scale (with --dpi) or --calibrate to resolve meters-per-pixel")
+
+
+@app.command("segment")
+def segment_cmd(
+    map_path: Path = typer.Option(..., "--map", help="Map raster (or PDF) to segment."),
+    dpi: float | None = typer.Option(
+        None, "--dpi", help="Scan resolution; probed from the file or config default if omitted."
+    ),
+    scale: float | None = typer.Option(
+        None, "--scale", help="Map scale denominator (1:N); combined with dpi (SPEC F2)."
+    ),
+    calibrate: str | None = typer.Option(
+        None,
+        "--calibrate",
+        help="Two-point calibration 'x1,y1,x2,y2,meters' in place of --scale (SPEC F3).",
+    ),
+    page: int = typer.Option(0, "--page", help="PDF page, 0-based; ignored for other formats."),
+    out_dir: Path = typer.Option(
+        Path("."), "--out-dir", help="Directory for terrain.npz and terrain_preview.png."
+    ),
+    config: Path | None = typer.Option(None, "--config", help="Config TOML overriding defaults."),
+) -> None:
+    """Segment a map raster into a terrain map: writes `terrain.npz` + `terrain_preview.png`.
+
+    No `--seed`: normalize/classify/contour-density is deterministic given the same image and
+    config, so a decorative seed flag here would promise a guarantee this command doesn't need.
+    """
+    try:
+        cfg = load_config(config)
+        dpi_resolved = resolve_dpi(map_path, user_dpi=dpi)
+        mpp = _resolve_mpp(dpi_resolved, scale, calibrate)
+        image = load_raster(map_path, page=page, dpi=dpi_resolved)
+        terrain_map = run_segmentation(image, dpi_resolved, mpp, cfg)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_terrain_map(out_dir / "terrain.npz", terrain_map)
+    write_preview(out_dir / "terrain_preview.png", terrain_map, cfg)
+
+    h, w = terrain_map.shape
+    counts = np.bincount(terrain_map.labels.ravel(), minlength=len(TERRAIN_ORDER))
+    total = int(counts.sum())
+    table = Table(
+        title=f"segment: {map_path.name} ({w}x{h}, {mpp:.4f} m/px, {dpi_resolved:.0f} dpi)"
+    )
+    table.add_column("terrain class")
+    table.add_column("pixels", justify="right")
+    table.add_column("%", justify="right")
+    for cls, count in zip(TERRAIN_ORDER, counts, strict=True):
+        if count == 0:
+            continue
+        table.add_row(cls.value, f"{int(count):,}", f"{100.0 * count / total:.1f}")
+    console.print(table)
+    console.print(f"wrote {out_dir / 'terrain.npz'} and {out_dir / 'terrain_preview.png'}")
+
+
+@app.command("detect")
+def detect_cmd(
+    map_path: Path = typer.Option(..., "--map", help="Map raster (or PDF) to detect controls on."),
+    dpi: float | None = typer.Option(
+        None, "--dpi", help="Scan resolution; probed from the file or config default if omitted."
+    ),
+    out: Path = typer.Option(
+        Path("controls.csv"), "--out", help="Where to write the controls CSV."
+    ),
+    config: Path | None = typer.Option(None, "--config", help="Config TOML overriding defaults."),
+) -> None:
+    """Detect the hub and control circles, read their numbers, and write an editable CSV (F7-F9).
+
+    No `--seed`: detection and OCR are deterministic given the same image and config.
+    """
+    try:
+        cfg = load_config(config)
+        dpi_resolved = resolve_dpi(map_path, user_dpi=dpi)
+        image = load_raster(map_path, dpi=dpi_resolved)
+        controls = detect_controls(image, dpi_resolved, cfg)
+        controls, flags = read_control_numbers(image, controls, dpi_resolved, cfg)
+        write_controls(out, controls)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    hub_found = any(c.is_hub for c in controls)
+    n_circles = sum(1 for c in controls if not c.is_hub)
+    console.print(f"hub: {'[green]found[/]' if hub_found else '[red]not found[/]'}")
+    console.print(f"circles detected: {n_circles}")
+    console.print(f"unreadable numbers: {len(flags)}")
+    for flag in flags:
+        console.print(f"  [yellow]{flag}[/]")
+    console.print(f"wrote {out}")
+
+    if not hub_found:
+        console.print(
+            "[red]no hub detected[/] -- a route needs a start/finish; add one by hand to the "
+            "CSV or improve the scan."
+        )
+        raise typer.Exit(code=1)
+
+
+@app.command("plan")
+def plan_cmd(
+    map_path: Path = typer.Option(..., "--map", help="Map raster (or PDF) to plan on."),
+    dpi: float | None = typer.Option(
+        None, "--dpi", help="Scan resolution; probed from the file or config default if omitted."
+    ),
+    scale: float | None = typer.Option(
+        None, "--scale", help="Map scale denominator (1:N); combined with dpi (SPEC F2)."
+    ),
+    calibrate: str | None = typer.Option(
+        None,
+        "--calibrate",
+        help="Two-point calibration 'x1,y1,x2,y2,meters' in place of --scale (SPEC F3).",
+    ),
+    controls_path: Path | None = typer.Option(
+        None,
+        "--controls",
+        help="Hand-edited controls.csv; overrides detection entirely when given (SPEC F9).",
+    ),
+    speed: float = typer.Option(2.0, "--speed", min=0.0, help="Runner base speed, m/s."),
+    limit: str = typer.Option(
+        "4h", "--limit", help="Time budget: '4h', '2h30m', or a plain number of seconds."
+    ),
+    penalty_per_min: float = typer.Option(
+        1.0, "--penalty-per-min", min=0.0, help="Score penalty per minute over the time limit."
+    ),
+    strategy: Literal["auto", "exact", "heuristic"] = typer.Option(
+        "auto", "--strategy", help="Solver dispatch; 'auto' picks exact under the control cap."
+    ),
+    heuristic_time_budget: float = typer.Option(
+        30.0, "--heuristic-time-budget", min=0.0, help="Heuristic solver time budget, seconds."
+    ),
+    alternatives: int = typer.Option(
+        3, "--alternatives", min=0, help="Top-K structurally distinct alternative routes (F16)."
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="Seeds the heuristic solver and the alternatives search (F19)."
+    ),
+    config: Path | None = typer.Option(None, "--config", help="Config TOML overriding defaults."),
+) -> None:
+    """Plan a route: resolve controls, build the cost field and travel matrix, solve, and print
+    a summary of legs, time, points and penalty, plus the top-K alternatives (F1-F3, F7-F14, F16).
+
+    Ends at the terminal summary table -- it does not write `route.json` or `route.png`. Those
+    SPEC F15 artefacts are T051 (`io/route_json.py`) and T052 (`render/overlay.py`), neither
+    landed yet, and this command has no dependency on either; whoever lands them adds one more
+    small write-out step here. This is a deliberate, documented scope cut for T050, not an
+    oversight.
+    """
+    try:
+        cfg = load_config(config)
+        dpi_resolved = resolve_dpi(map_path, user_dpi=dpi)
+        mpp = _resolve_mpp(dpi_resolved, scale, calibrate)
+        image = load_raster(map_path, dpi=dpi_resolved)
+
+        if controls_path is not None:
+            controls = read_controls(controls_path)
+        else:
+            controls = detect_controls(image, dpi_resolved, cfg)
+            controls, _flags = read_control_numbers(image, controls, dpi_resolved, cfg)
+
+        if not any(c.is_hub for c in controls):
+            console.print("[red]no hub[/] -- pass --controls with a hub row, or improve the scan.")
+            raise typer.Exit(code=1)
+
+        limit_s = _parse_duration(limit)
+        run_config = RunConfig(
+            base_speed_mps=speed,
+            time_limit_s=limit_s,
+            penalty_per_min=penalty_per_min,
+            strategy=strategy,
+            heuristic_time_budget_s=heuristic_time_budget,
+            alternatives=alternatives,
+            seed=seed,
+        )
+
+        terrain_map = run_segmentation(image, dpi_resolved, mpp, cfg)
+        cost_field = compute_cost_field(terrain_map, speed, cfg)
+        graph = build_grid_graph(cost_field, cfg)
+        matrix = build_travel_matrix(controls, graph, mpp, cfg)
+
+        n_candidates = sum(1 for c in controls if not c.is_hub and c.points is not None)
+        if strategy == "exact":
+            route = solve_exact(controls, matrix, run_config, cfg)
+        elif strategy == "heuristic":
+            route = solve_heuristic(controls, matrix, run_config, cfg)
+        elif n_candidates <= cfg.solver.exact_max_controls:
+            route = solve_exact(controls, matrix, run_config, cfg)
+        else:
+            route = solve_heuristic(controls, matrix, run_config, cfg)
+
+        if len(route.order) <= 2:
+            console.print(
+                "[red]no reachable route[/] -- no candidate control could be reached within "
+                "the time limit."
+            )
+            raise typer.Exit(code=1)
+
+        alt_result = solve_alternatives(controls, matrix, run_config, cfg)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    by_id = {c.id: c for c in controls}
+    table = Table(
+        title=f"route: {len(route.order) - 2} control(s), {route.solver} solver"
+        + (" (optimal)" if route.optimal else "")
+    )
+    table.add_column("#", justify="right")
+    table.add_column("control")
+    table.add_column("leg time", justify="right")
+    table.add_column("leg dist (m)", justify="right")
+    table.add_column("cumulative", justify="right")
+    table.add_column("points", justify="right")
+    table.add_row("0", "hub", "-", "-", "0:00", "-")
+    cumulative = 0.0
+    for i, leg in enumerate(route.legs, start=1):
+        cumulative += leg.seconds
+        control = by_id[leg.to_id]
+        if control.is_hub:
+            label, points = "hub", "-"
+        else:
+            label = f"#{control.number if control.number is not None else control.id}"
+            points = str(control.points or 0)
+        table.add_row(
+            str(i),
+            label,
+            _fmt_duration(leg.seconds),
+            f"{leg.meters:.0f}",
+            _fmt_duration(cumulative),
+            points,
+        )
+    console.print(table)
+
+    console.print(
+        f"total: {_fmt_duration(route.total_seconds)} / limit "
+        f"{_fmt_duration(run_config.time_limit_s)}, {route.total_meters:.0f} m, "
+        f"{route.points} points, penalty {route.penalty:.2f}, score {route.score:.2f}"
+    )
+
+    if alt_result.routes:
+        alt_table = Table(
+            title=f"alternatives: top {len(alt_result.routes)} "
+            f"(interestingness {alt_result.interestingness:.2f})"
+        )
+        alt_table.add_column("rank", justify="right")
+        alt_table.add_column("controls visited", justify="right")
+        alt_table.add_column("score", justify="right")
+        for rank, alt_route in enumerate(alt_result.routes, start=1):
+            alt_table.add_row(str(rank), str(len(alt_route.order) - 2), f"{alt_route.score:.2f}")
+        console.print(alt_table)
+    else:
+        console.print("alternatives: none requested (--alternatives 0)")
 
 
 def _bench_instance(
@@ -233,6 +563,22 @@ def bench(
 
     verdict = "green" if gap <= 0.05 else "red"
     console.print(f"gap: [{verdict}]{gap:.2%}[/] (F13 bar: <= 5.00%)")
+
+
+@app.command("serve")
+def serve_cmd() -> None:
+    """Judgement call (T050): a deliberate stub, not a build-out of the web backend.
+
+    The FastAPI viewer (T060, `src/rogaine/web/app.py`) depends on this task landing first and
+    is not built yet; scaffolding FastAPI here would reach outside `cli.py`'s owned path and
+    ahead of T060's own task. `serve` exists because the DoD names it among the five commands, so
+    it prints where the real backend lands and exits non-zero rather than silently doing nothing.
+    """
+    console.print(
+        "[yellow]serve is not implemented yet[/] -- the FastAPI web backend lands in T060 "
+        "(src/rogaine/web/app.py)."
+    )
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":  # pragma: no cover
