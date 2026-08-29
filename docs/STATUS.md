@@ -5,7 +5,7 @@ approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
   complete (T030-T032 landed); T040 (objective and feasibility, M4) landed; T041 (exact Held-Karp,
-  M4, deps T040) next
+  M4) landed; T042 (heuristic solver, M4, deps T040) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -290,3 +290,27 @@ ask the owner what it's for before touching it.
   the unreachable-leg nan regression, hub-mismatch rejection, unresolved-points rejection, and the
   hub's own `None` points not being flagged. 281 tests pass (270 baseline + 11 new), `ruff check .`
   clean. Next: T041 (exact Held-Karp, M4, deps T040, unblocked).
+- 2026-08-29: T041 (exact Held-Karp, M4 — milestone still open, T042 next) landed —
+  `solve_exact` in `src/rogaine/solve/exact.py` solves the Orienteering Problem (SPEC F12,
+  ADR-003), not TSP: it repurposes Held-Karp's bitmask-DP machinery to find, for every `(subset,
+  last-control)` state, the minimum-*time* order, then exhaustively scores every reachable state's
+  time-minimal order with T040's `score_order` and keeps the best. The correctness argument (full
+  detail in the module docstring): for a fixed subset and endpoint, every visit order collects
+  identical points and `score_order`'s penalty is monotonic non-decreasing in total time, so the
+  time-minimal order of that `(subset, endpoint)` provably cannot be beaten by a slower order of the
+  same pair — no slower order is ever generated, let alone scored. Candidates exclude the hub (fixed
+  start/end) and any `points is None` control (ADR-009, same up-front filter T040 already commits
+  callers to). The empty-subset route is scored via `score_order` rather than hand-built, so it acts
+  as a correct guaranteed floor when every real subset loses. The memory guard is the DoD's actual
+  ask: `n > config.solver.exact_max_controls` is checked before any `2**N`-sized array is allocated,
+  refusing with both numbers named. This module's code and its 8 tests
+  (`tests/unit/solve/test_exact.py`) existed uncommitted from a prior session — re-verified against
+  the tree rather than trusted, per this file's own standing practice. One real finding on that
+  re-check: `ruff check .` was not clean (10x `E501` line-too-long in the module docstring, all
+  from a docstring never previously linted), fixed by rewrapping to 100 columns without changing a
+  word; no logic defects found. Tests cover a hand-computed optimum built with asymmetric leg costs
+  so the DP must pick the cheaper of two orders of the same subset (not just the right subset),
+  brute-force agreement at N=4/6/9, unresolved-points exclusion, the empty-route fallback when a
+  reachable control's round trip still nets negative, and the cap satisfied at the limit /
+  refused one above it. See TASKS.md T041 for full detail. 289 tests pass (281 baseline + 8 new),
+  `ruff check .` clean. Next: T042 (heuristic solver, M4, deps T040, unblocked).

@@ -506,9 +506,42 @@ the implementer's self-report.
   hub's own `None` points *not* flagged, no-hub-in-controls rejected, and an unknown control id
   rejected. 281 tests pass (270 baseline + 11 new), `ruff check .` clean.
   Next: T041 (exact Held-Karp, M4, deps T040, unblocked).
-- [ ] T041 — Exact Held-Karp — paths: `src/rogaine/solve/exact.py` — deps: T040 —
+- [x] T041 — Exact Held-Karp — paths: `src/rogaine/solve/exact.py` — deps: T040 —
   DoD: optimal for N up to 15 within memory; agrees with brute force for N up to 9 on random
   matrices; refuses N above the configured cap with a clear message instead of exhausting RAM (F12).
+  Landed 2026-08-29. `solve_exact` in `exact.py` is deliberately not textbook Held-Karp: SPEC F12 /
+  ADR-003 ask for the Orienteering Problem (choose a *subset* of non-hub controls to maximise points,
+  soft time penalty), not TSP's forced visit-everything tour. The module reuses Held-Karp's
+  bitmask-DP *machinery* to solve a different problem — minimum travel time per `(subset, last
+  control)` state — then exhaustively scores every reachable `(mask, j)` state's time-minimal order
+  with T040's `score_order`, never reimplementing the score/penalty formula. Correctness rests on one
+  argument, spelled out in the module docstring: for a fixed subset `S` and endpoint `j`, every visit
+  order of `S` ending at `j` collects identical points, and `score_order`'s penalty is monotonic
+  non-decreasing in total time, so the time-minimal order of `(S, j)` provably has the
+  highest-or-equal score among all orders of `(S, j)` — a slower order of the same `(S, j)` can never
+  win and is never generated. Candidates exclude the hub (fixed start/end, never a DP variable) and
+  any control with `points is None` (ADR-009, same filter contract T040's docstring already commits
+  callers to), so `N` is that filtered count, never including the hub. The empty-subset baseline
+  (`order = [hub, hub]`) is scored via `score_order` rather than hand-built, so it inherits the
+  formula's own correctness and acts as the guaranteed floor — a run where every non-trivial subset
+  is infeasible or nets negative correctly falls back to it instead of crashing or returning a loss.
+  The memory guard is the DoD's actual ask: before allocating anything, `n > exact_max_controls` is
+  checked against the config cap (validated up to 24) and raises `ValueError` naming both numbers,
+  never letting a `2**N`-sized array start; at `N=24` that array would run multi-GB (`2**24 * 24 ~=
+  4*10**8` entries), against `N=15`'s trivial `491_520`. This session picked the module up already
+  written and its 8 tests already passing uncommitted (same pattern T013/T021 already hit) —
+  re-verified against the tree rather than trusted: one real finding on that re-check, `ruff check .`
+  was not clean (10x `E501` line-too-long in the module docstring, none in the tests or the code
+  itself), fixed by rewrapping those paragraphs to 100 columns without changing a word. Tests
+  (`tests/unit/solve/test_exact.py`, 8 new): a hand-computed optimum with deliberately asymmetric
+  A↔B costs (5s forward / 50s reverse) so the DP must find the cheaper of the two orders of the same
+  subset, not just the right subset; brute-force agreement at N=4/6/9 (independent enumeration over
+  every subset and permutation, scored by the same `score_order`, ties allowed on score but not
+  required on order shape); an unresolved-points control excluded from the search space even though
+  it would dominate on cost alone; the empty-route fallback when a single reachable control's round
+  trip nets deeply negative; the cap satisfied exactly at the limit and refused with a clear message
+  one above it. 289 tests pass (281 baseline + 8 new), `ruff check .` clean.
+  Next: T042 (heuristic solver, M4, deps T040, unblocked).
 - [ ] T042 — Heuristic solver — paths: `src/rogaine/solve/heuristic.py` — deps: T040 —
   DoD: GRASP construction plus 2-opt / or-opt / insert / remove / swap local search under a time
   budget; seeded and deterministic; gap versus T041 at most 5% across a suite of random instances
