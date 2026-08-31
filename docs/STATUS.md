@@ -7,6 +7,25 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
   complete (T030-T032 landed); M4 complete (T040-T044 landed); M5 complete (T050-T053 landed);
   M6 next — T060 (FastAPI backend, deps T050)
 
+## Resume here
+Tree is clean on `master`, nothing in flight, nothing running in the background. Next actions, in
+order:
+1. Read T060's own TASKS.md entry (M6 section) plus SPEC F17 before doing anything else — don't
+   re-derive the endpoint list from memory.
+2. Land T060 the same way T050-T053 were landed this session: `implementer` subagent scoped to only
+   its own paths/DoD/SPEC excerpt, then independent re-verification (own read of the diff, own
+   `docker compose run --rm tests`, own `ruff check .`, own `git status`) before marking it done.
+3. T061 (canvas viewer UI) depends on T060 and is a genuinely large, UI-heavy task — plan to scope
+   it deliberately (its own subagent prompt, `web-design-guidelines`/`ui-quality-audit` skills as
+   relevant) rather than folding it into the same pass as T060.
+
+Known gap, not yet acted on: `docs/status-archive.md` / `docs/tasks-archive.md`, which CLAUDE.md's
+own project section describes as where history already lives, do not actually exist — `STATUS.md`
+is 45 KB and `TASKS.md` 70 KB, both well past what a session should read in full. Nothing was moved
+this pause (creating that archive split is real restructuring work, not "closing out what's already
+open" — the pause skill's own rule against starting new work). Worth a deliberate session of its own
+before M6's own landing notes make both files bigger still.
+
 ## Checklist
 - [x] Phase 0 intake
 - [x] Phase 1 elicit (DoR met)
