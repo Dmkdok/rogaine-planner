@@ -702,10 +702,47 @@ the implementer's self-report.
   to the normal `docker compose run --rm tests` (356 passed, unchanged count — only edited two
   existing tests, added none) and `ruff check .` (clean). Next: T053 (determinism and performance
   guards, M5, deps T050/T051/T052, unblocked).
-- [ ] T053 — Determinism and performance guards — paths: `tests/e2e/test_cli.py`,
-  `tests/perf/test_budgets.py` — deps: T050, T051, T052 —
+- [x] T053 — Determinism and performance guards — paths: `tests/e2e/test_cli.py`,
+  `tests/perf/test_budgets.py` — deps: T050, T051, T052 — M5 now complete —
   DoD: same inputs and seed give byte-identical JSON; the four NFR budgets are asserted on the
-  full-size synthetic map (F19).
+  full-size synthetic map (F19). Landed 2026-08-31 — three of the four NFR budgets (segmentation
+  <30s, grid graph build <15s/1GB, travel matrix 61 controls <60s) already existed as landed
+  `@pytest.mark.perf` tests (T013/T031/T032's own DoD numbers, in `test_palette.py`/`test_graph.py`/
+  `test_travel.py`); new `tests/perf/test_budgets.py` holds only the one that didn't exist yet —
+  heuristic solve, 80 controls (T042's own DoD number), against `RunConfig`'s real 30s default
+  budget (never a smaller stand-in), with a documented +10s overrun-slack reasoned from
+  `test_heuristic.py`'s own 5s-over-5s deadline-check precedent. Its module docstring names the other
+  three by exact path/class rather than duplicating or moving them. New `tests/e2e/test_cli.py`
+  (first use of the pre-registered but previously-unused `e2e` marker) covers PLAN.md's two distinct
+  "golden end-to-end" checks: `TestGoldenRegression` (one `plan` run via `--controls`+`--strategy
+  exact`, comparing `route.json` against a new hand-verified `tests/e2e/golden_route.json` with
+  `pytest.approx` tolerance — `--controls` skips detection/OCR entirely, since ADR-008/ADR-009 both
+  document OCR as explicitly non-load-bearing, so coupling a golden test to real Tesseract output
+  would risk environment-dependent flakiness for no benefit; `exact` removes GRASP's RNG-driven
+  search order as a second drift source) and `TestDeterminism` (F19: two `plan` runs, identical
+  args and `--seed`, `--strategy heuristic` specifically — the one RNG-bearing path, so this is the
+  check that actually exercises the seeding contract — comparing `route.json` via
+  `Path.read_bytes()` byte-for-byte equality, no tolerance). Both classes pass an explicit
+  `--out-dir` inside `tmp_path` on every `plan` invocation — this project has already hit the
+  bare-default-cwd stray-file mistake twice (`crop_dense.png`, and the near-miss fixed alongside
+  T052's own CLI wiring), so this was treated as a hard requirement, independently re-verified by an
+  explicit repo-root check after the test run (none found). One small addition outside the two
+  literal path-list files, done for a concrete reason rather than scope creep: `tests/e2e/__init__.py`
+  (empty) — without it, pytest's import machinery collides `tests/e2e/test_cli.py` with the
+  pre-existing `tests/unit/test_cli.py` (both would import as the bare top-level module `test_cli`,
+  since neither `tests/`, `tests/unit/`, nor `tests/e2e/` had an `__init__.py`); adding one only to
+  the new directory resolves the collision without touching the existing file. Built by the
+  `implementer` subagent and independently re-verified against the tree: own read of all three new
+  files (including hand-checking the golden fixture's numbers — 6 controls visited, points sum
+  6+5+3+9+5+7=35 matches the file's own `points: 35`), own `docker compose run --rm tests` (359
+  passed, exit 0, captured via PowerShell `Tee-Object`+`$LASTEXITCODE` per this file's own standing
+  warning against a masked red suite — no flakiness observed on this independent run despite the
+  subagent's own report flagging an intermittent captured-output issue on its side), own
+  `ruff check .` (clean), own `git status` (only `tests/e2e/` and `tests/perf/` added), own
+  repo-root stray-file check (none found, including no leftover golden-generation scratch file). No
+  real defect and no real nondeterminism found — the byte-identical check passed on first real run.
+  359 tests pass (356 baseline + 3 new: 2 e2e, 1 perf), `ruff check .` clean. **M5 (CLI end-to-end and
+  renders, F15/F19) is now complete.** Next: M6 — T060 (FastAPI backend, deps T050, unblocked).
 
 ## M6 — Web viewer (WS-C)
 

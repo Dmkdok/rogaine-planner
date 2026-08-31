@@ -4,10 +4,8 @@ phase: implement
 approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); M4 complete (T040-T044 landed); T050 landed (`segment`/`detect`/
-  `plan`/`serve` stub, M5); T051 landed (route JSON schema/writer); T052 landed (route overlay
-  render; `plan_cmd` now writes both to `--out-dir`); T053 (determinism/perf guards, deps T050/
-  T051/T052) next
+  complete (T030-T032 landed); M4 complete (T040-T044 landed); M5 complete (T050-T053 landed);
+  M6 next — T060 (FastAPI backend, deps T050)
 
 ## Checklist
 - [x] Phase 0 intake
@@ -22,7 +20,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **356 passed**, exit 0 (2026-08-31). `ruff check .` clean.
+`docker compose run --rm tests` — **359 passed**, exit 0 (2026-08-31). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -491,3 +489,31 @@ same session.
   unchanged — two existing tests edited, none added) and `ruff check .` (clean), plus an explicit
   repo-root check for stray `route.json`/`route.png` after the run (none found). Next: T053
   (determinism and performance guards, M5, deps T050/T051/T052, unblocked).
+- 2026-08-31: T053 (determinism and performance guards, M5 — **milestone now complete**) landed.
+  Three of the four NFR budgets already existed as landed `@pytest.mark.perf` tests from earlier
+  tasks (segmentation <30s/T013, grid graph build <15s+<1GB/T031, travel matrix 61 controls
+  <60s/T032); new `tests/perf/test_budgets.py` adds only the missing fourth — heuristic solve, 80
+  controls (T042's own DoD number) against `RunConfig`'s real 30s default, +10s documented slack —
+  and its docstring points at the other three by exact path rather than duplicating them. New
+  `tests/e2e/test_cli.py` (first real use of the pre-registered `e2e` marker) covers PLAN.md's two
+  distinct "golden end-to-end" checks: a golden `route.json` comparison with `pytest.approx`
+  tolerance (`--controls`+`--strategy exact`, skipping OCR/detection and GRASP RNG as drift sources,
+  compared against a new hand-verified `tests/e2e/golden_route.json`), and the literal F19 check —
+  two `plan --strategy heuristic` runs with identical args/seed, `route.json` compared byte-for-byte.
+  Both drive the real `plan` CLI via `CliRunner`, every invocation with an explicit `--out-dir`
+  inside `tmp_path` (this project has hit the bare-default-cwd stray-file mistake twice already —
+  `crop_dense.png`, and the near-miss caught during T052's own CLI wiring — treated here as a hard
+  requirement, independently re-checked). One small addition outside the task's literal two-file
+  path list, for a concrete reason: an empty `tests/e2e/__init__.py`, needed because
+  `tests/e2e/test_cli.py` would otherwise collide on import with the pre-existing
+  `tests/unit/test_cli.py` (both resolving to the bare module name `test_cli` — none of `tests/`,
+  `tests/unit/`, `tests/e2e/` had `__init__.py` before). Built by the `implementer` subagent,
+  independently re-verified against the tree: own read of all three new files (including hand-
+  checking the golden fixture's points sum, 6+5+3+9+5+7=35, against its own stored `points: 35`),
+  own `docker compose run --rm tests` (359 passed, exit 0, captured via PowerShell
+  `Tee-Object`+`$LASTEXITCODE` — no output-capture flakiness on this independent run, unlike a
+  tooling issue the subagent flagged on its own side), own `ruff check .` (clean), own `git status`
+  (only `tests/e2e/` and `tests/perf/` added), own repo-root stray-file check (none found, including
+  no leftover golden-generation scratch script). No real defect and no real nondeterminism found.
+  359 tests pass (356 baseline + 3 new). **M5 (CLI end-to-end and renders, F15/F19) is complete.**
+  Next: M6 — T060 (FastAPI backend, `src/rogaine/web/app.py`, deps T050, unblocked).
