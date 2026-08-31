@@ -746,10 +746,53 @@ the implementer's self-report.
 
 ## M6 — Web viewer (WS-C)
 
-- [ ] T060 — FastAPI backend — paths: `src/rogaine/web/app.py` — deps: T050 —
+- [x] T060 — FastAPI backend — paths: `src/rogaine/web/app.py` — deps: T050 —
   DoD: upload, segment, detect, plan and export endpoints; long runs execute in a background task
   with a poll endpoint; binds 127.0.0.1; uploads validated by magic bytes and size, stored under
-  `runs/<uuid>/` with a server-generated name (F17, security).
+  `runs/<uuid>/` with a server-generated name (F17, security). Landed: `src/rogaine/web/app.py`
+  wraps the same vision/cost/solve pipeline calls `cli.py`'s `segment_cmd`/`detect_cmd`/`plan_cmd`
+  already exercise — never routes through the Typer layer — behind eight endpoints: `POST
+  /api/runs` (upload, sniffs PNG/JPEG/BMP/TIFF/PDF magic bytes and picks the stored extension from
+  the sniffed format, never the client filename/Content-Type; 200 MB cap enforced mid-stream, not
+  only after a full read), `POST .../segment` / `.../detect` / `.../plan` (each validates
+  synchronously and 4xx's fast, then runs via `BackgroundTasks` and returns a `job_id`), `GET
+  /api/jobs/{job_id}` (poll), `GET`/`PUT .../controls` (`read_controls`/`write_controls` reused for
+  both directions — PUT validates by writing to a scratch file and reading it back, so an invalid
+  edit such as a missing hub 400s without touching the run's live `controls.csv` — SPEC F9's CSV
+  round trip doubling as the edit path), and `GET .../export/{artifact}` for
+  `route.json`/`route.png`/`controls.csv`. Per-run state lives in `runs/<uuid4>/` as files
+  (`map.<ext>`, `terrain.npz`, `run_state.json` holding the dpi `segment` resolved so `detect`/
+  `plan` reload the identical pixel grid, `controls.csv`, `route.json`, `route.png`) rather than
+  the CLI's one-shot-per-invocation model, so each stage is independently re-enterable — mirrors
+  SPEC user flow 2's staged CLI flow. `Control`/`RunConfig` (already pydantic v2, frozen,
+  `extra="forbid"`) are reused directly as request/response models rather than duplicating a
+  schema that could drift from the frozen contract. Jobs are an in-memory, lock-guarded registry —
+  a deliberate simplification for a local, single-process, single-user tool, no Celery/Redis.
+  `serve` (T050's stub) now really launches via `uvicorn.run("rogaine.web.app:app", ...)`,
+  `--host` defaulting to `127.0.0.1` (never `0.0.0.0`) and `--port 8000`; `docker-compose.yml`'s
+  `app` service command was updated to the `0.0.0.0`-inside-the-container form its own comment
+  already named (the host-side publish stays `127.0.0.1:8000:8000`, so nothing changes about what
+  is reachable from outside the host). One test file outside the two literal path-list files
+  touched, for a concrete and unavoidable reason, flagged by the implementer and independently
+  confirmed necessary: `tests/unit/test_cli.py`'s `TestServe` invoked the old stub expecting its
+  exit-1 behaviour; left alone it would call the real `uvicorn.run` and hang
+  `docker compose run --rm tests` forever (no `pytest-timeout` in this repo) — replaced with two
+  tests that monkeypatch `rogaine.cli.uvicorn.run` and assert the call target/host/port, for both
+  defaults and `--host`/`--port` overrides. New `tests/unit/web/test_app.py` (9 tests) drives the
+  app in-process via `TestClient` against the `synthetic_map` fixture (encoded to PNG bytes) with
+  `RUNS_ROOT` monkeypatched to `tmp_path` so nothing touches the real `runs/`: a full
+  upload→segment→detect→plan→export happy path, a PUT-controls edit that `plan` is proven to
+  honour (by skipping `detect` entirely and checking the route only ever visits the PUT set), and
+  the security-relevant rejections (bad magic bytes → 400, oversized upload → 413, unknown
+  run/job id → 404, export before plan → 404, detect before segment → 400). Built by the
+  `implementer` subagent and independently re-verified against the tree: own read of `web/app.py`
+  in full plus the `cli.py`/`docker-compose.yml`/`test_cli.py` diffs and the new `test_app.py`,
+  own `docker compose run --rm tests` (368 passed, exit 0, 137s), own
+  `docker compose run --rm tests ruff check .` (all checks passed), own `git status` (only the
+  paths named above; no stray files at repo root). No real defect found; the `test_cli.py`
+  deviation was judged correct, not scope creep — a pre-existing test asserting stub behaviour
+  necessarily breaks once the stub is replaced, and leaving it broken would have silently masked
+  a hang. **M6 continues: T061 (canvas viewer UI, deps T060, unblocked) next, then T062.**
 - [ ] T061 — Canvas viewer UI — paths: `src/rogaine/web/static/**` — deps: T060 —
   DoD: pan/zoom map canvas, calibration line tool, control markers that can be dragged, added,
   deleted and edited, parameter panel, run button, leg table, JSON/PNG/CSV export; keyboard

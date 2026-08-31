@@ -18,6 +18,7 @@ from typing import Literal
 
 import numpy as np
 import typer
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 
@@ -575,19 +576,14 @@ def bench(
 
 
 @app.command("serve")
-def serve_cmd() -> None:
-    """Judgement call (T050): a deliberate stub, not a build-out of the web backend.
-
-    The FastAPI viewer (T060, `src/rogaine/web/app.py`) depends on this task landing first and
-    is not built yet; scaffolding FastAPI here would reach outside `cli.py`'s owned path and
-    ahead of T060's own task. `serve` exists because the DoD names it among the five commands, so
-    it prints where the real backend lands and exits non-zero rather than silently doing nothing.
-    """
-    console.print(
-        "[yellow]serve is not implemented yet[/] -- the FastAPI web backend lands in T060 "
-        "(src/rogaine/web/app.py)."
-    )
-    raise typer.Exit(code=1)
+def serve_cmd(
+    host: str = typer.Option(
+        "127.0.0.1", "--host", help="Bind address -- never 0.0.0.0 (SPEC security)."
+    ),
+    port: int = typer.Option(8000, "--port", help="Bind port."),
+) -> None:
+    """Launch the FastAPI web viewer backend (T060, `src/rogaine/web/app.py`) via uvicorn."""
+    uvicorn.run("rogaine.web.app:app", host=host, port=port)
 
 
 if __name__ == "__main__":  # pragma: no cover

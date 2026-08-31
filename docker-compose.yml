@@ -11,8 +11,7 @@ services:
       - ./:/app
     ports:
       - "127.0.0.1:8000:8000"
-    # M6 replaces this with: ["rogaine", "serve", "--host", "0.0.0.0", "--port", "8000"]
-    command: ["rogaine", "--help"]
+    command: ["rogaine", "serve", "--host", "0.0.0.0", "--port", "8000"]
 
   # The suite. CLAUDE.md: this is the only supported way to run tests —
   # pytest hangs on the Windows host.

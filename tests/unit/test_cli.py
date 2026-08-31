@@ -334,10 +334,27 @@ class TestPlan:
 
 
 class TestServe:
-    def test_is_a_documented_stub_that_exits_nonzero(self) -> None:
+    """T060 replaced the stub with a real `uvicorn.run` call -- `uvicorn.run` itself blocks
+    serving forever, so every test here patches it out rather than actually binding a socket.
+    """
+
+    def test_launches_the_web_backend_via_uvicorn_with_safe_defaults(self, monkeypatch) -> None:
+        calls: list[tuple[tuple, dict]] = []
+        monkeypatch.setattr(
+            "rogaine.cli.uvicorn.run", lambda *a, **kw: calls.append((a, kw))
+        )
         result = runner.invoke(app, ["serve"])
-        assert result.exit_code != 0
-        assert "T060" in result.stdout
+        assert result.exit_code == 0, result.stdout
+        assert calls == [(("rogaine.web.app:app",), {"host": "127.0.0.1", "port": 8000})]
+
+    def test_host_and_port_are_configurable(self, monkeypatch) -> None:
+        calls: list[tuple[tuple, dict]] = []
+        monkeypatch.setattr(
+            "rogaine.cli.uvicorn.run", lambda *a, **kw: calls.append((a, kw))
+        )
+        result = runner.invoke(app, ["serve", "--host", "0.0.0.0", "--port", "9000"])
+        assert result.exit_code == 0, result.stdout
+        assert calls == [(("rogaine.web.app:app",), {"host": "0.0.0.0", "port": 9000})]
 
 
 @pytest.mark.parametrize(
