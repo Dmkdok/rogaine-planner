@@ -187,6 +187,7 @@ class TestPlan:
         sm = make_synthetic_map(seed=3, n_controls=6)
         map_path = tmp_path / "map.png"
         _write_png(map_path, sm.image)
+        out_dir = tmp_path / "out"
 
         result = runner.invoke(
             app,
@@ -202,11 +203,15 @@ class TestPlan:
                 "0.5",
                 "--alternatives",
                 "2",
+                "--out-dir",
+                str(out_dir),
             ],
         )
         assert result.exit_code == 0, result.stdout
         assert "score" in result.stdout
         assert "alternatives" in result.stdout
+        assert (out_dir / "route.json").is_file()
+        assert (out_dir / "route.png").is_file()
 
     def test_end_to_end_via_controls_csv_skips_detection(self, tmp_path) -> None:
         sm = make_synthetic_map(seed=3, n_controls=6)
@@ -214,6 +219,7 @@ class TestPlan:
         _write_png(map_path, sm.image)
         controls_csv = tmp_path / "controls.csv"
         write_controls(controls_csv, sm.controls)
+        out_dir = tmp_path / "out"
 
         result = runner.invoke(
             app,
@@ -231,10 +237,14 @@ class TestPlan:
                 "0.5",
                 "--alternatives",
                 "0",
+                "--out-dir",
+                str(out_dir),
             ],
         )
         assert result.exit_code == 0, result.stdout
         assert "alternatives: none requested" in result.stdout
+        assert (out_dir / "route.json").is_file()
+        assert (out_dir / "route.png").is_file()
 
     def test_rejects_scale_and_calibrate_together(self, tmp_path) -> None:
         sm = make_synthetic_map(seed=3, n_controls=1)

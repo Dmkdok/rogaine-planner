@@ -5,8 +5,9 @@ approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
   complete (T030-T032 landed); M4 complete (T040-T044 landed); T050 landed (`segment`/`detect`/
-  `plan`/`serve` stub, M5); T051 landed (route JSON schema/writer); T052 (route overlay render,
-  deps T051) next
+  `plan`/`serve` stub, M5); T051 landed (route JSON schema/writer); T052 landed (route overlay
+  render; `plan_cmd` now writes both to `--out-dir`); T053 (determinism/perf guards, deps T050/
+  T051/T052) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -21,7 +22,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **350 passed**, exit 0 (2026-08-31). `ruff check .` clean.
+`docker compose run --rm tests` — **356 passed**, exit 0 (2026-08-31). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -452,3 +453,41 @@ same session.
   hand-corrupted on-disk file, and confirmed unreachable from the write side. 350 tests pass (344
   baseline + 6 new), `ruff check .` clean. Next: T052 (route overlay render, M5, deps T051,
   unblocked).
+- 2026-08-31: T052 (route overlay render, M5) landed — new `src/rogaine/render/overlay.py`,
+  `render_overlay(image, route, controls)` / `write_overlay(path, image, route, controls)`, built by
+  the `implementer` subagent and independently re-verified against the tree. "Rendered legs match the
+  JSON polylines pixel for pixel" holds by construction (`LegRecord.polyline` is `Leg.polyline`
+  copied verbatim, T051) plus `cv2.LINE_8` everywhere instead of `LINE_AA`, so a polyline coordinate
+  is always painted the solid core colour, never an anti-aliased blend — checked directly by sampling
+  exact polyline pixels in the test suite, not inferred. Legibility over both dark and light terrain:
+  every stroke/marker/label drawn twice, a thicker near-black halo then a thinner bright-red core
+  `(255,36,36)` — checked against `config/default.toml`'s six ISOM inks (none red, so a route mark
+  can't be mistaken for a printed symbol; purple and cyan ruled out as the control/hub and
+  water-body ink families). Labels are 1-based visit order, not `Control.number` (can be unread). The
+  hub (`route.order[0] == order[-1]`) is drawn once, as a filled triangle labelled "H", not as a
+  numbered stop — independently re-verified by hand geometry (the triangle's flat base sits strictly
+  above a same-depth sample point that lands inside an ordinary stop's circle, so one pixel read
+  distinguishes hub from stop, confirmed correct by recomputing the vertex trig directly, not just
+  trusted from the report). A route referencing a control id missing from `controls` raises
+  `ValueError` (matches `io/controls_csv.py`/`io/route_json.py`'s "present input must be correct"
+  convention). No DPI in scope for this task — every stroke width/marker radius/font scale is a
+  fraction of `max(image.shape[:2])`, clamped, so a tiny fixture and a 4000x3000 map both render
+  legibly; no new config section, plain module constants (same "cosmetic-only, unlike every
+  config-driven geometric tunable" call T032 made for its own polyline-simplification constant). 6
+  new tests (`tests/unit/render/test_overlay.py`): shape/dtype/no-input-mutation; exact-pixel
+  sampling on an axis-aligned route; missing-control `ValueError`; hub-vs-stop marker shape
+  distinction; PNG write round trip; missing-parent-directory `OSError`. 356 tests pass (350 baseline
+  + 6 new), `ruff check .` clean.
+
+  Immediately after landing, closed the gap both T051's and T052's own docstrings had flagged:
+  `plan_cmd` (`cli.py`) now calls `write_route_json`/`write_overlay` via a new `--out-dir` option
+  (default `.`, mirroring `segment_cmd`'s own option), only after a route is successfully solved — a
+  run that exits non-zero writes nothing. Done directly, not delegated, because of a real risk it
+  surfaced: the pre-existing `TestPlan` success-path tests didn't pass `--out-dir`, so the new default
+  write would have landed `route.json`/`route.png` in the test container's cwd (repo root) on every
+  run — the same class of mistake as `crop_dense.png`'s earlier accidental deletion (see "Blocked on
+  the owner" above). Fixed by adding an explicit `--out-dir tmp_path` to both affected tests before
+  ever running them; verified with the normal `docker compose run --rm tests` (356 passed, count
+  unchanged — two existing tests edited, none added) and `ruff check .` (clean), plus an explicit
+  repo-root check for stray `route.json`/`route.png` after the run (none found). Next: T053
+  (determinism and performance guards, M5, deps T050/T051/T052, unblocked).

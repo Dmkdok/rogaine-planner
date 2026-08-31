@@ -3,9 +3,10 @@
 M0 shipped the corpus commands. T044 added `bench`, a synthetic solver-comparison smoke check
 that depends only on T041/T042's solver contracts. T050 (WS-C) adds `segment`, `detect`, `plan`
 and a deliberate `serve` stub to this same app -- see each command's own docstring for the scope
-cuts that are documented judgement calls, not oversights: `plan` ends at the terminal summary
-(SPEC F15's `route.json`/`route.png` writers are T051/T052, not landed yet) and `serve` prints
-where the real FastAPI backend lands (T060) and exits non-zero.
+cuts that are documented judgement calls, not oversights: `serve` prints where the real FastAPI
+backend lands (T060) and exits non-zero. `plan` originally ended at the terminal summary (SPEC
+F15's `route.json`/`route.png` writers were T051/T052, not landed at the time); both have since
+landed and `plan` now writes both artefacts to `--out-dir`.
 """
 
 from __future__ import annotations
@@ -28,8 +29,10 @@ from rogaine.cost.travel import build_travel_matrix
 from rogaine.io.controls_csv import read_controls, write_controls
 from rogaine.io.corpus import list_corpus, read_entry
 from rogaine.io.raster import load_raster, resolve_dpi
+from rogaine.io.route_json import write_route_json
 from rogaine.io.scale import Calibration, mpp_from_dpi
 from rogaine.models import TERRAIN_ORDER, Control, RunConfig, TravelMatrix
+from rogaine.render.overlay import write_overlay
 from rogaine.render.preview import write_preview
 from rogaine.solve.alternatives import solve_alternatives
 from rogaine.solve.exact import solve_exact
@@ -324,16 +327,16 @@ def plan_cmd(
     seed: int = typer.Option(
         0, "--seed", help="Seeds the heuristic solver and the alternatives search (F19)."
     ),
+    out_dir: Path = typer.Option(
+        Path("."), "--out-dir", help="Directory for route.json and route.png (SPEC F15)."
+    ),
     config: Path | None = typer.Option(None, "--config", help="Config TOML overriding defaults."),
 ) -> None:
-    """Plan a route: resolve controls, build the cost field and travel matrix, solve, and print
-    a summary of legs, time, points and penalty, plus the top-K alternatives (F1-F3, F7-F14, F16).
-
-    Ends at the terminal summary table -- it does not write `route.json` or `route.png`. Those
-    SPEC F15 artefacts are T051 (`io/route_json.py`) and T052 (`render/overlay.py`), neither
-    landed yet, and this command has no dependency on either; whoever lands them adds one more
-    small write-out step here. This is a deliberate, documented scope cut for T050, not an
-    oversight.
+    """Plan a route: resolve controls, build the cost field and travel matrix, solve, print
+    a summary of legs, time, points and penalty plus the top-K alternatives (F1-F3, F7-F14, F16),
+    and write `route.json` / `route.png` to `--out-dir` (F15, `io/route_json.py` +
+    `render/overlay.py`). Nothing is written for a run that exits non-zero (bad input, over the
+    exact-solver cap, or no reachable route) -- only a successfully solved route reaches disk.
     """
     try:
         cfg = load_config(config)
@@ -385,6 +388,10 @@ def plan_cmd(
             raise typer.Exit(code=1)
 
         alt_result = solve_alternatives(controls, matrix, run_config, cfg)
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        write_route_json(out_dir / "route.json", route, run_config)
+        write_overlay(out_dir / "route.png", image, route, controls)
     except (ValueError, OSError) as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from exc
@@ -439,6 +446,8 @@ def plan_cmd(
         console.print(alt_table)
     else:
         console.print("alternatives: none requested (--alternatives 0)")
+
+    console.print(f"wrote {out_dir / 'route.json'} and {out_dir / 'route.png'}")
 
 
 def _bench_instance(
