@@ -633,10 +633,30 @@ the implementer's self-report.
 - [x] T050 — CLI commands — paths: `src/rogaine/cli.py` — deps: T016, T022, T032, T042 —
   DoD: `segment`, `detect`, `plan`, `bench`, `serve` with typer; `--seed` everywhere randomness
   exists; rich summary table of legs, time, points, penalty; non-zero exit on failure.
-- [ ] T051 — Route JSON schema and writer — paths: `src/rogaine/io/route_json.py` — deps: T002 —
+- [x] T051 — Route JSON schema and writer — paths: `src/rogaine/io/route_json.py` — deps: T002 —
   DoD: documented schema with order, per-leg time/distance/polyline, cumulative time, points,
   penalty, score, and the config that produced it; validated on write; golden test on the fixture
-  (F15).
+  (F15). Landed 2026-08-31 — `LegRecord`/`RouteFile` pydantic models built from a `Route` +
+  `RunConfig` pair (the frozen `Route`/`Leg` contract, ADR-008, has no cumulative-time field and no
+  embedded config, so this is its own schema, not `Route.model_dump()`); `run_config` embeds
+  `RunConfig` only, not the larger `AppConfig` (`RunConfig`'s own docstring: "everything the user
+  chooses per attempt"); `cumulative_seconds` is the running sum of leg seconds from the hub, same
+  arithmetic `cli.py`'s `plan_cmd` table already prints inline; `RouteFile` carries its own copy of
+  `Route`'s order/legs invariant since `read_route_json` builds from arbitrary disk bytes, not an
+  already-validated `Route` (write-side unreachability confirmed by a dedicated test, not assumed).
+  `write_route_json`/`read_route_json` round-trip pair, `schema_version` field for future evolution.
+  No CLI wiring yet — `plan_cmd` still ends at the terminal summary (T050's documented scope cut);
+  wiring `write_route_json` (and T052's PNG writer once it lands) into `plan_cmd` is a small follow-up,
+  not part of this task's path list. Built by the `implementer` subagent, independently re-verified
+  against the tree: own read of both new files, own `docker compose run --rm tests` (350 passed, exit
+  0), own `ruff check .` (clean), own `git status` (only `io/route_json.py` and
+  `tests/unit/io/test_route_json.py` touched). No real defect found. 6 new tests
+  (`tests/unit/io/test_route_json.py`): hand-computed golden (JSON compared as a parsed dict, not a
+  raw string — exact whitespace isn't part of the documented schema), full round-trip, missing-file
+  read, and the order/legs invariant checked on direct construction, on a hand-corrupted on-disk
+  file, and confirmed unreachable from the write side because `Route` itself already refuses the same
+  mismatch. 350 tests pass (344 baseline + 6 new), `ruff check .` clean. Next: T052 (route overlay
+  render, M5, deps T051, unblocked).
 - [ ] T052 — Route overlay render — paths: `src/rogaine/render/overlay.py` — deps: T051 —
   DoD: route drawn over the map with numbered visit order and leg times, legible over dark and light
   terrain; rendered legs match the JSON polylines pixel for pixel (F15).

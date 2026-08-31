@@ -5,7 +5,8 @@ approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
   complete (T030-T032 landed); M4 complete (T040-T044 landed); T050 landed (`segment`/`detect`/
-  `plan`/`serve` stub, M5); T051 (route JSON schema/writer, deps T002) next
+  `plan`/`serve` stub, M5); T051 landed (route JSON schema/writer); T052 (route overlay render,
+  deps T051) next
 
 ## Checklist
 - [x] Phase 0 intake
@@ -20,7 +21,7 @@ current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T02
 
 ## Test report
 
-`docker compose run --rm tests` — **344 passed**, exit 0 (2026-08-29). `ruff check .` clean.
+`docker compose run --rm tests` — **350 passed**, exit 0 (2026-08-31). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -424,4 +425,30 @@ same session.
   plus four new `--help` entries in the existing parametrize list, covering both happy paths (via
   detection and via `--controls`) and every non-zero-exit case named above. 344 tests pass (329
   baseline + 15 new), `ruff check .` clean. Next: T051 (route JSON schema and writer, M5, deps T002,
+  unblocked).
+- 2026-08-31: T051 (route JSON schema and writer, M5) landed — new `src/rogaine/io/route_json.py`,
+  built by the `implementer` subagent and independently re-verified against the tree (own read of
+  both new files, own `docker compose run --rm tests`, own `ruff check .`, own `git status`). The
+  frozen `Route`/`Leg` contract (ADR-008, not edited) has no cumulative-time field and no embedded
+  run config, both required by this task's DoD, so `route.json` is its own schema — `LegRecord`
+  (`Leg`'s fields plus a computed `cumulative_seconds`, the running sum of leg seconds from the hub —
+  the same arithmetic `cli.py`'s `plan_cmd` table already prints inline) and `RouteFile` (`Route`'s
+  top-level fields plus `run_config: RunConfig` and a `schema_version`) — built from a `Route` +
+  `RunConfig` pair at write time, not `Route.model_dump()`. One documented scope call: "the config
+  that produced it" embeds `RunConfig` only, not the larger `AppConfig` — `RunConfig`'s own docstring
+  calls it "everything the user chooses per attempt," `AppConfig` is terrain/palette tuning, not a
+  per-run choice. `RouteFile` carries its own copy of `Route`'s order/legs invariant rather than
+  trusting "built from an already-validated `Route`" as a blanket excuse: true for `write_route_json`
+  (confirmed unreachable by a dedicated test — `Route` itself already refuses the same mismatch
+  before `route_json` ever sees it), false for `read_route_json`, which builds a `RouteFile` from
+  arbitrary on-disk bytes a hand edit could have broken. `write_route_json`/`read_route_json` are the
+  round-trip pair. No real defect found in existing code. `plan_cmd` in `cli.py` is untouched — it
+  still ends at the terminal summary (T050's documented scope cut); wiring `write_route_json` (and
+  T052's PNG writer once that lands) into `plan_cmd` is a small follow-up, not part of this task's
+  path list, so `route.json` is not yet written by any CLI command. 6 new tests
+  (`tests/unit/io/test_route_json.py`): a hand-computed golden route compared as a parsed JSON dict
+  (exact whitespace is not part of the documented schema); full write-then-read round trip; missing
+  file on read; the order/legs invariant checked on direct `RouteFile` construction, on a
+  hand-corrupted on-disk file, and confirmed unreachable from the write side. 350 tests pass (344
+  baseline + 6 new), `ruff check .` clean. Next: T052 (route overlay render, M5, deps T051,
   unblocked).
