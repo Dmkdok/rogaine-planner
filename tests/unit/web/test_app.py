@@ -167,6 +167,7 @@ class TestSecurity:
         resp = client.post("/api/runs/does-not-exist/plan", json=_run_config())
         assert resp.status_code == 404
         assert client.get("/api/runs/does-not-exist/export/route.json").status_code == 404
+        assert client.get("/api/runs/does-not-exist/map").status_code == 404
 
     def test_unknown_job_id_is_404(self) -> None:
         assert client.get("/api/jobs/does-not-exist").status_code == 404
@@ -178,3 +179,32 @@ class TestSecurity:
     def test_detect_before_segment_is_a_clean_400(self, synthetic_map) -> None:
         run_id = _upload(synthetic_map.image)
         assert client.post(f"/api/runs/{run_id}/detect").status_code == 400
+
+
+class TestStaticViewer:
+    """T061's `src/rogaine/web/static/**` mount, added alongside its own endpoints above."""
+
+    def test_root_serves_the_viewer_page(self) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200, resp.text
+        assert "map-viewport" in resp.text
+
+    def test_api_routes_still_win_over_the_catch_all_static_mount(self) -> None:
+        # A regression guard for mount-ordering: the static mount is registered last so it never
+        # shadows an /api/* path, but a Mount("/") could easily start intercepting everything if
+        # someone reordered the file -- this would 404 (empty static dir) or 200 with HTML instead
+        # of the expected 404 detail if that ever regressed.
+        resp = client.get("/api/runs/does-not-exist/controls")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "unknown run id 'does-not-exist'"
+
+    def test_map_endpoint_streams_the_uploaded_bytes_back(self, synthetic_map) -> None:
+        sm = synthetic_map
+        data = _encode_png(sm.image)
+        resp = client.post("/api/runs", files={"file": ("ignored.png", data, "image/png")})
+        run_id = resp.json()["run_id"]
+
+        resp = client.get(f"/api/runs/{run_id}/map")
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "image/png"
+        assert resp.content == data

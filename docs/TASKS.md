@@ -793,10 +793,47 @@ the implementer's self-report.
   deviation was judged correct, not scope creep — a pre-existing test asserting stub behaviour
   necessarily breaks once the stub is replaced, and leaving it broken would have silently masked
   a hang. **M6 continues: T061 (canvas viewer UI, deps T060, unblocked) next, then T062.**
-- [ ] T061 — Canvas viewer UI — paths: `src/rogaine/web/static/**` — deps: T060 —
+- [x] T061 — Canvas viewer UI — paths: `src/rogaine/web/static/**` — deps: T060 —
   DoD: pan/zoom map canvas, calibration line tool, control markers that can be dragged, added,
   deleted and edited, parameter panel, run button, leg table, JSON/PNG/CSV export; keyboard
-  operable with visible focus; Russian UI strings; legible in light and dark.
+  operable with visible focus; Russian UI strings; legible in light and dark. Landed:
+  `index.html`/`style.css`/`api.js`/`view.js`/`app.js` under `src/rogaine/web/static/`, vanilla
+  JS/Canvas 2D per ADR-005, no build step. Canvas draws only the map raster and the route overlay
+  (halo+core colours mirroring `render/overlay.py`); control markers are real DOM `<button>`s
+  positioned over the canvas by the same pan/zoom transform, deliberately not canvas pixels — the
+  only way to give them genuine keyboard focus/ARIA (arrow keys nudge, Delete removes, Enter jumps
+  to the number field), which a canvas-drawn hit-target cannot offer assistive tech. The controls
+  table gives full keyboard-only parity with dragging (add/edit/delete/hub-select), and every edit
+  PUTs the full `Control[]` back (debounced, in-flight-guarded) without ever discarding an edit on
+  a 400. Flow: upload → segment (scale by 1:N+DPI or a calibration line, drawn or typed) → auto
+  detect → fix controls → set speed/time limit/penalty → run → route drawn on canvas + leg table +
+  JSON/PNG/CSV export links. Every interactive element carries a stable id/data attribute or ARIA
+  label for T062's future Playwright selectors.
+
+  Two narrow, pre-flagged deviations outside the owned path, both in `src/rogaine/web/app.py`
+  (mirrors T060's own unavoidable `test_cli.py` deviation): a `StaticFiles(html=True)` mount at
+  `GET /` (registered last, after every `/api/...` route, so it never shadows the API — covered by
+  a new regression test), and `GET /api/runs/{run_id}/map` streaming the uploaded bytes back
+  (`FileResponse`, mirrors `export_artifact`) since the browser has no other way to preview what
+  was uploaded before/during calibration. Three tests added to `tests/unit/web/test_app.py`
+  (`TestStaticViewer`) for both. Known gap, accepted: a PDF upload can't be previewed via
+  `<img>`/`drawImage` (no browser support), so the UI shows a placeholder ground plus a visible
+  note — controls/route still work by typed pixel coordinates; T062/PLAN.md's fixture map is a
+  PNG, so this doesn't block F17's acceptance bar.
+
+  Built by the `implementer` subagent and independently re-verified against the tree: own read of
+  the full diff (`app.py`/`test_app.py` plus every new `static/**` file), own
+  `docker compose run --rm tests` (371 passed, exit 0, ~119s, no `tail` piping), own
+  `docker compose run --rm tests ruff check .` (all checks passed), own `git status` (scoped to
+  exactly the paths above), and an own live click-through via `docker compose up app` + a real
+  Chrome browser (claude-in-chrome): uploaded the generated synthetic fixture map, applied 1:25000/
+  300dpi scale, watched auto-detect find 13 controls including the hub, dragged a marker and
+  confirmed the table X/Y updated, ran the planner (route: 2:58:30, 7.75 km, 41 pts, optimal exact
+  solver), confirmed the route polyline drawn on canvas matched the leg table, confirmed all three
+  export links 200 with correct content-type/size (`route.json` 15,599 B, `route.png` 2.4 MB,
+  `controls.csv` 771 B), and confirmed a visible focus ring tabbing through the toolbar. No real
+  defect found; both deviations judged correct, not scope creep. **M6 continues: T062 (Playwright
+  end-to-end, deps T061, unblocked) next — closes M6.**
 - [ ] T062 — Playwright end-to-end — paths: `tests/e2e/test_viewer.py` — deps: T061 —
   DoD: upload fixture, calibrate, move one control, run, assert the leg table and the exported JSON;
   runs headless inside the tests service (F17).

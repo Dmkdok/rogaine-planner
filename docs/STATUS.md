@@ -5,28 +5,33 @@ approved: true
 approved_at: 2026-08-19
 current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
   complete (T030-T032 landed); M4 complete (T040-T044 landed); M5 complete (T050-T053 landed);
-  M6 in progress — T060 landed (FastAPI backend), T061 (canvas viewer UI) next
+  M6 in progress — T060 (FastAPI backend) and T061 (canvas viewer UI) landed, T062 next and closes M6
 
 ## Resume here
-Tree is clean on `master`, nothing in flight, nothing running in the background. T060 (FastAPI
-backend, `src/rogaine/web/app.py`) landed and was independently re-verified this session: 368
-tests passed, `ruff check .` clean, diff scoped to exactly the paths its own TASKS.md note lists.
-See that note (docs/TASKS.md, M6 section) for the endpoint table and design decisions — read it
-before touching `web/app.py` again rather than re-deriving the API shape from memory.
+Tree is clean on `master`, nothing in flight, nothing running in the background. T061 (canvas
+viewer UI, `src/rogaine/web/static/**` plus two narrowly-scoped `web/app.py` additions) landed and
+was independently re-verified this session: 371 tests passed, `ruff check .` clean, diff scoped to
+exactly the paths its own TASKS.md note lists, plus an own live click-through in a real Chrome
+browser (claude-in-chrome) driving the full upload → calibrate → detect → drag-edit a control →
+run → export flow against the fixture map end to end. See that note (docs/TASKS.md, M6 section)
+for the full design rationale (why markers are DOM buttons over the canvas, not canvas pixels; the
+two `app.py` deviations; the accepted PDF-preview gap) — read it before touching `web/static/**`
+or `web/app.py` again rather than re-deriving the UI architecture from memory.
 
-Next actions, in order:
-1. Read T061's own TASKS.md entry (M6 section) plus SPEC F17 and user flow 3 before doing anything
-   else. It is a genuinely large, UI-heavy task — scope it deliberately (its own subagent prompt,
-   `web-design-guidelines`/`ui-quality-audit` skills as relevant) rather than treating it like a
-   small CLI task.
-2. Land it the same way T050-T053/T060 were landed: `implementer` subagent scoped to only its own
-   paths/DoD/SPEC excerpt plus T060's endpoint table, then independent re-verification (own read
-   of the diff, own `docker compose run --rm tests`, own `ruff check .`, own `git status`, and
-   ideally an own manual look at the running viewer — `docker compose up app` then a browser at
-   `http://127.0.0.1:8000`) before marking it done.
-3. T062 (Playwright e2e) depends on T061 and closes M6 — SPEC F17's own acceptance bar ("a
-   Playwright script completes the full flow ... with no manual steps") is only actually proven
-   once T062 lands, so M6 is not done in spirit until then even though T060+T061 do the real work.
+Next action: T062 (Playwright end-to-end, `tests/e2e/test_viewer.py`, deps T061, unblocked) —
+closes M6. SPEC F17's own acceptance bar ("a Playwright script completes the full flow ... with no
+manual steps") is only actually proven once T062 lands, so M6 is not done in spirit until then even
+though T060+T061 do the real work. Read T062's own TASKS.md entry (M6 section) before starting; its
+DoD is concrete and narrow (upload fixture, calibrate, move one control, run, assert the leg table
+and the exported JSON, headless inside the `tests` service) — this one is closer to T050-T053's
+size than T061's, so it likely doesn't need the same heavyweight subagent scoping T061 did, but
+still land it the same way: `implementer` subagent scoped to its own paths/DoD, then independent
+re-verification (own read of the diff, own `docker compose run --rm tests`, own `ruff check .`,
+own `git status`).
+
+After T062, M6 — and the whole product per SPEC's M0-M6 scope — is complete; M7 (SegFormer ML
+pipeline, T070-T072) is explicitly optional, "only after the owner accepts the route" (TASKS.md).
+Worth a session checking whether the owner wants M7 or considers the product done at M6.
 
 Known gap, not yet acted on: `docs/status-archive.md` / `docs/tasks-archive.md`, which CLAUDE.md's
 own project section describes as where history already lives, do not actually exist — `STATUS.md`

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Планировщик рогейн-маршрута</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">Перейти к содержимому</a>
+
+<header class="app-header">
+  <h1>Планировщик рогейн-маршрута</h1>
+  <p id="run-id-display" class="run-id" hidden>ID запуска: <code id="run-id-value"></code></p>
+</header>
+
+<div id="status-message" class="status-message" role="status" aria-live="polite"></div>
+<div id="error-message" class="error-message" role="alert" aria-live="assertive" hidden></div>
+
+<main id="main" class="layout">
+
+  <section class="map-column" aria-labelledby="map-heading">
+    <h2 id="map-heading">Карта</h2>
+
+    <div class="map-toolbar" id="map-toolbar">
+      <button type="button" id="zoom-in-btn" aria-label="Приблизить">+</button>
+      <button type="button" id="zoom-out-btn" aria-label="Отдалить">&minus;</button>
+      <button type="button" id="zoom-reset-btn">Показать всё</button>
+      <button type="button" id="toggle-add-mode-btn" aria-pressed="false" disabled>
+        Режим добавления контроля
+      </button>
+      <button type="button" id="detect-btn" disabled>Определить контроли</button>
+    </div>
+
+    <div
+      id="map-viewport"
+      class="map-viewport"
+      tabindex="0"
+      role="application"
+      aria-label="Область карты. Перетаскивайте маркеры мышью, панорамируйте колёсиком мыши или стрелками на клавиатуре, масштабируйте кнопками «+» и «минус»."
+    >
+      <canvas id="map-canvas"></canvas>
+      <svg id="calibration-overlay" class="calibration-overlay" aria-hidden="true"></svg>
+      <div id="markers-layer" class="markers-layer"></div>
+    </div>
+
+    <p id="map-preview-note" class="note" hidden>
+      Предпросмотр этого файла недоступен в браузере (например, PDF). Контроли и маршрут всё
+      равно будут показаны поверх условной подложки.
+    </p>
+    <p id="hub-warning" class="warning" role="alert" hidden>
+      Хаб (старт и финиш) не найден. Добавьте контроль и отметьте его как хаб в таблице ниже —
+      без хаба построить маршрут нельзя.
+    </p>
+  </section>
+
+  <section class="side-column" aria-labelledby="setup-heading">
+    <h2 id="setup-heading" class="visually-hidden">Настройка запуска</h2>
+
+    <details open class="panel">
+      <summary>1. Карта</summary>
+      <form id="upload-form">
+        <label for="map-file-input">Файл карты (PNG, JPEG, BMP, TIFF или PDF)</label>
+        <input
+          type="file"
+          id="map-file-input"
+          name="file"
+          accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf,image/png,image/jpeg,image/bmp,image/tiff,application/pdf"
+          required
+        />
+        <button type="submit" id="upload-btn">Загрузить карту</button>
+      </form>
+    </details>
+
+    <details open class="panel">
+      <summary>2. Масштаб</summary>
+      <form id="scale-form">
+        <fieldset id="scale-fieldset" disabled>
+          <legend class="visually-hidden">Способ задания масштаба</legend>
+
+          <div class="radio-row">
+            <input type="radio" id="scale-mode-ratio" name="scale-mode" value="ratio" checked />
+            <label for="scale-mode-ratio">Масштаб 1:N и DPI скана</label>
+          </div>
+          <div class="radio-row">
+            <input type="radio" id="scale-mode-calibrate" name="scale-mode" value="calibrate" />
+            <label for="scale-mode-calibrate">Линия калибровки на карте</label>
+          </div>
+
+          <div id="scale-ratio-panel" class="scale-panel">
+            <label for="scale-denominator">Знаменатель масштаба N (1:N)</label>
+            <input type="number" id="scale-denominator" min="1" step="1" value="25000" />
+
+            <label for="scale-dpi">DPI скана</label>
+            <input type="number" id="scale-dpi" min="1" step="0.1" value="300" />
+          </div>
+
+          <div id="scale-calibrate-panel" class="scale-panel" hidden>
+            <p class="note">
+              Нажмите «Начать калибровку», затем отметьте две точки на карте (щелчком мыши или
+              клавишей Enter в центре вида) — либо впишите их координаты в пикселях карты вручную.
+            </p>
+            <button type="button" id="calib-start-btn" aria-pressed="false">
+              Начать калибровку
+            </button>
+
+            <div class="coord-grid">
+              <label for="calib-x1">X1 (px)</label>
+              <input type="number" id="calib-x1" step="0.1" />
+              <label for="calib-y1">Y1 (px)</label>
+              <input type="number" id="calib-y1" step="0.1" />
+              <label for="calib-x2">X2 (px)</label>
+              <input type="number" id="calib-x2" step="0.1" />
+              <label for="calib-y2">Y2 (px)</label>
+              <input type="number" id="calib-y2" step="0.1" />
+            </div>
+
+            <label for="calib-meters">Длина линии, м</label>
+            <input type="number" id="calib-meters" min="0.01" step="0.01" />
+
+            <label for="calib-dpi">DPI (необязательно)</label>
+            <input type="number" id="calib-dpi" min="1" step="0.1" />
+          </div>
+
+          <label for="scale-page">Страница PDF (если применимо)</label>
+          <input type="number" id="scale-page" min="0" step="1" value="0" />
+
+          <button type="submit" id="apply-scale-btn">Применить масштаб</button>
+        </fieldset>
+      </form>
+    </details>
+
+    <details open class="panel">
+      <summary>3. Контроли</summary>
+      <button type="button" id="add-control-btn" disabled>Добавить контроль</button>
+      <div class="table-scroll">
+        <table id="controls-table">
+          <caption class="visually-hidden">Список контролей</caption>
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">X</th>
+              <th scope="col">Y</th>
+              <th scope="col">Номер</th>
+              <th scope="col">Очки</th>
+              <th scope="col">Хаб</th>
+              <th scope="col"><span class="visually-hidden">Действия</span></th>
+            </tr>
+          </thead>
+          <tbody id="controls-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <details open class="panel">
+      <summary>4. Параметры и запуск</summary>
+      <form id="run-form">
+        <label for="param-speed-kmh">Скорость по дороге, км/ч</label>
+        <input type="number" id="param-speed-kmh" min="0.1" step="0.1" value="5" required />
+
+        <label for="param-time-limit-min">Лимит времени, мин</label>
+        <input type="number" id="param-time-limit-min" min="1" step="1" value="180" required />
+
+        <label for="param-penalty">Штраф за минуту опоздания, очков</label>
+        <input type="number" id="param-penalty" min="0" step="0.1" value="1" />
+
+        <button type="submit" id="run-btn" disabled>Построить маршрут</button>
+      </form>
+    </details>
+
+    <details open class="panel" id="route-results" hidden>
+      <summary>5. Результат</summary>
+      <dl class="route-summary">
+        <dt>Время</dt>
+        <dd id="route-total-time"></dd>
+        <dt>Расстояние</dt>
+        <dd id="route-total-distance"></dd>
+        <dt>Очки</dt>
+        <dd id="route-points"></dd>
+        <dt>Штраф</dt>
+        <dd id="route-penalty"></dd>
+        <dt>Оценка</dt>
+        <dd id="route-score"></dd>
+        <dt>Решатель</dt>
+        <dd id="route-solver"></dd>
+      </dl>
+      <div class="table-scroll">
+        <table id="legs-table">
+          <caption class="visually-hidden">Этапы маршрута</caption>
+          <thead>
+            <tr>
+              <th scope="col">№</th>
+              <th scope="col">От</th>
+              <th scope="col">До</th>
+              <th scope="col">Время, мин</th>
+              <th scope="col">Расстояние, м</th>
+              <th scope="col">Время нарастающим итогом</th>
+              <th scope="col">Очки</th>
+            </tr>
+          </thead>
+          <tbody id="legs-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <details open class="panel">
+      <summary>6. Экспорт</summary>
+      <div id="export-section" class="export-links">
+        <a id="export-json-link" aria-disabled="true" tabindex="-1">Маршрут (JSON)</a>
+        <a id="export-png-link" aria-disabled="true" tabindex="-1">Карта с маршрутом (PNG)</a>
+        <a id="export-csv-link" aria-disabled="true" tabindex="-1">Контроли (CSV)</a>
+      </div>
+    </details>
+
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

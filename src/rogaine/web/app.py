@@ -22,8 +22,9 @@ magic bytes and capped in size, never trusted by client filename/Content-Type, a
 `runs/<uuid4>/` with a server-picked name -- the client's filename is never used as a path; no
 shell-out anywhere in this module.
 
-No root `/` page and no static file serving here -- T061 builds `src/rogaine/web/static/**`
-against this API.
+T061 mounts `src/rogaine/web/static/**` at `GET /` (see the bottom of this file) and adds
+`GET /api/runs/{run_id}/map` below so the browser can preview an uploaded map before/while
+scale is resolved -- everything else here is unchanged from T060.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from rogaine.config import load_config
@@ -60,6 +62,11 @@ from rogaine.vision.segment import segment as run_segmentation
 #: Created relative to CWD -- mirrors `cli.py`'s own `--out-dir` default of `.`; identical on the
 #: host and in the container, whose WORKDIR is `/app`. Already gitignored.
 RUNS_ROOT = Path("runs")
+
+#: T061's static viewer -- `index.html`/`style.css`/`app.js`/... -- mounted read-only at `GET /`
+#: (bottom of this file). Resolved relative to this source file, not CWD, so it works regardless
+#: of where the server process is launched from.
+STATIC_DIR = Path(__file__).parent / "static"
 
 #: Generous cap well above any real map scan (cf. `raster.MAX_DECODED_PIXELS`'s own reasoning):
 #: the owner's real scan corpus tops out under 30 MB per file; 200 MB leaves comfortable headroom
@@ -356,6 +363,30 @@ async def create_run(file: Annotated[UploadFile, File()]) -> dict[str, str]:
     return {"run_id": run_id}
 
 
+#: uploaded-map extension -> media type, for `GET .../map` below. Keys match `_sniff_extension`'s
+#: possible outputs exactly.
+_MAP_MEDIA_TYPES: dict[str, str] = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "bmp": "image/bmp",
+    "tif": "image/tiff",
+    "pdf": "application/pdf",
+}
+
+
+@app.get("/api/runs/{run_id}/map")
+def get_map(run_id: str) -> FileResponse:
+    """Stream the uploaded map back byte-for-byte (T061). The browser has no other way to show
+    the user what they uploaded -- e.g. to click a calibration line on it -- before/without a
+    segment result; reuses `_map_path`'s sniffed extension to pick a media type, same
+    `FileResponse` pattern as `export_artifact`.
+    """
+    run_dir = _require_run(run_id)
+    map_path = _map_path(run_dir)
+    media_type = _MAP_MEDIA_TYPES.get(map_path.suffix.removeprefix("."), "application/octet-stream")
+    return FileResponse(map_path, media_type=media_type)
+
+
 @app.post("/api/runs/{run_id}/segment", status_code=status.HTTP_202_ACCEPTED)
 def start_segment(
     run_id: str, body: SegmentRequest, background_tasks: BackgroundTasks
@@ -477,3 +508,12 @@ def export_artifact(run_id: str, artifact: str) -> FileResponse:
             status.HTTP_404_NOT_FOUND, f"{artifact} does not exist yet for this run"
         )
     return FileResponse(path, media_type=media_type, filename=filename)
+
+
+# -------------------------------------------------------------------------------------------
+# Static viewer (T061). Registered last so every `/api/...` route above -- matched by exact
+# path -- always wins before Starlette falls through to this catch-all mount; `html=True` makes
+# `GET /` (and any other directory-shaped path) serve `index.html`, and every other path serves
+# the matching file under STATIC_DIR (e.g. `GET /app.js` -> `static/app.js`).
+# -------------------------------------------------------------------------------------------
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
