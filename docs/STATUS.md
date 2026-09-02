@@ -34,6 +34,18 @@ this pause (creating that archive split is real restructuring work, not "closing
 open" — the pause skill's own rule against starting new work). Worth a deliberate session of its own
 before M6's own landing notes make both files bigger still.
 
+Second known gap, found while scoping T062: `docs/CONVENTIONS.md`, which CLAUDE.md's own project
+section says to hand subagents alongside their SPEC/TASKS sections, does not exist either — `ls
+docs/` shows only `BRIEF.md`, `DECISIONS.md`, `PLAN.md`, `SPEC.md`, `STATUS.md`, `TASKS.md`. T060-
+T062 all shipped fine without it (subagent briefs pulled the needed conventions straight from the
+sibling test files and ADRs instead), so this hasn't blocked anything, but it means CLAUDE.md
+references a file that was either never created or was lost at some point — worth deciding whether
+to write one or drop the reference, in the same session as the archive-file gap above.
+
+Also present, harmless: `.claude/worktrees/t061-viewer-ui/`, a leftover git worktree from T061's
+implementer run. Untracked (git status is clean), not cleaned up this session since it wasn't in
+scope for T062 either — fine to `git worktree remove` whenever convenient.
+
 ## Checklist
 - [x] Phase 0 intake
 - [x] Phase 1 elicit (DoR met)
