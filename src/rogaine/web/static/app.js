@@ -256,7 +256,17 @@ async function saveControlsNow() {
   saveInFlight = true;
   try {
     const validated = await api.putControls(state.runId, state.controls);
-    state.controls = validated;
+    // Merge onto the *same* objects (by id) instead of replacing state.controls outright: a
+    // field edited on this control while the PUT above was in flight lives on these objects, and
+    // any already-rendered table row's onCommit closure still points at them -- swapping in fresh
+    // objects from the response would silently discard that edit on the next re-render (the bug:
+    // typing a number then tabbing straight into points loses the points edit once the number
+    // save's response lands).
+    for (const v of validated) {
+      const existing = state.controls.find((c) => c.id === v.id);
+      if (existing) Object.assign(existing, v);
+    }
+    state.controls.sort((a, b) => Number(b.is_hub) - Number(a.is_hub) || a.id - b.id);
     state.controlsArtifactReady = true;
     clearError();
     repositionAllMarkers();
