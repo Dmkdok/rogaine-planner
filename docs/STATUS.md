@@ -3,48 +3,34 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 T010-T016 landed (T017 blocked on owner data); M2 complete (T020-T022 landed); M3
-  complete (T030-T032 landed); M4 complete (T040-T044 landed); M5 complete (T050-T053 landed);
-  M6 complete (T060-T062 landed) — SPEC's whole M0-M6 scope is now built; M7 is optional and
-  gated on the owner accepting the route
+current: M1 T010-T016 landed (T017 blocked on owner data); M2-M6 complete (T020-T062 landed) —
+  SPEC's whole M0-M6 scope is built and reviewed (docs/REVIEW.md, verdict PASS). M7 optional,
+  blocked on owner data (see below).
 
 ## Resume here
-Tree is clean on `master`, nothing in flight, nothing running in the background. T062 (Playwright
-end-to-end, `tests/e2e/test_viewer.py` plus one narrowly-scoped `Dockerfile` addition) landed and
-was independently re-verified this session: 372 tests passed (371 baseline + the new e2e test),
-the new test also run in isolation (1 passed, 8.5s), `ruff check .` clean, diff scoped to exactly
-`tests/e2e/test_viewer.py` + the one `Dockerfile` line its own TASKS.md note describes (`RUN
-playwright install --with-deps chromium` — browser binaries the test image never had before). See
-that note (docs/TASKS.md, M6 section) for the full design rationale (the `_live_server` fixture —
-`TestClient` can't give Playwright a URL to navigate to, so it runs a real `uvicorn.Server` in a
-background thread on an ephemeral port; why the control move goes through the table's X/Y inputs,
-not a canvas pointer-drag; why the test explicitly waits on the edit's `PUT .../controls` response
-before clicking run). **M6 is now complete** — F17's acceptance bar ("a Playwright script completes
-the full flow ... with no manual steps") is satisfied, and with it SPEC's whole M0-M6 scope.
+Branch `master`, tree clean, nothing running in the background. This session: T062 landed (closed
+M6), then a full `/review-product` pass ran against M0-M6 — **verdict PASS**, no Critical/High
+against the code itself (docs/REVIEW.md). The owner then asked for three things; none started yet
+— do them in this order:
 
-Next action: none queued. M7 (SegFormer ML pipeline, T070-T072) is explicitly optional, "only after
-the owner accepts the route" (TASKS.md) — this is the owner's call, not something to start
-unprompted. Surface this milestone to the owner and ask: proceed to M7, or consider the product
-done at M6.
-
-Known gap, not yet acted on: `docs/status-archive.md` / `docs/tasks-archive.md`, which CLAUDE.md's
-own project section describes as where history already lives, do not actually exist — `STATUS.md`
-is 45 KB and `TASKS.md` 70 KB, both well past what a session should read in full. Nothing was moved
-this pause (creating that archive split is real restructuring work, not "closing out what's already
-open" — the pause skill's own rule against starting new work). Worth a deliberate session of its own
-before M6's own landing notes make both files bigger still.
-
-Second known gap, found while scoping T062: `docs/CONVENTIONS.md`, which CLAUDE.md's own project
-section says to hand subagents alongside their SPEC/TASKS sections, does not exist either — `ls
-docs/` shows only `BRIEF.md`, `DECISIONS.md`, `PLAN.md`, `SPEC.md`, `STATUS.md`, `TASKS.md`. T060-
-T062 all shipped fine without it (subagent briefs pulled the needed conventions straight from the
-sibling test files and ADRs instead), so this hasn't blocked anything, but it means CLAUDE.md
-references a file that was either never created or was lost at some point — worth deciding whether
-to write one or drop the reference, in the same session as the archive-file gap above.
-
-Also present, harmless: `.claude/worktrees/t061-viewer-ui/`, a leftover git worktree from T061's
-implementer run. Untracked (git status is clean), not cleaned up this session since it wasn't in
-scope for T062 either — fine to `git worktree remove` whenever convenient.
+1. **Fix S-001** (Medium, security, from docs/REVIEW.md) — `SegmentRequest.dpi` (`web/app.py:113`)
+   and `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py:122-129`) have
+   a lower bound only; an extreme `dpi` on a PDF can OOM inside `pdfium.render()` before the
+   post-decode pixel cap ever runs, and the worker's `except (ValueError, OSError)` doesn't catch
+   `MemoryError`, so the job hangs at `status: "running"` forever. Fix: add `le=` bounds (`dpi`
+   le=2400 — well above any real scan; `time_limit_s` le=86400; `heuristic_time_budget_s` le=600;
+   `alternatives` le=20 — all judgement calls, not researched against a spec number) and widen the
+   three worker `except` clauses in `web/app.py` to also catch/report unexpected errors instead of
+   leaving the job stuck. **`models.py` is a frozen contract, ADR-008 — changing its bounds needs a
+   new ADR first**, the app.py-local `SegmentRequest.dpi` does not.
+2. **Write `README.md`** (Phase 7 deliverable, SPEC's Launch checklist / PLAN's DoD): install, every
+   CLI command, config reference, route JSON schema, known limitations (no georeferencing,
+   direction-blind slope, OCR advisory).
+3. **M7 is blocked, not just optional** — re-checked this session: `rogaine corpus list` shows all
+   14 maps under `data/maps/` as not plannable (no `meta.toml` on any of them), and T070 needs "the
+   owner's 200+ scan corpus" — only 14 raw scans exist. This was already tracked under "Blocked on
+   the owner" below; it now also blocks M7 specifically, not only T017. Surface to the owner before
+   spending implementer time on T070.
 
 ## Checklist
 - [x] Phase 0 intake
@@ -52,15 +38,21 @@ scope for T062 either — fine to `git worktree remove` whenever convenient.
 - [x] Phase 2 SPEC.md
 - [x] Phase 3 PLAN.md + TASKS.md
 - [x] GATE user approved (2026-08-19, «утверждаю»)
-- [ ] Phase 4 implementation — M0-M6 done (SPEC's full required scope); M7 optional, gated on the
-  owner accepting the route and not yet started
-- [ ] Phase 5 tests green
-- [ ] Phase 6 review clean (or accepted waivers)
-- [ ] Phase 7 handoff
+- [ ] Phase 4 implementation — M0-M6 done (SPEC's full required scope); M7 optional/blocked (see
+  Resume here)
+- [x] Phase 5 tests green — 372 passed, 2026-09-02
+- [x] Phase 6 review clean — `/review-product`, verdict PASS, 2026-09-02 (docs/REVIEW.md; two
+  non-blocking follow-ups are items 1-2 above)
+- [ ] Phase 7 handoff — needs README.md (item 2 above) and the owner accepting a route on their own
+  map (Launch checklist item, needs a plannable real map — same corpus blocker as item 3)
 
 ## Test report
 
-`docker compose run --rm tests` — **359 passed**, exit 0 (2026-08-31). `ruff check .` clean.
+`docker compose run --rm tests` — **372 passed**, exit 0 (2026-09-02, includes T062's
+`tests/e2e/test_viewer.py`, real headless Chromium). `docker compose run --rm tests
+pytest tests/e2e/ -v` isolated — 3 passed, 12s. `ruff check .` clean.
+
+Earlier: 359 passed, exit 0 (2026-08-31). `ruff check .` clean.
 Full-size (4000x3000) palette classification: 4.9s against the 30s budget (T013). Full-size grid
 graph build (downsample=4): 0.34-0.53s / ~406 MiB peak against the 15s/1GB budget (T031). Full-size
 travel matrix, 61 controls: 11.2s against the 60s budget (T032).
@@ -126,7 +118,10 @@ for the full list). `rogaine corpus list` reads all 14. Still open:
   single most valuable item on the list;
 - a controls list with points for at least one map;
 - the scan DPI and map scale for each of the 14 — none has `meta.toml` yet, so none is plannable
-  (only listable) and T017 (per-map palette validation) has nothing to run against.
+  (only listable) and T017 (per-map palette validation) has nothing to run against. **2026-09-02:
+  this now also blocks M7** — T070 needs "the owner's 200+ scan corpus" and only 14 raw scans
+  exist, none plannable. It also blocks SPEC's Launch checklist item "owner runs their own map
+  through both CLI and viewer and accepts the route" — no map here can do that yet.
 
 **`crop_dense.png` is gone, deleted by accident, not by the owner.** It sat unexplained at repo
 root (a small cropped fragment of a real map — olive rough-open terrain, blue-hatched marsh, a
@@ -557,3 +552,33 @@ same session.
   no leftover golden-generation scratch script). No real defect and no real nondeterminism found.
   359 tests pass (356 baseline + 3 new). **M5 (CLI end-to-end and renders, F15/F19) is complete.**
   Next: M6 — T060 (FastAPI backend, `src/rogaine/web/app.py`, deps T050, unblocked).
+
+- **2026-09-02: T062 landed, M6 complete**, then a full `/review-product` pass ran against M0-M6
+  — **verdict PASS**, no Critical/High against the actual code (docs/REVIEW.md). Two non-blocking
+  follow-ups and one re-confirmed blocker; the owner asked for all three to be worked, see
+  "Resume here" for the concrete plan:
+  - S-001 (Medium, security): unbounded `dpi`/time fields can wedge a background job on
+    `MemoryError` instead of erroring it — exact locations, and the `le=` values picked (not
+    derived from any spec number, just judgement — reconsider if they turn out too tight/loose),
+    are in "Resume here" above. `models.py`'s bounds specifically need a new ADR first (ADR-008
+    freezes it).
+  - No root `README.md` — SPEC's Launch checklist and PLAN's Definition of Done both require one;
+    this is Phase 7's own deliverable, not a code defect.
+  - M7's data blocker (corpus has 14 raw scans, none with `meta.toml`, need 200+) was already
+    tracked under "Blocked on the owner" for T017; re-confirmed via `rogaine corpus list` this
+    session and now also named as blocking M7 and the Launch checklist's "owner accepts the route"
+    item specifically.
+- Two doc-hygiene gaps found while scoping T062, low priority, bundled for whenever the archive
+  split below finally happens:
+  - `docs/CONVENTIONS.md` — CLAUDE.md's project section says to hand subagents this alongside their
+    SPEC/TASKS sections. It does not exist (`ls docs/` is only `BRIEF.md`/`DECISIONS.md`/
+    `PLAN.md`/`SPEC.md`/`STATUS.md`/`TASKS.md`). Hasn't blocked anything — T060-T062's subagent
+    briefs pulled conventions from sibling test files/ADRs instead — but CLAUDE.md references a
+    file that was either never created or got lost.
+  - `.claude/worktrees/t061-viewer-ui/` — a leftover git worktree from T061's implementer run.
+    Untracked, harmless, `git worktree remove` whenever convenient.
+- Known gap, still not acted on: `docs/status-archive.md`/`docs/tasks-archive.md` (CLAUDE.md's own
+  project section describes these as where history already lives) do not exist — `STATUS.md` and
+  `TASKS.md` are both well past a session-readable size. Real restructuring work, deliberately not
+  done under time pressure in any pause so far (this one included, at the owner's own request to
+  keep this session's footprint small) — worth a session of its own.
