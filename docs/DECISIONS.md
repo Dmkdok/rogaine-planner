@@ -13,6 +13,8 @@
 | 008 | `models.py` is a frozen contract after M0 | accepted |
 | 009 | Tesseract OCR, explicitly non-load-bearing | accepted |
 | 010 | Real map corpus validates; synthetic fixture tests; neither is committed | accepted |
+| 011 | Control ink is a configured list of hue bands, not a fixed purple; the default ships both purple and red | accepted |
+| 012 | Grid/annotation ink is excluded from colour classification by shape, not by narrowing the colour threshold | accepted |
 
 ---
 
@@ -134,3 +136,62 @@
   real maps. The corpus is never committed, so results referencing it must be reproducible from the
   report artefacts rather than from the repo. If T006 succeeds, some synthetic-fixture assertions get
   a stronger real counterpart; T004 is not removed either way.
+
+## ADR-011 — Control ink is a configured list of hue bands, not a fixed purple; the default ships both purple and red
+- Date: 2026-09-02
+- Status: accepted
+- Context: Iteration I1. `vision/controls.py`'s detector matched only the ISOM purple hue band
+  (F7's original text). A real scan the owner tried had every control hand-marked in red — a
+  different ink family, not a white-balance-shifted purple — and `detect_controls` returned zero
+  controls and no hub. `web/app.py` calls `load_config()` with no path argument at every one of its
+  three use sites (grep-confirmed); there is no per-run config override anywhere in the web viewer,
+  so an opt-in-only fix would never reach the interface the owner actually hit this on.
+- Decision: `DetectorSettings.purple_hue_range: tuple[int,int]` becomes `ink_hue_ranges:
+  list[tuple[int,int]]`; `purple_mask` unions the mask across every configured band. The *shipped*
+  `config/default.toml` carries both the existing purple band and a new red band (measured against
+  the real scan, not guessed) — not an opt-in the owner would have no way to reach from the web
+  viewer. The existing shape gate (Hough circle fit + ring-coverage ≥ 0.75, T020) is the actual
+  false-positive guard and is unchanged; widening the colour band alone does not manufacture false
+  controls out of stray red pixels that aren't circular.
+  Deferred out of this iteration: fully adaptive/arbitrary ink-colour detection — no real corpus
+  exists yet to tune or validate a general approach against (same M7 data blocker as T017), so this
+  is bounded to the two ink families actually observed rather than solving a problem with no
+  evidence of its true shape.
+- Consequences: `tests/unit/vision/test_controls.py::TestPurpleMask::test_rejects_a_saturated_non_purple_colour`
+  no longer holds for red under default config and is rewritten to assert against a colour still
+  genuinely outside both configured bands. `render/overlay.py`'s route colour, chosen specifically
+  because no ISOM ink is red, must change too (its own module docstring's stated invariant would
+  otherwise silently break for red-ink maps) — a new constant, verified distinct from all seven
+  now-forbidden inks via `cmyk_to_srgb`, not eyeballed. A map that happens to use red ink for
+  something other than controls is a new, real, currently unmeasured false-positive class; the
+  shape gate is the mitigation, not a colour-threshold retune.
+
+## ADR-012 — Grid/annotation ink is excluded from colour classification by shape, not by narrowing the colour threshold
+- Date: 2026-09-02
+- Status: accepted
+- Context: Iteration I1. The same real scan's magnetic-north/grid lines (thin, solid, full-height
+  verticals — a standard ISOM/orienteering-map convention) read close enough to the water reference
+  colour that `vision/segment.py` classified five full-height columns as `water_uncrossable`
+  (speed_factor 0.0), slicing the routable graph into disconnected strips and producing
+  "no reachable route" for a hub/control pair 600m apart with no real barrier between them.
+  SPEC's own Risk #2 already names this class of defect ("map text and symbols pollute the terrain
+  classes") and its established mitigation (shape/size filters, `vision/linear.py`'s T014
+  precedent) — this is that same failure mode showing up in a colour class T014 never touched
+  (`road`), not a new category of problem.
+- Decision: A new shape-based pass, positioned in `segment()` right after `classify_palette`
+  alongside `extract_linear_features`, reclassifies extreme-elongated components of
+  `water_shallow`/`water_uncrossable` that span most of the image's height or width to `unknown`
+  (`config/default.toml`'s existing conservative "assume forest" fallback, speed_factor 0.35) rather
+  than narrowing the water hue/saturation thresholds. Rejected alternative: tightening the water
+  colour range to exclude this particular blue — T017's own findings (cited in `docs/STATUS.md`)
+  already warn that hue thresholds are measured against one map's printing, and moving one without a
+  real corpus to check against risks trading this false positive for a different one on a different
+  scan, with nothing to catch it.
+- Consequences: A real lake still classifies as `water_uncrossable` (compact, not extremely
+  elongated) — the fixture's existing IoU floor is the regression guard, unchanged. New,
+  currently-untested edge: a genuinely long, thin real water feature (a river) sitting close to the
+  same elongation threshold could misclassify to `unknown` (passable, `speed_factor` 0.35, instead
+  of correctly impassable); no such feature exists in the synthetic fixture or the one real sample
+  to check against, so this is named here rather than silently accepted. Full validation against a
+  larger real corpus stays blocked on the owner (M7, `docs/STATUS.md`'s "Blocked on the owner"); this
+  iteration fixes the one confirmed failure mode, it does not close that blocker.

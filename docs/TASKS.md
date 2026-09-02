@@ -1,6 +1,6 @@
 # Tasks
 
-Requirement IDs (F1-F19) refer to [SPEC.md](SPEC.md). Workstreams (WS-A vision, WS-B routing,
+Requirement IDs (F1-F20) refer to [SPEC.md](SPEC.md). Workstreams (WS-A vision, WS-B routing,
 WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open tasks share a path.
 
 ## M0 — Scaffold, contract, synthetic fixture
@@ -885,3 +885,33 @@ the implementer's self-report.
 - [ ] T072 — Inference path — paths: `ml/infer.py`, `src/rogaine/vision/segment.py` (backend switch)
   — deps: T071 — DoD: `--segmenter palette|segformer`; palette stays the default; the CPU-only path
   keeps working without torch installed.
+
+## M8 — Real-scan vision robustness (Iteration I1, `docs/iterations/I1-real-scan-vision.md`)
+
+> Two real defects found by the owner's manual testing, not by audit or spec gap. T073 is the one
+> shared-primitive dependency (`config.py`'s renamed field) — T074 and T075 do not depend on each
+> other, but T075 depends on T073's shipped default existing before its colour-distance check means
+> anything.
+
+- [ ] T073 — Configurable control-ink hue bands (F7, ADR-011) — paths: `src/rogaine/config.py`,
+  `config/default.toml`, `src/rogaine/vision/controls.py`,
+  `tests/unit/vision/test_controls.py` — deps: none — DoD: `DetectorSettings.purple_hue_range`
+  renamed to `ink_hue_ranges: list[tuple[int,int]]`; `purple_mask` unions the mask across every
+  configured band; shipped `config/default.toml` carries the existing purple band plus a red band
+  measured against `data/maps/grid-lines-red-controls/map.jpeg` (not guessed); the fixture-based
+  F7 floor (recall ≥0.95, precision ≥0.90, centre error ≤ quarter radius) is unchanged;
+  `test_rejects_a_saturated_non_purple_colour` rewritten to assert against a colour outside both
+  configured bands; a new test (skipped if the file is absent) confirms `detect_controls` finds the
+  real scan's red-ink controls.
+- [ ] T074 — Grid-line shape exclusion in segmentation (F20, ADR-012) — paths:
+  `src/rogaine/vision/segment.py`, `tests/unit/vision/test_segment.py` — deps: none — DoD: a new
+  shape-based pass after `classify_palette` reclassifies extreme-elongated near-full-height/width
+  `water_shallow`/`water_uncrossable` components to `unknown`; F4's existing fixture IoU floors are
+  unchanged; a new test (skipped if the file is absent) confirms the five known grid columns in
+  `data/maps/grid-lines-red-controls/map.jpeg` drop from >30% `water_uncrossable` to ~0%, and that a
+  compact water body still classifies as `water_uncrossable`.
+- [ ] T075 — Route-overlay colour distinct from all seven forbidden inks — paths:
+  `src/rogaine/render/overlay.py`, `tests/unit/render/test_overlay.py` — deps: T073 — DoD:
+  `_CORE_COLOR` replaced with a value verified (via `config.cmyk_to_srgb`, not eyeballed) distinct
+  from all six ISOM inks plus red; existing pixel-sampling tests pass unchanged (they import
+  `_CORE_COLOR` rather than hardcoding it); one new test asserts the measured distance.

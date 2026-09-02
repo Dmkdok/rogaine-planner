@@ -32,6 +32,49 @@ against the code itself (docs/REVIEW.md). The owner then asked for three things;
    the owner" below; it now also blocks M7 specifically, not only T017. Surface to the owner before
    spending implementer time on T070.
 
+## Iteration I1: real-scan vision robustness (in progress, branch `iteration/I1-real-scan-vision`)
+
+Owner found two real defects while manually trying the app on a real scan — separate from the three
+items in "Resume here" above, which are still open and unblocked by this iteration. Full intake,
+impact map and exit criteria: `docs/iterations/I1-real-scan-vision.md`. Summary:
+
+1. `vision/controls.py`'s control/hub detector only matched the fixed ISOM purple hue band
+   (`purple_hue_range=[140,175]`, `config/default.toml`) — confirmed zero controls and no hub found
+   on a real scan with 13 clearly visible red-circled numbered controls (a different ink family, not
+   a white-balance-shifted purple). Fix (ADR-011): `ink_hue_ranges` becomes a configured list;
+   shipped default gains a red band.
+2. `vision/segment.py` classified the map's grid/magnetic-north lines (thin solid verticals the full
+   height of the map, standard on orienteering maps) as `water_uncrossable` (`speed_factor=0.0`,
+   `config/default.toml:186-189`) — confirmed 5 full-height columns >30% `water_uncrossable`,
+   producing `no reachable route` for a hub/control pair straddling one, unrelated to the time
+   limit. Fix (ADR-012): shape-based reclassification to `unknown`.
+3. Consequence of (1): `render/overlay.py`'s route colour (hardcoded red, chosen because no ISOM ink
+   is red) must change too, or a route line and a real red-ink control become indistinguishable.
+
+The real scan itself moved to `data/maps/grid-lines-red-controls/map.jpeg` (gitignored per
+ADR-010, `meta.toml` there records its provenance) — it does not get committed.
+
+A third symptom from the same test session (number/points fields resetting in the web controls
+editor) was **not** part of this — root-caused to a `saveControlsNow()` race in `app.js` and fixed
+directly on `master` (commit `c2f2e1e`), outside this iteration, before this branch was cut.
+
+Progress:
+- [x] 0 baseline recorded (below)
+- [x] 1 delta intake agreed (in / out / deferred) — `docs/iterations/I1-real-scan-vision.md`
+- [x] 2 impact map written — same file
+- [x] 3 docs amended (SPEC F7 edited + F20 added, DECISIONS ADR-011/012, TASKS M8 T073-T075)
+- [x] GATE approved by the owner (2026-09-02, «утверждаю»)
+- [ ] 4 implementation
+- [ ] 5 verification green, baseline suites still green
+- [ ] 6 review clean or waived
+- [ ] 7 closed (STATUS rewritten, milestone ticked)
+
+### Baseline I1
+Branch cut from `master` at commit `c2f2e1e` (2026-09-02), tree clean except the untracked test
+scan (later moved to `data/maps/grid-lines-red-controls/`, itself gitignored). `docker compose run
+--rm tests pytest -q` — **372 passed**, exit 0 (this pytest config prints no final summary line;
+count taken from the dot tally, all dots, zero `F`/`E`).
+
 ## Checklist
 - [x] Phase 0 intake
 - [x] Phase 1 elicit (DoR met)
