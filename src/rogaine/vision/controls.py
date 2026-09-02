@@ -69,17 +69,24 @@ _RING_COVERAGE_MIN = 0.75
 
 
 def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
-    """Boolean `(H, W)` mask of pixels inside `config.detector.purple_hue_range` (ISOM purple
-    35/85/0/0), the ink both the control circle (703) and the start triangle (701) are printed in.
+    """Boolean `(H, W)` mask of pixels inside any of `config.detector.ink_hue_ranges`, the ink both
+    the control circle (703) and the start triangle (701) are printed in.
+
+    The name predates ADR-011 (I1): the shipped default still leads with ISOM purple 35/85/0/0, but
+    the config now carries a *list* of hue bands so a real scan whose controls are hand-marked in a
+    different ink family -- e.g. red -- is not silently undetected. The returned mask is the union
+    (OR) of the per-band `cv2.inRange` masks, all sharing the same saturation/value floors.
 
     *image* is RGB uint8, the convention `rogaine.models.MapContext` and every other vision
     module in this package use -- converted via `cv2.COLOR_RGB2HSV` below, not `BGR2HSV`. OpenCV's
-    H channel is `[0, 179]` and wraps at that boundary; this project's configured range
+    H channel is `[0, 179]` and wraps at that boundary; this project's configured purple band
     (`[140, 175]`, `config/default.toml`) sits entirely below the wrap, so no wrap-around handling
-    is needed -- verified against the fixture's own rendered purple, not assumed:
+    is needed there -- verified against the fixture's own rendered purple, not assumed:
     `RENDER_SRGB["purple_100"]` (`tests/fixtures/synth_map.py`) is RGB `(170, 60, 150)`, which
     converts to HSV `(155, 165, 170)`, comfortably inside the configured hue/saturation/value
-    floors.
+    floors. Red *does* wrap around the 0/179 boundary, so its band is configured as two entries
+    straddling the wrap rather than one -- see the comment on `ink_hue_ranges` in
+    `config/default.toml`.
     """
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError(f"expected an (H, W, 3) RGB image, got shape {image.shape}")
@@ -89,11 +96,12 @@ def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarra
     cfg = config or default_config()
     det = cfg.detector
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-    lower = np.array(
-        [det.purple_hue_range[0], det.purple_min_saturation, det.purple_min_value], dtype=np.uint8
-    )
-    upper = np.array([det.purple_hue_range[1], 255, 255], dtype=np.uint8)
-    return cv2.inRange(hsv, lower, upper) > 0
+    mask = np.zeros(image.shape[:2], dtype=bool)
+    for hue_lo, hue_hi in det.ink_hue_ranges:
+        lower = np.array([hue_lo, det.purple_min_saturation, det.purple_min_value], dtype=np.uint8)
+        upper = np.array([hue_hi, 255, 255], dtype=np.uint8)
+        mask |= cv2.inRange(hsv, lower, upper) > 0
+    return mask
 
 
 def _ring_coverage(mask: np.ndarray, cx: float, cy: float, r: float, band: float) -> float:

@@ -308,8 +308,23 @@ penalty = 2.0
 # drawings and the real corpus.
 circle_diameter_mm = 6.0
 circle_diameter_tolerance = 0.35
-# Purple in HSV (OpenCV ranges: H 0-179, S 0-255, V 0-255), around ISOM purple 35_85_0_0.
-purple_hue_range = [140, 175]
+# Control/hub ink hue bands (OpenCV HSV ranges: H 0-179, S 0-255, V 0-255). A mask is the union
+# (OR) of every band listed here, all sharing the saturation/value floors below (I1, ADR-011).
+# Purple: around ISOM purple 35_85_0_0.
+# Red: measured, not guessed, from a real hand-marked scan
+# (data/maps/grid-lines-red-controls/map.jpeg, I1) -- sampled every strongly-red pixel (R channel
+# dominant over G and B by >60) and read its HSV. Saturation floor 61-255, value floor 151-255
+# (comfortably above the shared floors below); hue clusters in two bands because red straddles
+# OpenCV's H=0/179 wrap: hue 0-20 held 99% of the red-like pixels (hue=0: 12841px, hue=1: 9218px,
+# tapering off through hue=20: 1px) and 167-179 the wrapped tail (hue=179: 11236px, hue=176:
+# 781px). The low band is capped at 9, short of the full observed 0-20, because ISOM brown and
+# yellow sit right next to red in hue: `tests/fixtures/synth_map.py`'s RENDER_SRGB["brown_100"]
+# is HSV (13, 201, 190) and RENDER_SRGB["yellow_100"] is HSV (20, 191, 253) -- both fully saturated
+# enough to pass the floors below, so a band reaching hue 20 pulled contour lines and open-land
+# fill into the mask too and broke TestHubTriangleDetection (a real regression found running this
+# task's own suite). 0-9 keeps ~95% of the sampled red-ink pixels (hue<=9: 31043/32794) with a
+# clear margin below brown's hue=13.
+ink_hue_ranges = [[140, 175], [0, 9], [167, 179]]
 purple_min_saturation = 60
 purple_min_value = 60
 hough_dp = 1.2

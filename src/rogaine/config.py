@@ -203,7 +203,7 @@ class DetectorSettings(BaseModel):
 
     circle_diameter_mm: float = Field(gt=0.0)
     circle_diameter_tolerance: float = Field(ge=0.0, lt=1.0)
-    purple_hue_range: tuple[int, int]
+    ink_hue_ranges: list[tuple[int, int]] = Field(min_length=1)
     purple_min_saturation: int = Field(ge=0, le=255)
     purple_min_value: int = Field(ge=0, le=255)
     hough_dp: float = Field(gt=0.0)
