@@ -834,9 +834,43 @@ the implementer's self-report.
   `controls.csv` 771 B), and confirmed a visible focus ring tabbing through the toolbar. No real
   defect found; both deviations judged correct, not scope creep. **M6 continues: T062 (Playwright
   end-to-end, deps T061, unblocked) next — closes M6.**
-- [ ] T062 — Playwright end-to-end — paths: `tests/e2e/test_viewer.py` — deps: T061 —
+- [x] T062 — Playwright end-to-end — paths: `tests/e2e/test_viewer.py` — deps: T061 —
   DoD: upload fixture, calibrate, move one control, run, assert the leg table and the exported JSON;
-  runs headless inside the tests service (F17).
+  runs headless inside the tests service (F17). Landed: `TestFullViewerFlow` in
+  `tests/e2e/test_viewer.py` drives a real Chromium against a real `uvicorn.Server` started in a
+  background thread on an ephemeral `127.0.0.1` port (`_live_server` fixture; `TestClient` can't
+  give Playwright a URL to navigate to), `RUNS_ROOT` monkeypatched to `tmp_path` first, same
+  isolation `tests/unit/web/test_app.py` uses. Uploads the session-scoped `synthetic_map` fixture,
+  calibrates via ratio+DPI (`#scale-denominator`/`#scale-dpi`, the fixture's own values), waits on
+  `#controls-tbody tr` (a stronger gate than status text -- can only pass once segment+chained
+  auto-detect both finish), moves a non-hub control's X by 40px through the table's
+  `#control-{id}-x` input (dispatches a real `change` event -- table editing was built in T061
+  specifically to have full parity with dragging, and is far more robust to drive than canvas
+  pointer-drag maths), explicitly waits for that edit's `PUT .../controls` 200 before clicking run
+  (plan reads `controls.csv` from disk, not anything the client resubmits -- without this wait the
+  test would race against pre-edit controls), runs (`RunConfig` defaults apply, `strategy="auto"`
+  stays on the deterministic Held-Karp path at this fixture's control count -- no seed-flakiness
+  risk), asserts the leg table (row ids in order, first leg's "From" cell is "Хаб"), then fetches
+  the exported `route.json` via `#export-json-link`'s resolved `href` and checks its structural
+  shape against `route_json.py`'s `RouteFile` (all top-level keys present, `len(legs) ==
+  len(order)-1`, order round-trips to the hub, positive totals).
+
+  One narrow, pre-flagged deviation outside the owned path (mirrors T060's `test_cli.py`/
+  `docker-compose.yml` and T061's two `web/app.py` deviations): `Dockerfile`'s `test` stage gained
+  `RUN playwright install --with-deps chromium` -- browser binaries the stage never installed
+  before, even though `playwright`/`pytest-playwright` were already `[dev]` dependencies and the
+  Dockerfile already carried a comment anticipating exactly this ("Playwright browsers land here in
+  M6 (T062)").
+
+  Built by the `implementer` subagent and independently re-verified against the tree: own read of
+  the full diff (`Dockerfile` + `test_viewer.py` in full), own `docker compose run --rm tests` (372
+  passed, exit 0, ~132s), own `docker compose run --rm tests pytest tests/e2e/test_viewer.py -v`
+  (1 passed, 8.5s, isolated), own `docker compose run --rm tests ruff check .` (all checks passed),
+  own `git status` (scoped to exactly `Dockerfile` + the new test file; no stray `runs/` at repo
+  root). No real defect found. **M6 is now complete** (T060-T062 all landed) -- F17's own
+  acceptance bar ("a Playwright script completes the full flow ... with no manual steps") is
+  satisfied. This closes out SPEC's whole M0-M6 scope; M7 remains optional per its own gate ("only
+  after the owner accepts the route").
 
 ## M7 — Optional, only after the owner accepts the route
 

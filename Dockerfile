@@ -32,5 +32,6 @@ CMD ["rogaine", "--help"]
 FROM base AS test
 
 RUN pip install -e ".[dev]"
+RUN playwright install --with-deps chromium
 COPY . .
 CMD ["pytest"]
