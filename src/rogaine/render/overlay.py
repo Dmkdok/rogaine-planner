@@ -21,14 +21,20 @@ in a bright, high-saturation core colour on top (`cv2.polylines` / `cv2.circle` 
 readable against light open-land yellows and whites; the core keeps the line visible against dark
 forest greens and blacks where a halo alone would vanish.
 
-**Colour choice: bright red, not purple or cyan.** `config/default.toml`'s ISOM ink table
-(``[palette.ink]``) defines exactly six inks -- black, blue, yellow, green, brown, purple -- and
-*no red*. Route markings therefore use a red the map itself never prints, so a viewer can never
-mistake a route mark for a printed symbol. Purple was ruled out explicitly (it is the
-control-circle / hub-triangle ink, `purple_hue_range = [140, 175]` in OpenCV's 0-179 H scale, i.e.
-roughly 280-350 on the usual 0-360 scale); cyan/light-blue was ruled out too, since blue is the
-water-body ink family (`blue_50`/`blue_70`/`blue_100`) and a cyan route line over a lake would read
-as "more water", not "route".
+**Colour choice: bright magenta, not red, purple, or blue/cyan.** T073 widened
+`config/default.toml`'s `[detector].ink_hue_ranges` to recognise red-pen control marks alongside
+ISOM purple, so this module's original choice (bright red) stopped being a colour the map never
+prints -- it broke the very invariant this section exists to argue for. `_CORE_COLOR` is now a
+pure, fully-saturated magenta, picked by measurement rather than by eye: its CIELAB distance (the
+same nearest-colour space `vision/palette.py`'s classifier already uses) to every one of the six
+ISOM inks' nominal sRGB (`config.cmyk_to_srgb` on `[palette.ink]`'s CMYK) plus a representative red
+sampled from a real hand-marked scan (`data/maps/grid-lines-red-controls/map.jpeg`, I1) is at
+least ~48.3 -- comfortably above `PaletteSettings.lab_distance_threshold` (35.0), this project's
+own bar for "clearly a different colour, not the same ink". See
+``TestCoreColorDistinctFromForbiddenInks`` in this module's test file for the exact numbers. Blue
+and cyan were still avoided, for the reason this section already gave for ruling out cyan before
+red became an issue: blue is the water-body ink family, and a blue-hued route line over a lake
+would read as "more water", not "route".
 
 **Numbered visit order, not `Control.number`.** Each intermediate stop is labelled with its 1-based
 position in `route.order` (1st control visited, 2nd, ...) -- the DoD asks for visit order, and
@@ -71,10 +77,10 @@ import numpy as np
 from rogaine.models import Control, Leg, Route
 
 # --------------------------------------------------------------------------------------------
-# Colour -- see the module docstring for why red, and why not purple or cyan.
+# Colour -- see the module docstring for why magenta, and why not red, purple, blue or cyan.
 # --------------------------------------------------------------------------------------------
 _HALO_COLOR: tuple[int, int, int] = (15, 15, 15)  # near-black RGB, the halo/outline pass
-_CORE_COLOR: tuple[int, int, int] = (255, 36, 36)  # bright red RGB, the legible pass on top
+_CORE_COLOR: tuple[int, int, int] = (255, 0, 255)  # bright magenta RGB, the legible pass on top
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 _LINE_TYPE = cv2.LINE_8  # not LINE_AA -- see module docstring, pixel-for-pixel reproducibility
 

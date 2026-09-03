@@ -5,7 +5,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import pytest
+from skimage.color import rgb2lab
 
+from rogaine.config import cmyk_to_srgb, default_config
 from rogaine.models import Control, Leg, Route
 from rogaine.render.overlay import _CORE_COLOR, _geometry, render_overlay, write_overlay
 
@@ -133,6 +135,44 @@ class TestHubDrawnOnceAndDistinctly:
                 assert sample == (_BACKGROUND, _BACKGROUND, _BACKGROUND)
             else:
                 assert sample == _CORE_COLOR
+
+
+class TestCoreColorDistinctFromForbiddenInks:
+    """T075: T073 widened `config/default.toml`'s `[detector].ink_hue_ranges` to recognise red-pen
+    control marks alongside ISOM purple, so `_CORE_COLOR` can no longer be red without breaking
+    this module's own "not a colour the map prints" invariant (see module docstring). This
+    verifies the replacement numerically, in CIELAB -- the same nearest-colour space
+    `vision/palette.py`'s classifier already uses -- rather than by eye.
+    """
+
+    #: Representative red-ink sRGB, measured (not guessed) from the real hand-marked scan
+    #: (`data/maps/grid-lines-red-controls/map.jpeg`, I1 -- gitignored per ADR-010, so this is a
+    #: recorded one-time measurement rather than a re-read of a file that may not be present on
+    #: every machine): median over every pixel where R exceeds both G and B by more than 60
+    #: (0-255 scale) -- the same "strongly-red pixel" rule `config/default.toml`'s
+    #: `ink_hue_ranges` comment describes T073 using for its hue-band measurement. 54,966 matching
+    #: pixels; median (R, G, B) = (227, 50, 50).
+    _RED_INK_SRGB = (227, 50, 50)
+
+    def test_min_lab_distance_to_all_seven_forbidden_inks_clears_the_palette_threshold(
+        self,
+    ) -> None:
+        cfg = default_config()
+        forbidden_srgb = [cmyk_to_srgb(*cmyk) for cmyk in cfg.palette.ink.values()]
+        forbidden_srgb.append(self._RED_INK_SRGB)
+
+        forbidden_lab = rgb2lab(
+            np.array(forbidden_srgb, dtype=np.uint8).reshape(1, -1, 3)
+        ).reshape(-1, 3)
+        core_lab = rgb2lab(np.array(_CORE_COLOR, dtype=np.uint8).reshape(1, 1, 3)).reshape(3)
+
+        distances = np.linalg.norm(forbidden_lab - core_lab, axis=1)
+
+        # `PaletteSettings.lab_distance_threshold` (35.0) is this project's own established bar
+        # for "clearly a different colour, not the same ink" -- `vision/palette.py`'s classifier
+        # uses it to decide when a pixel is `unknown` rather than the nearest ISOM shade. The
+        # measured minimum here is ~48.3 (closest neighbour: purple), comfortably above it.
+        assert distances.min() > cfg.palette.lab_distance_threshold
 
 
 class TestWriteOverlay:
