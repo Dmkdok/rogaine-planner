@@ -253,6 +253,25 @@ passable = true
 note = "unclassified pixels are assumed to be forest — the most common terrain, and not optimistic"
 
 # --------------------------------------------------------------------------------------------
+# Grid/border-line shape exclusion (T074, F20, ADR-012)
+# --------------------------------------------------------------------------------------------
+[grid]
+# A column (or row) whose water_shallow/water_uncrossable pixel fraction reaches this is a
+# candidate grid/magnetic-north/border line, not real water. Measured against
+# `data/maps/grid-lines-red-controls/map.jpeg` (I1): its 8 known grid columns plus one border
+# column range 0.338-0.898; the synthetic fixture's own noisiest column (JPEG-degraded render,
+# `test_segment.py`'s IoU floor test) never exceeds 0.145. Set to 0.25, roughly midway between
+# the two, with margin on both sides.
+span_fraction_min = 0.25
+# A candidate run wider than this (mm on paper, converted to pixels via DPI -- never hardcoded in
+# pixels, same convention as every sibling geometric tunable) is not a line: it is left classified
+# as real terrain instead. Measured: the widest real line/border run in the same scan is ~4.95mm
+# (39px @ 200dpi, the map's own border rule); set to 6.0mm for margin. Any real lake or marsh large
+# enough to clear `span_fraction_min` is, on any real map scale, far wider than this -- ADR-012's
+# own accepted edge case is a genuinely line-width river, not a lake.
+max_line_width_mm = 6.0
+
+# --------------------------------------------------------------------------------------------
 # Linear feature extraction (T014)
 # --------------------------------------------------------------------------------------------
 [linear]

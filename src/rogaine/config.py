@@ -182,6 +182,25 @@ class LinearSettings(BaseModel):
         return self.min_length_mm * dpi / 25.4
 
 
+class GridSettings(BaseModel):
+    """Shape-based carve-out for grid/magnetic-north/border lines misread as water (T074, F20,
+    ADR-012) -- see `vision/segment.py::reclassify_grid_ink`'s module docstring for the shape
+    reasoning and the real-scan measurements these two numbers come from.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    span_fraction_min: float = Field(gt=0.0, le=1.0)
+    max_line_width_mm: float = Field(gt=0.0)
+
+    def max_line_width_px(self, dpi: float) -> float:
+        """Widest a candidate grid/border run may be (px, at *dpi*) and still count as a line
+        rather than real terrain -- the same mm-on-paper convention as every sibling geometric
+        tunable (`LinearSettings.nominal_width_px`, `DetectorSettings.circle_radius_px`).
+        """
+        return self.max_line_width_mm * dpi / 25.4
+
+
 class SlopeSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -261,6 +280,7 @@ class AppConfig(BaseModel):
     map: MapSettings
     palette: PaletteSettings
     terrain: list[TerrainSpec]
+    grid: GridSettings
     linear: LinearSettings
     slope: SlopeSettings
     detector: DetectorSettings
