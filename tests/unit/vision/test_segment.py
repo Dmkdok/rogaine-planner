@@ -12,9 +12,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
+from scipy.sparse.csgraph import connected_components
 
 from rogaine.config import default_config
+from rogaine.cost.field import compute_cost_field
+from rogaine.cost.graph import build_grid_graph
 from rogaine.models import TERRAIN_ORDER, TerrainClass, TerrainMap, terrain_label
+from rogaine.vision.contours import contour_density
+from rogaine.vision.linear import extract_linear_features
+from rogaine.vision.normalize import normalize
+from rogaine.vision.palette import classify_palette
 from rogaine.vision.segment import (
     format_iou_report,
     iou_report,
@@ -76,7 +83,7 @@ class TestReclassifyGridInk:
     small hand-built label arrays (not the fixture, which has no grid lines at all -- see
     `TestIouReportOnFixture` for the fixture-level non-regression check) at ``dpi=100.0``, so
     ``GridSettings.max_line_width_px(100.0)`` (``config/default.toml``'s ``max_line_width_mm =
-    6.0``) is ``6.0 * 100 / 25.4`` ~= 23.6px.
+    6.0``) is ``6.0 * 100 / 25.4`` ~= 23.6px, and ``min_elongation_ratio`` is ``10.0``.
     """
 
     _H, _W = 100, 60
@@ -124,6 +131,20 @@ class TestReclassifyGridInk:
         """
         labels = self._blank()
         labels[0:30, 0:50] = self._WU  # 30/100 = 0.30 of height (clears 0.25), 50px wide (> cap)
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.array_equal(out, labels)
+
+    def test_narrower_than_the_width_cap_but_not_elongated_is_untouched(self) -> None:
+        """`max_line_width_mm` alone is an *absolute* size: on this 100px-tall array it would
+        accept anything under ~23.6px wide even though a 20px-wide run is nowhere near
+        line-shaped (elongation 100/20 = 5.0, under `min_elongation_ratio`'s 10.0). This is the
+        gap `min_elongation_ratio` closes -- a run this squarish must stay real terrain regardless
+        of the image's absolute size.
+        """
+        labels = self._blank()
+        labels[0:30, 0:20] = self._WU  # 30% of height (clears 0.25), 20px wide (under the mm cap)
 
         out = reclassify_grid_ink(labels, dpi=100.0)
 
@@ -186,6 +207,51 @@ class TestGridInkOnRealScan:
             column = terrain_map.labels[:, x]
             frac = float(((column == wu) | (column == ws)).sum() / height)
             assert frac < 0.05, f"column x={x}: water fraction {frac:.3f}, expected ~0"
+
+    @pytest.mark.skipif(
+        not _REAL_SCAN_PATH.is_file(),
+        reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
+    )
+    def test_routable_graph_is_far_less_fragmented(self) -> None:
+        """I1's exit criterion 3 ("a plan across one of those columns no longer fails with 'no
+        reachable route'") in the terms the graph solver actually reasons in: connected components
+        of the routable graph, not one hand-picked hub/control pair -- at `graph.downsample`'s
+        default block size, `_aggregate_blocks`' own "passable iff at least one passable pixel"
+        rule (T031) already bridges most individual gaps in a partially-fragmented column, so a
+        pair straddling any one column may or may not disconnect depending on exactly where it
+        sits; the graph-wide component count is what the misclassification actually damages, and
+        what this fix actually repairs, regardless of which two points a route happens to use.
+        Measured on this scan (`docker compose run --rm tests`, this session): 9463 components pre-
+        fix (largest 244595/254065 nodes, 96.3%) vs 580 post-fix (largest 253486/254065, 99.8%).
+        """
+        with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        dpi = float(meta["dpi"])
+        image = np.array(Image.open(_REAL_SCAN_PATH).convert("RGB"))
+        cfg = default_config()
+
+        normalized = normalize(image)
+        palette_labels = classify_palette(normalized, cfg)
+        pre_labels = extract_linear_features(palette_labels, dpi, cfg)
+        pre_terrain = TerrainMap(
+            labels=pre_labels,
+            contour_density=contour_density(pre_labels, dpi, cfg),
+            meters_per_pixel=1.0,
+        )
+        post_terrain = segment(image, dpi, meters_per_pixel=1.0, config=cfg)
+
+        def _n_components_and_giant_fraction(terrain: TerrainMap) -> tuple[int, float]:
+            cost_field = compute_cost_field(terrain, base_speed_mps=2.0, config=cfg)
+            graph = build_grid_graph(cost_field, config=cfg)
+            n_components, comp_labels = connected_components(graph.csr, directed=False)
+            giant_fraction = float(np.bincount(comp_labels).max() / graph.csr.shape[0])
+            return n_components, giant_fraction
+
+        pre_n, _pre_giant = _n_components_and_giant_fraction(pre_terrain)
+        post_n, post_giant = _n_components_and_giant_fraction(post_terrain)
+
+        assert post_n < pre_n / 5, f"post-fix components {post_n} not far below pre-fix {pre_n}"
+        assert post_giant >= 0.99, f"post-fix giant component only {post_giant:.3f} of all nodes"
 
 
 class TestIouReportOnFixture:

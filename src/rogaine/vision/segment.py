@@ -16,9 +16,11 @@ ever rewrite pixels the palette called `road`) -- running it last simply matches
 in `docs/PLAN.md`'s architecture diagram.
 
 :func:`reclassify_grid_ink` (T074, F20, ADR-012) runs between those last two: it must see
-`classify_palette`'s raw water classes before `extract_linear_features` ever touches the frame
-(it only rewrites pixels `classify_palette` already called `road`, so the two passes are
-independent in practice, but this is the order ADR-012 states).
+`classify_palette`'s raw water classes before anything downstream treats them as real water.
+`extract_linear_features` only ever rewrites pixels the palette called `road`, never `road`'s own
+water-class siblings, so the two passes are independent in practice -- but this is the order
+ADR-012 states, and it is the one that lets `reclassify_grid_ink` see the palette's classification
+untouched by any later stage.
 
 `dpi` and `meters_per_pixel` are both required here, independently, because neither derives from
 the other: `dpi` is scan resolution, needed to convert this config's millimetre-based tunables
@@ -108,16 +110,25 @@ def reclassify_grid_ink(
     height or width, to spike this fraction (measured 0.338-0.898 across 9 columns of the real
     scan named above); real water bodies never come close on the synthetic fixture used to floor
     this pipeline's other tests (measured max 0.145) -- see `config/default.toml`'s `[grid]`
-    section for the exact numbers this threshold is picked from. A second, narrower check
-    (`GridSettings.max_line_width_mm`) then rejects any such run that is *wide*: a real lake or
-    marsh large enough to clear the fraction threshold is, at any real map scale, far wider than a
-    printed line, so this is what keeps a compact water body's own columns from being caught by the
-    first check alone (the non-negotiable this task's own DoD states).
+    section for the exact numbers this threshold is picked from. Two narrower checks then reject a
+    run that clears the fraction but is not actually line-shaped: `GridSettings.max_line_width_mm`
+    rejects a run *wider* than any real printed line (a lake or marsh large enough to clear the
+    fraction threshold is, at any real map scale, far wider than that); `min_elongation_ratio`
+    independently requires the run to be many times longer (the image's own height or width) than
+    it is wide -- `max_line_width_mm` alone is an *absolute* size, so on a small or heavily-cropped
+    raster it stops discriminating a line from a squarish blob (see `GridSettings`'s own docstring
+    for the measured numbers). Together these are what keep a compact water body's own columns from
+    being caught by the fraction check alone (the non-negotiable this task's own DoD states).
 
     Only pixels the palette actually called `water_shallow`/`water_uncrossable` are ever touched --
     a column or row flagged as a line does not drag its non-water neighbours along, the same
     "rejected components become `unknown`, not the whole bounding box" discipline
     `extract_linear_features` already follows.
+
+    The column pass and the row pass both test against the *same* original water mask, not against
+    each other's output -- deliberately: reading an already-partially-reclassified array would make
+    the result depend on which pass happens to run first, for no benefit (a pixel either passage
+    would flag is flagged either way; nothing here depends on running both to convergence).
     """
     if labels.ndim != 2:
         raise ValueError(f"expected an (H, W) labels array, got shape {labels.shape}")
@@ -144,13 +155,15 @@ def reclassify_grid_ink(
 
     col_frac = mask.sum(axis=0) / height
     for start, end in _true_runs(col_frac >= grid.span_fraction_min):
-        if (end - start + 1) <= max_width_px:
+        run_width = end - start + 1
+        if run_width <= max_width_px and height / run_width >= grid.min_elongation_ratio:
             band = mask[:, start : end + 1]
             out[:, start : end + 1][band] = unknown_lbl
 
     row_frac = mask.sum(axis=1) / width
     for start, end in _true_runs(row_frac >= grid.span_fraction_min):
-        if (end - start + 1) <= max_width_px:
+        run_width = end - start + 1
+        if run_width <= max_width_px and width / run_width >= grid.min_elongation_ratio:
             band = mask[start : end + 1, :]
             out[start : end + 1, :][band] = unknown_lbl
 

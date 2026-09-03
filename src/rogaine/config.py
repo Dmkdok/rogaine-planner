@@ -185,13 +185,14 @@ class LinearSettings(BaseModel):
 class GridSettings(BaseModel):
     """Shape-based carve-out for grid/magnetic-north/border lines misread as water (T074, F20,
     ADR-012) -- see `vision/segment.py::reclassify_grid_ink`'s module docstring for the shape
-    reasoning and the real-scan measurements these two numbers come from.
+    reasoning and the real-scan measurements these numbers come from.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     span_fraction_min: float = Field(gt=0.0, le=1.0)
     max_line_width_mm: float = Field(gt=0.0)
+    min_elongation_ratio: float = Field(gt=0.0)
 
     def max_line_width_px(self, dpi: float) -> float:
         """Widest a candidate grid/border run may be (px, at *dpi*) and still count as a line
@@ -233,6 +234,17 @@ class DetectorSettings(BaseModel):
     points_rule: Literal["first_digit", "constant", "csv"]
     points_constant: int = Field(ge=0)
     min_ocr_confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _hue_ranges_are_valid_opencv_bands(self) -> DetectorSettings:
+        for lo, hi in self.ink_hue_ranges:
+            if not (0 <= lo <= hi <= 179):
+                raise ValueError(
+                    f"ink_hue_ranges band ({lo}, {hi}) must satisfy 0 <= lo <= hi <= 179 "
+                    "(OpenCV's 0-179 H scale) -- a hue above 179 overflows the uint8 HSV frame "
+                    "purple_mask builds, and lo > hi would silently match nothing"
+                )
+        return self
 
     def circle_radius_px(self, dpi: float) -> tuple[float, float]:
         """Expected control-circle radius range in pixels, for a raster at *dpi*.

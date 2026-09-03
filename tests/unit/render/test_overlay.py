@@ -10,6 +10,7 @@ from skimage.color import rgb2lab
 from rogaine.config import cmyk_to_srgb, default_config
 from rogaine.models import Control, Leg, Route
 from rogaine.render.overlay import _CORE_COLOR, _geometry, render_overlay, write_overlay
+from rogaine.vision.controls import purple_mask
 
 _BACKGROUND = 120  # a flat mid-grey, distinct from both _HALO_COLOR and _CORE_COLOR
 
@@ -173,6 +174,18 @@ class TestCoreColorDistinctFromForbiddenInks:
         # uses it to decide when a pixel is `unknown` rather than the nearest ISOM shade. The
         # measured minimum here is ~48.3 (closest neighbour: purple), comfortably above it.
         assert distances.min() > cfg.palette.lab_distance_threshold
+
+    def test_core_colour_hue_still_falls_inside_the_control_ink_mask(self) -> None:
+        """Documents a known, accepted overlap rather than leaving it silent (see module
+        docstring's "The guarantee this section states is a CIELAB distance, not hue exclusivity"
+        paragraph): `_CORE_COLOR`'s OpenCV hue (150) sits inside the widened purple band
+        (140-175, config/default.toml), so `purple_mask` flags it. Harmless in this product's
+        actual data flow (`render_overlay` never feeds its output back into `detect_controls`).
+        Asserted (not just narrated) so a future change to `_CORE_COLOR` or `ink_hue_ranges` that
+        flips this fact gets noticed and re-reasoned about, not silently drifted.
+        """
+        patch = np.full((4, 4, 3), _CORE_COLOR, dtype=np.uint8)
+        assert purple_mask(patch, default_config()).all()
 
 
 class TestWriteOverlay:

@@ -82,7 +82,7 @@ class TestPurpleMask:
     def test_rejects_a_saturated_colour_outside_every_configured_band(self) -> None:
         # Red is no longer a safe "outside every band" colour to test with (I1/ADR-011: it is now
         # one of the shipped ink_hue_ranges, alongside purple). Saturated green (hue ~60) sits in
-        # the gap between the configured bands -- purple [140, 175], red [0, 20] and [167, 179]
+        # the gap between the configured bands -- purple [140, 175], red [0, 9] and [167, 179]
         # (config/default.toml) -- so it is still a genuine negative case.
         image = np.full((20, 20, 3), 255, dtype=np.uint8)
         image[:] = (40, 200, 40)  # saturated green
@@ -171,45 +171,53 @@ class TestRecallPrecisionOnFixture:
 
 class TestRealScanRedInk:
     """I1, SPEC F7's second acceptance clause: on `data/maps/grid-lines-red-controls/map.jpeg`,
-    whose controls and hub are hand-marked in red rather than ISOM purple, controls must be
-    detected -- not silently zero, the exact bug this file was dropped in to reproduce
-    (`docs/STATUS.md`, ADR-011). `purple_mask` widening to include red (`config/default.toml`'s
-    `ink_hue_ranges`) is verified to fix that -- `test_controls_are_detected_not_silently_zero`
-    below is the regression guard for it, and passes outright.
+    whose controls and hub are hand-marked in red rather than ISOM purple, `purple_mask` (the
+    pixel-level primitive `config/default.toml`'s `ink_hue_ranges` drives) must actually flag the
+    real red ink. `test_purple_mask_flags_the_real_red_ink` below measures that directly and
+    passes outright -- this is T073's genuine, narrow claim (widen the *colour* mask), independent
+    of whatever the shape stage built on top of it does with that mask.
 
-    A second, much stronger claim -- that detection actually recalls the true control positions
-    and finds the hub, not just *some* non-empty output -- is also asserted below, and is marked
-    `xfail`: it does not currently hold, for a reason T073 cannot fix without leaving its own
-    scope. Measured directly against this file (connected-component analysis of its strict red-ink
-    pixels, offline, not part of the shipped test): every one of its 13 control rings has a bounding
-    box of ~111-113 x 110-113 px (~56px radius), and its hub triangle's contour has vertices
-    ~124-127px apart. `DetectorSettings.circle_radius_px(200)` (`circle_diameter_mm=6.0`,
-    `circle_diameter_tolerance=0.35`) predicts a circle radius window of only [15.4, 31.9]px, and
-    therefore a triangle-side window of [33.8, 70.2]px (`_TRIANGLE_SIDE_TO_RADIUS=2.2` in
-    `vision/controls.py`) -- both roughly 2.3-2.4x too small for what this file actually draws.
-    `cv2.HoughCircles`' `minRadius`/`maxRadius` (from the same window) therefore can never return a
-    candidate anywhere near a true ring, whatever ink colour the mask searches for: this is a
-    radius/geometry defect, orthogonal to ink colour, and fixing it means changing the Hough
-    radius derivation or `circle_diameter_mm`/`circle_diameter_tolerance` -- exactly what T073's
-    task brief calls non-negotiable not to touch ("No change to _ring_coverage/Hough parameters or
-    any other false-positive guard"). Left for a follow-up task; flagged here rather than silently
-    passed over.
+    That shape stage -- `cv2.HoughCircles` plus the ring-coverage gate -- does NOT currently turn
+    that mask into correct detections on this file, and does not just fall short of a high bar: it
+    is wrong. Independently re-measured this session (`test_recall_and_hub_match_the_true_positions`
+    below, `xfail(strict=True)`): `detect_controls` returns 16 "circles" and no hub, and **every
+    one of the 16 is a false positive** -- nearest true ring 97.7-466.9px away, recall 0/13 =
+    0.000, hub not found. Connected-component analysis of the real scan's strict red-ink mask
+    (`R>150, R-G>60, R-B>60`) identifies what the 16 actually are: the hand-written control
+    *digits* (~43x67px components), not the ~111-113x110-113px (~56px radius) ring components the
+    detector is supposed to find. The digits happen to fall inside `circle_radius_px(200)`'s
+    predicted window ([15.4, 31.9]px from ISOM's 6mm circle spec); the true rings, at ~56px
+    radius, do not -- `cv2.HoughCircles`' `minRadius`/`maxRadius` (from that same window) can
+    therefore never return a candidate anywhere near a true ring, whatever ink colour the mask
+    searches for. This is a radius/geometry defect, orthogonal to ink colour, and fixing it means
+    changing the Hough radius derivation or `circle_diameter_mm`/`circle_diameter_tolerance` --
+    exactly what T073's task brief calls non-negotiable not to touch ("No change to
+    _ring_coverage/Hough parameters or any other false-positive guard"). Left for a follow-up
+    task (not yet filed as of this session); flagged here rather than silently passed over, and
+    **SPEC F7's acceptance clause "finds the map's red-circled controls (shape-filtered, not 'any
+    red pixel')" does not hold on this file** until it lands -- see `docs/STATUS.md`.
     """
 
     @pytest.mark.skipif(
         not _REAL_SCAN_PATH.is_file(),
         reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
     )
-    def test_controls_are_detected_not_silently_zero(self) -> None:
-        with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
-            meta = tomllib.load(fh)
-        dpi = float(meta["dpi"])
-
+    def test_purple_mask_flags_the_real_red_ink(self) -> None:
+        """T073's actual, narrow claim: the widened hue mask covers the real red ink at the pixel
+        level. Measured against the same strict red-pixel criterion this file's other tests use
+        for ground truth (`R>150, R-G>60, R-B>60`, 54,061 matching pixels): `purple_mask` overlaps
+        98.99% of them. Deliberately does not touch `detect_controls`/Hough at all -- see this
+        class's own docstring for why that stage is a separate, still-broken concern on this file.
+        """
         image = np.array(Image.open(_REAL_SCAN_PATH).convert("RGB"))
-        detections = detect_controls(image, dpi, default_config())
-        circles = [d for d in detections if not d.is_hub]
+        mask = purple_mask(image, default_config())
 
-        assert circles, "red-ink controls must not be silently zero (SPEC F7, I1)"
+        r, g, b = (image[..., i].astype(int) for i in range(3))
+        strict_red = (r > 150) & (r - g > 60) & (r - b > 60)
+
+        overlap = float((mask & strict_red).sum())
+        coverage = overlap / float(strict_red.sum())
+        assert coverage >= 0.95, f"purple_mask covers only {coverage:.3f} of the real red ink"
 
     @pytest.mark.skipif(
         not _REAL_SCAN_PATH.is_file(),
@@ -217,10 +225,11 @@ class TestRealScanRedInk:
     )
     @pytest.mark.xfail(
         reason=(
+            "measured this session: recall 0/13 = 0.000, precision 0/16 = 0.000, hub not found. "
             "known, out-of-T073-scope radius/geometry mismatch: this file's true control rings "
             "measure ~56px radius and its hub triangle ~125px side, versus the "
             "[15.4, 31.9]px / [33.8, 70.2]px windows DetectorSettings.circle_radius_px(200) "
-            "predicts -- see TestRealScanRedInk's docstring for the full measurement."
+            "predicts -- see TestRealScanRedInk's class docstring for the full measurement."
         ),
         strict=True,
     )
@@ -256,8 +265,18 @@ class TestRealScanRedInk:
             if any(_dist(tx, ty, d.x, d.y) <= match_tol for d in circles)
         )
         recall = matched / len(true_ring_centres)
+        n_matched_det = sum(
+            1
+            for d in circles
+            if any(_dist(tx, ty, d.x, d.y) <= match_tol for tx, ty in true_ring_centres)
+        )
+        precision = n_matched_det / len(circles) if circles else 0.0
         hub_ok = hub is not None and _dist(*true_hub_centre, hub.x, hub.y) <= match_tol
 
-        report = f"recall={recall:.3f} ({matched}/{len(true_ring_centres)} true rings matched)"
+        report = (
+            f"recall={recall:.3f} ({matched}/{len(true_ring_centres)} true rings matched), "
+            f"precision={precision:.3f} ({len(circles)} detections)"
+        )
         assert recall >= 0.90, report
+        assert precision >= 0.90, report
         assert hub_ok, f"hub not found within {match_tol}px of the true centre"

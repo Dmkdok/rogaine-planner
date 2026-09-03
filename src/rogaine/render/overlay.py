@@ -36,6 +36,14 @@ and cyan were still avoided, for the reason this section already gave for ruling
 red became an issue: blue is the water-body ink family, and a blue-hued route line over a lake
 would read as "more water", not "route".
 
+The guarantee this section states is a CIELAB distance, not hue exclusivity: `_CORE_COLOR`'s
+OpenCV hue (150) happens to fall inside `config/default.toml`'s widened purple band (140-175), so
+`vision/controls.py::purple_mask` on a magenta patch returns true. This has no effect on this
+product's actual data flow -- `render_overlay` only ever draws onto a raster that has already been
+through `detect_controls`, never the other way round -- but it means a rendered `route.png` is not
+literally colour-disjoint from the control-ink mask, only Lab-distinguishable to any comparison
+that measures colour difference the way this project's own classifier does (a human eye included).
+
 **Numbered visit order, not `Control.number`.** Each intermediate stop is labelled with its 1-based
 position in `route.order` (1st control visited, 2nd, ...) -- the DoD asks for visit order, and
 `Control.number` is a different, physical-map-facing identifier that can also be ``None`` (unread).

@@ -270,6 +270,13 @@ span_fraction_min = 0.25
 # enough to clear `span_fraction_min` is, on any real map scale, far wider than this -- ADR-012's
 # own accepted edge case is a genuinely line-width river, not a lake.
 max_line_width_mm = 6.0
+# A second, image-size-independent guard: a candidate run must also be at least this many times
+# longer (image height, for a column run; width, for a row run) than it is wide. `max_line_width_mm`
+# alone is an *absolute* size, so on a small or heavily-cropped raster it can stop discriminating a
+# genuine line from a squarish blob (a 24px-wide run in a 100px-tall crop clears the width cap at
+# only ~4:1). Measured on the real scan (200dpi, 1708px tall): the 8 known grid/border columns
+# range 44:1-1708:1. Set to 10.0 for a wide margin below that and above any compact blob.
+min_elongation_ratio = 10.0
 
 # --------------------------------------------------------------------------------------------
 # Linear feature extraction (T014)
@@ -343,6 +350,10 @@ circle_diameter_tolerance = 0.35
 # fill into the mask too and broke TestHubTriangleDetection (a real regression found running this
 # task's own suite). 0-9 keeps ~95% of the sampled red-ink pixels (hue<=9: 31043/32794) with a
 # clear margin below brown's hue=13.
+# Renamed from the single `purple_hue_range = [lo, hi]` this replaced (T073, ADR-011): a hand-edited
+# config file still carrying the old key name fails validation (DetectorSettings is extra="forbid")
+# rather than being silently ignored -- rename the key to ink_hue_ranges = [[lo, hi]] (a list of
+# bands, even for just one) to migrate it.
 ink_hue_ranges = [[140, 175], [0, 9], [167, 179]]
 purple_min_saturation = 60
 purple_min_value = 60
