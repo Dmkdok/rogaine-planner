@@ -15,6 +15,8 @@
 | 010 | Real map corpus validates; synthetic fixture tests; neither is committed | accepted |
 | 011 | Control ink is a configured list of hue bands, not a fixed purple; the default ships both purple and red | accepted |
 | 012 | Grid/annotation ink is excluded from colour classification by shape, not by narrowing the colour threshold | accepted |
+| 013 | Track-derived travel-cost calibration from o-gps-center GPS tracks | proposed |
+| 014 | o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise | proposed |
 
 ---
 
@@ -195,3 +197,76 @@
   to check against, so this is named here rather than silently accepted. Full validation against a
   larger real corpus stays blocked on the owner (M7, `docs/STATUS.md`'s "Blocked on the owner"); this
   iteration fixes the one confirmed failure mode, it does not close that blocker.
+
+## ADR-013 — Track-derived travel-cost calibration from o-gps-center GPS tracks (proposed, not started)
+- Date: 2026-09-02
+- Status: proposed — no task exists for this, nothing implemented, revisit only if the owner
+  chooses to invest beyond M7.
+- Context: While scoping T070's corpus source (o-gps-center.ru, see the M7 corpus-harvest work this
+  session), two more open, unauthenticated endpoints were found: `/viewer/event/{id}/competitors`
+  (roster: id, trackId, name, bib, start time — no score/place/result field on any of 4 events
+  checked) and `/viewer/viewer_tracks?track_{id}=0` (a competitor's full raw GPS track: dense
+  `{t, lat, lon}` points). The owner's idea: rogaine fields skew toward experienced navigators, so
+  where many competitors' tracks converge between two controls, that convergence marks a good route
+  choice — aggregate crowd tracks as a free proxy for route quality.
+- What this would actually feed: not the Orienteering Problem solver (control selection/order is a
+  scoring decision tracks can't inform — different runners run different subsets by strategy, not
+  comparably). It targets the travel-cost model instead — the terrain-coefficient and slope-penalty
+  side of ADR-002/ADR-006 — as a calibration or validation signal for `config/default.toml`'s
+  numbers, which are currently reasoned/researched rather than measured against real movement.
+- Open problems, why this isn't a task yet:
+  1. **Confounded density.** Convergence at a forced bottleneck (single bridge, gap in a fence) is
+     not evidence of a good route, just the only route. Pack-following (visually trailing whoever is
+     ahead) also produces convergence unrelated to independent route judgement. Raw overlap density
+     needs both effects filtered out before it means anything — at minimum, restrict analysis to
+     corridors where the terrain genuinely offered a choice, and ideally weight by pace/independence,
+     neither of which the site's data exposes directly.
+  2. **No skill signal.** The site returns no result/place/score field (checked across 4 events
+     including a national championship) — there is no way to isolate strong navigators from
+     beginners sharing the same open start. Pace on unambiguous terrain is the only available
+     surrogate, itself unvalidated.
+  3. **No georeferencing.** Tracks are WGS84 lat/lon; the pipeline is pixel-space only (ADR-007, out
+     of scope for v1). A per-map affine calibration is needed before a track can be overlaid on our
+     raster at all. Candidate bootstrap, not yet tried: match a track's near-zero-speed "punch" dwell
+     points, in visiting order, against this project's own pixel-space control detections
+     (HSV+Hough) to get calibration point pairs semi-automatically — cheaper than manual calibration
+     per map, but unproven.
+  4. **Personal data.** Unlike anonymous map scans, tracks carry real names, bib numbers and start
+     times — a step up in sensitivity from the T070 map corpus; worth the owner's explicit sign-off
+     before any bulk collection, separate from the map-harvest approval.
+- Decision: none. Not scheduled under any milestone. If pursued, it needs its own ADR superseding
+  this one (with a real decision on the georeferencing bootstrap and the skill-filtering method) and
+  does not belong under M7 (M7 is visual segmentation, T070-T072; this is travel-cost calibration,
+  unrelated code paths).
+- Consequences: none yet — nothing implemented, no task created, no corpus collected.
+
+## ADR-014 — o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise (proposed)
+- Date: 2026-09-02
+- Status: proposed — needs the owner's sign-off before harvesting past the sample already taken.
+- Context: ADR-010 assumed "the owner can supply 200+ scanned maps"; only 15 exist (see
+  docs/STATUS.md "Blocked on the owner"). A second, free source is available: o-gps-center.ru
+  publishes a participant-facing scanned map per event, plain HTTP GET, no auth, no JS. Its
+  `robots.txt` disallows crawling the `/viewer/?event_list...` search listing but explicitly
+  `Allow`s `/viewer/event/{id}/` — a compliant harvester therefore walks bare event IDs (~26,000
+  total across the whole platform, all sports, not rogaine-specific) and keeps only pages whose
+  title matches «рогейн», downloading that page's map link. Verified this session: responses are
+  plain `image/jpeg`, one download was opened and visually confirmed as a real ISOM rogaine map
+  with control circles and a legend.
+- Decision (proposed): treat this scrape as a second, cited (not committed) input to T070's
+  corpus, alongside the owner's own scans — same `data/maps/<id>/` contract, no `meta.toml`
+  fabricated (scale/DPI stays unknown until measured or calibrated, same rule as ADR-010). A
+  manifest (`data/maps/_ogps_harvest_manifest.csv`) records `map_id, event_id, event_title,
+  source_url, downloaded_at` for attribution and reproducibility. Harvesting is resumable
+  (`data/maps/_ogps_harvest.py`, checkpointed by last event ID checked in
+  `data/maps/_ogps_harvest_checkpoint.json`) rather than one-shot, since a full sweep is several
+  hours at a polite ~0.4s/request rate limit.
+- Consequences: this is scraped third-party content, not owner-supplied — course setters, not this
+  project, hold rights to each map. Treated as fine for internal, non-redistributed
+  validation/training input (same non-commit rule as the owner's own scans; ADR-010's rasters are
+  never in git either), but publishing or redistributing any harvested map would need separate
+  clearance from its original author — the manifest's `source_url` exists so that clearance, or a
+  takedown, is always traceable to one map. Sizing math is unchanged: 10-20 real scans still retire
+  the palette risk (T017); 200+ (for M7) needs either a much longer sweep of this source or
+  another one entirely. Not run to completion — 1 map harvested as a timeboxed sample
+  (`ogps-367_180afd874454c167cddab2aa89c78354`, "Рогейн-2015"); the owner decides whether/how much
+  further to run it.

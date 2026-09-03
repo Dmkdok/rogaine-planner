@@ -160,11 +160,33 @@ for the full list). `rogaine corpus list` reads all 14. Still open:
 - **one map with a reference route** (`reference.json`) — this is the acceptance oracle and the
   single most valuable item on the list;
 - a controls list with points for at least one map;
-- the scan DPI and map scale for each of the 14 — none has `meta.toml` yet, so none is plannable
-  (only listable) and T017 (per-map palette validation) has nothing to run against. **2026-09-02:
-  this now also blocks M7** — T070 needs "the owner's 200+ scan corpus" and only 14 raw scans
-  exist, none plannable. It also blocks SPEC's Launch checklist item "owner runs their own map
-  through both CLI and viewer and accepts the route" — no map here can do that yet.
+- the scan DPI and map scale for each of the 15 — 14 have no `meta.toml` (the 15th,
+  `grid-lines-red-controls`, is I1's regression fixture with a placeholder scale, explicitly not a
+  T017 validation entry per its own `meta.toml` comment), so none of the 14 is plannable (only
+  listable) and T017 (per-map palette validation) has nothing to run against. **2026-09-02: this
+  now also blocks M7** — T070 needs "the owner's 200+ scan corpus" and only 15 raw scans exist,
+  none plannable. It also blocks SPEC's Launch checklist item "owner runs their own map through
+  both CLI and viewer and accepts the route" — no map here can do that yet.
+
+**2026-09-02: ADR-010's "owner supplies 200+ scans" premise now has a second source** — public
+rogaine event maps scraped from o-gps-center.ru, cited (not committed; still gitignored
+`data/maps/`, no `meta.toml`, same as the owner's 15). o-gps-center.ru's `robots.txt` disallows
+crawling its `/viewer/?event_list...` search listing (only `/viewer/event/{id}/` itself is
+`Allow`ed), so the harvester walks bare event IDs directly instead of that search — the whole
+platform's event catalog (all sports, ~26,000 IDs total, not rogaine-specific), filtering titles
+for «рогейн» client-side after fetch. Time-boxed at the owner's request to a first ~12 minutes of
+sweeping: **event IDs 1-677 checked, 1 rogaine map found and downloaded**
+(`data/maps/ogps-367_180afd874454c167cddab2aa89c78354/map.jpg`, "Рогейн-2015", event 549, 3.9 MB) —
+the first ~400 IDs (platform's earliest era, ~2010-2012) had zero rogaine events, so density is
+uneven; later IDs likely score better per minute swept. **To resume:** run
+`python data/maps/_ogps_harvest.py <seconds>` from the repo root (needs network; not part of
+`src/rogaine/`, self-contained, no deps beyond the stdlib) — it reads
+`data/maps/_ogps_harvest_checkpoint.json`'s `last_id_checked` and continues forward from there
+automatically; results append to `data/maps/_ogps_harvest_manifest.csv`
+(`map_id,event_id,event_title,source_url,downloaded_at`). Rate limit ~0.4s/request, so 15 minutes
+≈ 800-900 more IDs checked. Full sweep to the ~26,000 ceiling would take several hours; not run
+yet — the owner's call whether/how much more to run. `rogaine corpus list` was not re-run this
+session (time-boxed); do that before trusting a fresh total count.
 
 **`crop_dense.png` is gone, deleted by accident, not by the owner.** It sat unexplained at repo
 root (a small cropped fragment of a real map — olive rough-open terrain, blue-hatched marsh, a

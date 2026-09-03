@@ -875,6 +875,11 @@ the implementer's self-report.
 ## M7 — Optional, only after the owner accepts the route
 
 - [ ] T070 — Tiling and mask export — paths: `ml/dataset.py` — deps: T016, T017 —
+  Blocked: corpus is 15 raw scans, none plannable (no `meta.toml`), not the 200+ ADR-010 assumed —
+  see docs/STATUS.md "Blocked on the owner". 2026-09-02: ADR-010's premise now has a second,
+  in-progress source — a `robots.txt`-compliant scrape of public rogaine maps from
+  o-gps-center.ru (see docs/STATUS.md for method/state); 1 map harvested so far, resumable via
+  `data/maps/_ogps_harvest.py`, not yet enough to unblock this task.
   DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over the owner's
   200+ scan corpus, with rotation, blur and JPEG augmentation, matching the article's data recipe;
   tiles whose `unknown` fraction exceeds a threshold are dropped rather than taught as noise;
