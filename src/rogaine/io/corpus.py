@@ -40,6 +40,16 @@ class CorpusEntry:
     scale_denominator: float | None = None
     dpi: float | None = None
     calibration: Calibration | None = None
+    #: "measured" or "assumed_default" on the M7 training corpus (T078, ADR-016); `None` for a map
+    #: whose `meta.toml` predates T078 or was never machine-calibrated. Purely informational here --
+    #: nothing in `is_plannable`/`meters_per_pixel` reads it; future relief/terrain work is what
+    #: filters on it (ADR-016's own forward note).
+    calibration_source: str | None = None
+    #: Which tier measured it -- "scale_bar", "grid" or "circle" (T078, ADR-016); `None` for
+    #: `calibration_source in (None, "assumed_default")`. ADR-016 calls tier 3 (circle) "fallback/
+    #: cross-check only, never primary" -- this is what lets downstream work actually filter that
+    #: distinction out instead of treating every "measured" map as equally trustworthy.
+    calibration_tier: str | None = None
     has_controls: bool = False
     has_reference: bool = False
     problems: tuple[str, ...] = field(default_factory=tuple)
@@ -130,6 +140,14 @@ def read_entry(map_dir: Path) -> CorpusEntry:
         scale_denominator=_positive("scale_denominator"),
         dpi=_positive("dpi"),
         calibration=calibration,
+        calibration_source=(
+            meta.get("calibration_source")
+            if isinstance(meta.get("calibration_source"), str)
+            else None
+        ),
+        calibration_tier=(
+            meta.get("calibration_tier") if isinstance(meta.get("calibration_tier"), str) else None
+        ),
         has_controls=(map_dir / CONTROLS_NAME).is_file(),
         has_reference=(map_dir / REFERENCE_NAME).is_file(),
         problems=problems,

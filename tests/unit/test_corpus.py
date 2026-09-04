@@ -49,6 +49,27 @@ class TestScale:
             Calibration(x1=1, y1=1, x2=1, y2=1, meters=100)
 
 
+class TestCalibrationSource:
+    """T078/ADR-016: the M7 auto-calibrator's own provenance flag -- informational only, never read
+    by `is_plannable`/`meters_per_pixel`.
+    """
+
+    def test_present_when_written(self, tmp_path) -> None:
+        _map_dir(
+            tmp_path,
+            "auto",
+            'scale_denominator = 30000\ndpi = 300\ncalibration_source = "assumed_default"\n',
+        )
+        entry = read_entry(tmp_path / "auto")
+        assert entry.calibration_source == "assumed_default"
+        assert entry.is_plannable
+
+    def test_absent_on_a_hand_authored_map(self, tmp_path) -> None:
+        _map_dir(tmp_path, "manual", "scale_denominator = 30000\ndpi = 300\n")
+        entry = read_entry(tmp_path / "manual")
+        assert entry.calibration_source is None
+
+
 class TestReporting:
     def test_a_broken_meta_is_reported_not_raised(self, tmp_path) -> None:
         _map_dir(tmp_path, "broken", "scale_denominator = = 30000\n")

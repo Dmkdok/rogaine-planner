@@ -24,6 +24,12 @@ so keep it stable once a reference route exists for it.
 name = "Ivanovskoe rogaine 2024"     # optional, for display
 scale_denominator = 30000            # required — 1:30000
 dpi = 300                            # required for scans; a PDF that carries its own DPI may omit it
+# Both optional, top-level keys (NOT inside [calibration] below -- a key nested in that table
+# parses as calibration.calibration_source, invisible to the loader's own top-level lookup).
+# Written by the M7 corpus auto-calibrator (T078, ADR-016), absent on a hand-authored meta.toml.
+# Purely informational: nothing in the loader reads either, downstream relief/terrain work will.
+calibration_source = "measured"      # "measured" or "assumed_default"
+calibration_tier = "grid"            # "scale_bar", "grid" or "circle" -- "measured" only
 [calibration]                        # optional; overrides scale_denominator/dpi if present
 # Two points on the map and the true ground distance between them (SPEC F3). Use this when the
 # scan was cropped or resampled and the nominal DPI no longer describes the file.
