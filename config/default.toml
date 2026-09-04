@@ -253,6 +253,32 @@ passable = true
 note = "unclassified pixels are assumed to be forest — the most common terrain, and not optimistic"
 
 # --------------------------------------------------------------------------------------------
+# Grid/border-line shape exclusion (T074, F20, ADR-012)
+# --------------------------------------------------------------------------------------------
+[grid]
+# A column (or row) whose water_shallow/water_uncrossable pixel fraction reaches this is a
+# candidate grid/magnetic-north/border line, not real water. Measured against
+# `data/maps/grid-lines-red-controls/map.jpeg` (I1): its 8 known grid columns plus one border
+# column range 0.338-0.898; the synthetic fixture's own noisiest column (JPEG-degraded render,
+# `test_segment.py`'s IoU floor test) never exceeds 0.145. Set to 0.25, roughly midway between
+# the two, with margin on both sides.
+span_fraction_min = 0.25
+# A candidate run wider than this (mm on paper, converted to pixels via DPI -- never hardcoded in
+# pixels, same convention as every sibling geometric tunable) is not a line: it is left classified
+# as real terrain instead. Measured: the widest real line/border run in the same scan is ~4.95mm
+# (39px @ 200dpi, the map's own border rule); set to 6.0mm for margin. Any real lake or marsh large
+# enough to clear `span_fraction_min` is, on any real map scale, far wider than this -- ADR-012's
+# own accepted edge case is a genuinely line-width river, not a lake.
+max_line_width_mm = 6.0
+# A second, image-size-independent guard: a candidate run must also be at least this many times
+# longer (image height, for a column run; width, for a row run) than it is wide. `max_line_width_mm`
+# alone is an *absolute* size, so on a small or heavily-cropped raster it can stop discriminating a
+# genuine line from a squarish blob (a 24px-wide run in a 100px-tall crop clears the width cap at
+# only ~4:1). Measured on the real scan (200dpi, 1708px tall): the 8 known grid/border columns
+# range 44:1-1708:1. Set to 10.0 for a wide margin below that and above any compact blob.
+min_elongation_ratio = 10.0
+
+# --------------------------------------------------------------------------------------------
 # Linear feature extraction (T014)
 # --------------------------------------------------------------------------------------------
 [linear]
@@ -308,13 +334,42 @@ penalty = 2.0
 # drawings and the real corpus.
 circle_diameter_mm = 6.0
 circle_diameter_tolerance = 0.35
-# Purple in HSV (OpenCV ranges: H 0-179, S 0-255, V 0-255), around ISOM purple 35_85_0_0.
-purple_hue_range = [140, 175]
+# Control/hub ink hue bands (OpenCV HSV ranges: H 0-179, S 0-255, V 0-255). A mask is the union
+# (OR) of every band listed here, all sharing the saturation/value floors below (I1, ADR-011).
+# Purple: around ISOM purple 35_85_0_0.
+# Red: measured, not guessed, from a real hand-marked scan
+# (data/maps/grid-lines-red-controls/map.jpeg, I1) -- sampled every strongly-red pixel (R channel
+# dominant over G and B by >60) and read its HSV. Saturation floor 61-255, value floor 151-255
+# (comfortably above the shared floors below); hue clusters in two bands because red straddles
+# OpenCV's H=0/179 wrap: hue 0-20 held 99% of the red-like pixels (hue=0: 12841px, hue=1: 9218px,
+# tapering off through hue=20: 1px) and 167-179 the wrapped tail (hue=179: 11236px, hue=176:
+# 781px). The low band is capped at 9, short of the full observed 0-20, because ISOM brown and
+# yellow sit right next to red in hue: `tests/fixtures/synth_map.py`'s RENDER_SRGB["brown_100"]
+# is HSV (13, 201, 190) and RENDER_SRGB["yellow_100"] is HSV (20, 191, 253) -- both fully saturated
+# enough to pass the floors below, so a band reaching hue 20 pulled contour lines and open-land
+# fill into the mask too and broke TestHubTriangleDetection (a real regression found running this
+# task's own suite). 0-9 keeps ~95% of the sampled red-ink pixels (hue<=9: 31043/32794) with a
+# clear margin below brown's hue=13.
+# Renamed from the single `purple_hue_range = [lo, hi]` this replaced (T073, ADR-011): a hand-edited
+# config file still carrying the old key name fails validation (DetectorSettings is extra="forbid")
+# rather than being silently ignored -- rename the key to ink_hue_ranges = [[lo, hi]] (a list of
+# bands, even for just one) to migrate it.
+ink_hue_ranges = [[140, 175], [0, 9], [167, 179]]
 purple_min_saturation = 60
 purple_min_value = 60
 hough_dp = 1.2
 hough_param1 = 100
 hough_param2 = 30
+# Scale multipliers `_detect_circles`/`_detect_hub_triangle` sweep the printed-size radius window
+# through (T076, ADR-015). `1.0` (the ISOM 6mm print size above, unscaled) must stay first so the
+# synthetic fixture -- printed at exact ISOM scale -- keeps matching today's window unchanged. The
+# rest cover hand-marked scans whose circles are drawn larger than print spec: measured on
+# data/maps/grid-lines-red-controls/map.jpeg (I1, ADR-011/ADR-015), the true control rings are
+# ~56px radius at 200dpi versus circle_radius_px(200)'s ~23.6px mid-radius -- a ~2.37x ratio,
+# bracketed by both 2.0 and 2.5 (2.0 is the one `_select_best_scale` actually picks on this file:
+# highest mean ring-coverage, 0.9943 vs 2.5's 0.9907 -- 2.5 is kept in the list as headroom, not
+# because it's load-bearing here).
+circle_scale_multipliers = [1.0, 1.5, 2.0, 2.5, 3.0]
 # [ISOM] symbol 704 control number: Arial 4.0 mm, non-bold, non-italic, oriented north.
 number_font_height_mm = 4.0
 # How far from the circle edge to look for the number, in circle radii.

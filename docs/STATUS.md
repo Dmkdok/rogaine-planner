@@ -3,34 +3,191 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M1 T010-T016 landed (T017 blocked on owner data); M2-M6 complete (T020-T062 landed) —
-  SPEC's whole M0-M6 scope is built and reviewed (docs/REVIEW.md, verdict PASS). M7 optional,
-  blocked on owner data (see below).
+current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 complete** (iteration I1,
+  real-scan vision robustness): T073-T076 all landed on branch `iteration/I1-real-scan-vision`,
+  independently reviewed (two review rounds, both FAIL-then-fixed — see Iteration I1 below), all 5
+  of I1's exit criteria met. Not yet merged to `master`. M7 in progress: harvest complete
+  (2026-09-04, 204 o-gps-center.ru maps, past the ~200 target, ADR-014). **T078 (per-map
+  best-effort auto-calibration, ADR-016) landed 2026-09-05** — independently reviewed, FAILed
+  (1 Critical, 4 High, 6 Medium), fixed, fix independently re-verified against the real corpus
+  (own read of the diff, own `docker compose run --rm tests` — 439 passed, own `ruff check .`, own
+  tally of all 219 `meta.toml` files, not trusted from the subagent's report). Real corpus run: 45
+  measured / 159 assumed_default / 15 out_of_scope (owner's own scans, never touched) / 1 error /
+  219 total. T070 unblocked — every in-scope map has a `meta.toml`, calibration accuracy no longer
+  gates it (scale is secondary for this corpus; see ADR-016).
 
 ## Resume here
-Branch `master`, tree clean, nothing running in the background. This session: T062 landed (closed
-M6), then a full `/review-product` pass ran against M0-M6 — **verdict PASS**, no Critical/High
-against the code itself (docs/REVIEW.md). The owner then asked for three things; none started yet
-— do them in this order:
+Branch `iteration/I1-real-scan-vision`, **tree has uncommitted changes** (T073-T076, T078 + doc
+updates — not committed this session or the one before, see `git status`/`git diff` before doing
+anything else). `docker compose run --rm tests` — 439 passed, exit 0; `ruff check .` clean
+(2026-09-05, own re-run, not trusted from any subagent report).
 
-1. **Fix S-001** (Medium, security, from docs/REVIEW.md) — `SegmentRequest.dpi` (`web/app.py:113`)
-   and `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py:122-129`) have
-   a lower bound only; an extreme `dpi` on a PDF can OOM inside `pdfium.render()` before the
-   post-decode pixel cap ever runs, and the worker's `except (ValueError, OSError)` doesn't catch
-   `MemoryError`, so the job hangs at `status: "running"` forever. Fix: add `le=` bounds (`dpi`
-   le=2400 — well above any real scan; `time_limit_s` le=86400; `heuristic_time_budget_s` le=600;
-   `alternatives` le=20 — all judgement calls, not researched against a spec number) and widen the
-   three worker `except` clauses in `web/app.py` to also catch/report unexpected errors instead of
-   leaving the job stuck. **`models.py` is a frozen contract, ADR-008 — changing its bounds needs a
-   new ADR first**, the app.py-local `SegmentRequest.dpi` does not.
-2. **Write `README.md`** (Phase 7 deliverable, SPEC's Launch checklist / PLAN's DoD): install, every
-   CLI command, config reference, route JSON schema, known limitations (no georeferencing,
-   direction-blind slope, OCR advisory).
-3. **M7 is blocked, not just optional** — re-checked this session: `rogaine corpus list` shows all
-   14 maps under `data/maps/` as not plannable (no `meta.toml` on any of them), and T070 needs "the
-   owner's 200+ scan corpus" — only 14 raw scans exist. This was already tracked under "Blocked on
-   the owner" below; it now also blocks M7 specifically, not only T017. Surface to the owner before
-   spending implementer time on T070.
+1. **Decide whether/when to commit and merge `iteration/I1-real-scan-vision` to `master`.** M8 and
+   T078 are code-complete and reviewed clean (see below) but nothing from this branch has been
+   committed — the working tree carries the changes raw. Not done automatically since committing
+   wasn't asked for.
+2. **Harvest + T078 both done** (2026-09-04/05). Harvest: self-stopped clean on "target reached
+   (205 rows)" — 204 maps in `data/maps/ogps-<id>/map.jpg`, plus the 15 owner scans = 219 total,
+   past the ~200 target (ADR-014). T078: every in-scope (`ogps-*`) map now has a `meta.toml` (45
+   measured, 159 assumed_default, 1 error) via `src/rogaine/vision/calibrate.py` — layered
+   scale-bar → grid+OCR → circle-diameter detector, `calibration_source`/`calibration_tier` flag
+   which, owner's 15 scans explicitly out-of-scope and untouched. Independently reviewed (FAIL,
+   1 Critical/4 High/6 Medium — the only plausibility guard rejected nothing real), fixed same
+   session, fix re-verified directly against the written files, not just re-reviewed on paper. Full
+   story: `docs/TASKS.md`'s T078 entry, `docs/DECISIONS.md`'s ADR-016. **T070 (tiling/mask export)
+   is next and now unblocked** — not started.
+3. **T077 filed, not started** (TASKS.md, M8): `vision/ocr.py::_ocr_crop` sizes its number-search
+   crop from the base scale only; T076 now finds real controls at non-base scales, so OCR on them
+   will crop the wrong window. Currently degrades safely (null + flagged, not a wrong guess).
+4. Still open from before I1 (docs/REVIEW.md's follow-ups):
+   - **Fix S-001** (Medium, security): `SegmentRequest.dpi` (`web/app.py:113`) and
+     `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py:122-129`) have a
+     lower bound only — an extreme `dpi` can OOM inside `pdfium.render()`, and the worker's
+     `except (ValueError, OSError)` doesn't catch `MemoryError`, so the job hangs at `"running"`
+     forever. Add `le=` bounds (`dpi` le=2400, `time_limit_s` le=86400, `heuristic_time_budget_s`
+     le=600, `alternatives` le=20 — judgement calls) and widen the worker's `except` clauses.
+     `models.py` is frozen (ADR-008) — its bounds need a new ADR first; `web/app.py`'s does not.
+   - Write root `README.md` (install, CLI commands, config reference, route JSON schema, known
+     limitations).
+   - ~~T078 needs a plan-approval pass~~ — done, 2026-09-05 (`утверждаю`). Next session: implement
+     it (TASKS.md/ADR-016 carry the full DoD).
+
+**This session hit an infrastructure issue worth knowing about**: two `Agent` (subagent) calls
+failed mid-task with `oauth_org_not_allowed` / "Your organization has disabled Claude subscription
+access for Claude Code" (one implementer run, one haiku-model harvester run). Both are `Agent`-tool
+API errors, not this project's bug. The implementer's work was not lost — its file edits persisted
+on disk despite the agent's own final report never completing, and were independently re-verified
+in this same session rather than trusted blind. A later `reviewer` subagent call in the same
+session succeeded normally, so this looks transient/intermittent rather than a hard block — but if
+a future session sees the same error, know that subagent tool calls can fail mid-task while still
+having committed real file edits before the failure; check `git status`/`git diff` for real work
+before assuming nothing happened, rather than retrying blind.
+
+## Iteration I1: real-scan vision robustness (in progress, branch `iteration/I1-real-scan-vision`)
+
+Owner found two real defects while manually trying the app on a real scan — separate from the three
+items in "Resume here" above, which are still open and unblocked by this iteration. Full intake,
+impact map and exit criteria: `docs/iterations/I1-real-scan-vision.md`. Summary:
+
+1. `vision/controls.py`'s control/hub detector only matched the fixed ISOM purple hue band
+   (`purple_hue_range=[140,175]`, `config/default.toml`) — confirmed zero controls and no hub found
+   on a real scan with 13 clearly visible red-circled numbered controls (a different ink family, not
+   a white-balance-shifted purple). Fix (ADR-011): `ink_hue_ranges` becomes a configured list;
+   shipped default gains a red band.
+2. `vision/segment.py` classified the map's grid/magnetic-north lines (thin solid verticals the full
+   height of the map, standard on orienteering maps) as `water_uncrossable` (`speed_factor=0.0`,
+   `config/default.toml:186-189`) — confirmed 5 full-height columns >30% `water_uncrossable`,
+   producing `no reachable route` for a hub/control pair straddling one, unrelated to the time
+   limit. Fix (ADR-012): shape-based reclassification to `unknown`.
+3. Consequence of (1): `render/overlay.py`'s route colour (hardcoded red, chosen because no ISOM ink
+   is red) must change too, or a route line and a real red-ink control become indistinguishable.
+
+The real scan itself moved to `data/maps/grid-lines-red-controls/map.jpeg` (gitignored per
+ADR-010, `meta.toml` there records its provenance) — it does not get committed.
+
+A third symptom from the same test session (number/points fields resetting in the web controls
+editor) was **not** part of this — root-caused to a `saveControlsNow()` race in `app.js` and fixed
+directly on `master` (commit `c2f2e1e`), outside this iteration, before this branch was cut.
+
+Progress:
+- [x] 0 baseline recorded (below)
+- [x] 1 delta intake agreed (in / out / deferred) — `docs/iterations/I1-real-scan-vision.md`
+- [x] 2 impact map written — same file
+- [x] 3 docs amended (SPEC F7 edited + F20 added, DECISIONS ADR-011/012/015, TASKS M8 T073-T076)
+- [x] GATE approved by the owner (2026-09-02 for T073-T075, «утверждаю»; 2026-09-04 for T076's
+  design, «Подтверждаю»)
+- [x] 4 implementation — T073-T076 all coded, see below. T073 alone did not meet M8's acceptance
+  criterion 1 on the real scan (fixed colour, not size); T076 closed that gap
+- [x] 5 verification green, baseline suites still green — 389 passed, `ruff check .` clean
+  (2026-09-04)
+- [x] 6 review run — **two independent review rounds, both real**: the first (2026-09-03) found
+  FAIL on T073-T075 (one Critical — the size gap T076 was opened to fix — plus two Medium, several
+  Low, all non-Critical items fixed same session, commit `675ea14`); the second (2026-09-04, on
+  T076 itself) also found FAIL on its first landed mechanism (a Critical precision bug in the
+  scale-selection tie-break, demonstrated with a synthetic adversarial case, not theorised) plus
+  several Medium/Low doc-honesty and scope items. All fixed same session — see T076's own entry in
+  TASKS.md and ADR-015's two "amendment" paragraphs in DECISIONS.md for the full account of both
+  fixes. Suite green, `ruff check .` clean, `git status` confirmed no stray files after each round
+- [x] 7 closed — all 5 of I1's exit criteria met (see docs/iterations/I1-real-scan-vision.md),
+  M8 milestone complete. Not yet committed/merged — see Resume here item 1
+
+### T073-T076 landed (2026-09-02 through 2026-09-04), each independently reviewed
+All commits are on `iteration/I1-real-scan-vision`, not yet merged to `master`; T076 itself is not
+yet committed at all (see Resume here item 1).
+
+- **T073** (`dc39046`, fixes in `675ea14`) — `DetectorSettings.purple_hue_range` ->
+  `ink_hue_ranges: list[tuple[int, int]]`; `purple_mask` unions the HSV mask across every
+  configured band, and now measurably covers 98.99% of the real scan's strict-red-ink pixels
+  (added after review). But `detect_controls` end to end does **not** find the real controls: all
+  16 raw detections are false positives on hand-written control *digit* glyphs, not the true
+  ~56px-radius rings — recall 0/13, precision 0/16, hub not found (independently re-measured this
+  session; an earlier draft of this file wrongly said recall 0.077, corrected). Root cause,
+  confirmed out of T073's scope: `circle_radius_px(dpi=200)` predicts a [15.4, 31.9]px window from
+  ISOM's 6mm printed-circle spec; this file's hand-drawn circles are ~2.3x that. See this file's
+  Notes for why this is very unlikely a DPI-metadata bug. **M8's acceptance criterion 1 ("finds the
+  map's red-circled controls, shape-filtered") was not met by T073 alone — closed by T076 below.**
+- **T074** (`a5c086c`) — new `GridSettings` (`[grid]` in `config/default.toml`) and
+  `vision/segment.py::reclassify_grid_ink`, wired into `segment()` right after `classify_palette`.
+  Landed as whole-column/whole-row water-fraction runs rather than a per-connected-component shape
+  test: real grid lines fragment into many small pieces wherever other ink crosses them (measured
+  directly against the real scan before choosing an approach), so a component-level aspect-ratio
+  test (`vision/linear.py`'s precedent) would have missed most of them. A column/row whose
+  `water_shallow`/`water_uncrossable` fraction clears `span_fraction_min` (0.25, measured: the real
+  scan's 8 grid/border columns range 0.338-0.898, the synthetic fixture's noisiest column measures
+  0.145) is a line candidate; `max_line_width_mm` (6.0mm via DPI, measured: the widest real
+  line/border run is ~4.95mm) then rejects any such run too wide to be a printed line — the guard
+  that keeps a real compact lake, whose own columns can also clear the fraction threshold, from
+  being caught by the first check alone. Measured: all 8 known columns drop from 0.338-0.898 to
+  0.000; zero pixels of the synthetic fixture change (its own IoU-floor test is unaffected). Review
+  found the width cap alone was an absolute size that stops discriminating on a small/cropped
+  raster (a 24px run in a 100px-tall image cleared it at only ~4:1 elongation) — fixed by adding
+  `min_elongation_ratio = 10.0` as a second, image-size-relative guard (`675ea14`).
+- **T075** (`20f7bed`, docstring/test fix in `675ea14`) — `_CORE_COLOR` (`render/overlay.py`)
+  changed from red (`255,36,36`, which T073 turned into a colour the map can now legitimately
+  print) to a pure magenta (`255,0,255`). Verified, not eyeballed: minimum CIELAB distance to all
+  seven forbidden inks (six ISOM + a red measured from the real scan) is ~48.3 (nearest: purple),
+  against `PaletteSettings.lab_distance_threshold`'s 35.0 bar. Review found magenta's OpenCV hue
+  (150) sits inside the widened purple band (140-175) — the Lab-distance guarantee still holds, so
+  this isn't a DoD failure, but the module docstring now states the guarantee precisely instead of
+  implying hue uniqueness, and a new test documents the overlap explicitly.
+- **T076** (ADR-015, not yet committed) — `DetectorSettings.circle_scale_multipliers` (default
+  `[1.0, 1.5, 2.0, 2.5, 3.0]`); `vision/controls.py::_detect_circles`/`_detect_hub_triangle` sweep
+  the printed-size radius window through every configured multiplier. Landed in two rounds inside
+  this one session, both driven by measurement, not guesswork: **round 1** (pool every scale's
+  ring-coverage-passing candidates, reduce with cross-scale NMS) reached recall 1.000 but precision
+  only 0.448 — the pre-existing base-scale false positives on hand-written control-number digits
+  (T073's own documented, unfixed problem) individually clear the identical 0.75 ring-coverage
+  floor a true ring does, so no per-candidate threshold or NMS pass can separate them; fixed by
+  `_select_best_scale`, which scores each multiplier by its candidates' *mean* coverage and returns
+  only the single best-scoring scale's candidates (real scan: true scale means ~0.99 vs. false
+  scale's ~0.88). **Round 2**, from independent review before landing: the mean-only rule's tie-
+  break (smallest multiplier wins ties) has its own failure mode, since ring-coverage saturates at
+  a perfect 1.0 for any solid ink blob, not only a real ring — demonstrated with a synthetic
+  adversarial map (five true rings at 2.5x losing to one perfect-mean base-scale decoy). Fixed by
+  scoring `(mean bucketed to _SCALE_TIE_EPS=0.02, candidate count)` instead, so scale *support*
+  breaks near-ties. Final, both rounds independently verified in this session (own
+  `docker compose run --rm tests`, own `ruff check .`, own `git status`, own diagnostic
+  measurements against the real scan, not trusted from either subagent's self-report): real-scan
+  recall 1.000, precision 1.000, hub found at 2.73px error. Full account, including every number
+  and the rejected alternatives: `docs/DECISIONS.md` ADR-015, `docs/TASKS.md` T076's own entry.
+  Filed T077 (OCR crop sizing, a newly-reachable but currently safely-degrading consequence) rather
+  than fixed in scope. 389 tests pass, `ruff check .` clean.
+
+Also verified end to end (not just unit-level): `rogaine plan` with hand-built controls straddling
+the real scan's grid column at x~535 (`--controls`, bypassing detection) solves and writes
+`route.json`/`route.png` normally. That specific column/row pick also succeeded with
+`reclassify_grid_ink` disabled — none of the 8 measured columns is literally 100% water at every
+row, so the graph solver can detour through a gap at some picks; the owner's original "no reachable
+route" report was against their own control placement, not reproduced exactly by this pick. The
+graph-wide measurement is the real evidence (now a permanent test,
+`TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`): connected components drop
+9463 -> 580, the giant component grows from 96.3% to 99.8% of all nodes.
+
+### Baseline I1
+Branch cut from `master` at commit `c2f2e1e` (2026-09-02), tree clean except the untracked test
+scan (later moved to `data/maps/grid-lines-red-controls/`, itself gitignored). `docker compose run
+--rm tests pytest -q` — **372 passed**, exit 0 (this pytest config prints no final summary line;
+count taken from the dot tally, all dots, zero `F`/`E`).
 
 ## Checklist
 - [x] Phase 0 intake
@@ -48,7 +205,14 @@ against the code itself (docs/REVIEW.md). The owner then asked for three things;
 
 ## Test report
 
-`docker compose run --rm tests` — **372 passed**, exit 0 (2026-09-02, includes T062's
+`docker compose run --rm tests` — **389 passed**, exit 0 (2026-09-04, branch
+`iteration/I1-real-scan-vision`, working tree — T076 not yet committed). `ruff check .` clean.
+
+Earlier: **386 passed, 1 xfailed**, exit 0 (2026-09-03, branch `iteration/I1-real-scan-vision` @
+`675ea14`; dot tally counted by script, this pytest config prints no summary line). `ruff check .`
+clean.
+
+Earlier: **372 passed**, exit 0 (2026-09-02, includes T062's
 `tests/e2e/test_viewer.py`, real headless Chromium). `docker compose run --rm tests
 pytest tests/e2e/ -v` isolated — 3 passed, 12s. `ruff check .` clean.
 
@@ -117,11 +281,61 @@ for the full list). `rogaine corpus list` reads all 14. Still open:
 - **one map with a reference route** (`reference.json`) — this is the acceptance oracle and the
   single most valuable item on the list;
 - a controls list with points for at least one map;
-- the scan DPI and map scale for each of the 14 — none has `meta.toml` yet, so none is plannable
-  (only listable) and T017 (per-map palette validation) has nothing to run against. **2026-09-02:
-  this now also blocks M7** — T070 needs "the owner's 200+ scan corpus" and only 14 raw scans
-  exist, none plannable. It also blocks SPEC's Launch checklist item "owner runs their own map
-  through both CLI and viewer and accepts the route" — no map here can do that yet.
+- the scan DPI and map scale for each of the 15 — 14 have no `meta.toml` (the 15th,
+  `grid-lines-red-controls`, is I1's regression fixture with a placeholder scale, explicitly not a
+  T017 validation entry per its own `meta.toml` comment), so none of the 14 is plannable (only
+  listable) and T017 (per-map palette validation) has nothing to run against. **2026-09-02: this
+  now also blocks M7** — T070 needs "the owner's 200+ scan corpus" and only 15 raw scans exist,
+  none plannable. It also blocks SPEC's Launch checklist item "owner runs their own map through
+  both CLI and viewer and accepts the route" — no map here can do that yet.
+
+**2026-09-02: ADR-010's "owner supplies 200+ scans" premise now has a second source** — public
+rogaine event maps scraped from o-gps-center.ru, cited (not committed; still gitignored
+`data/maps/`, no `meta.toml`, same as the owner's 15). o-gps-center.ru's `robots.txt` disallows
+crawling its `/viewer/?event_list...` search listing (only `/viewer/event/{id}/` itself is
+`Allow`ed), so the harvester walks bare event IDs directly instead of that search — the whole
+platform's event catalog (all sports, ~26,000 IDs total, not rogaine-specific), filtering titles
+for «рогейн» client-side after fetch. Time-boxed at the owner's request to a first ~12 minutes of
+sweeping: **event IDs 1-677 checked, 1 rogaine map found and downloaded**
+(`data/maps/ogps-367_180afd874454c167cddab2aa89c78354/map.jpg`, "Рогейн-2015", event 549, 3.9 MB) —
+the first ~400 IDs (platform's earliest era, ~2010-2012) had zero rogaine events, so density is
+uneven; later IDs likely score better per minute swept. **To resume:** run
+`python data/maps/_ogps_harvest.py <seconds>` from the repo root (needs network; not part of
+`src/rogaine/`, self-contained, no deps beyond the stdlib) — it reads
+`data/maps/_ogps_harvest_checkpoint.json`'s `last_id_checked` and continues forward from there
+automatically; results append to `data/maps/_ogps_harvest_manifest.csv`
+(`map_id,event_id,event_title,source_url,downloaded_at`). Rate limit ~0.4s/request, so 15 minutes
+≈ 800-900 more IDs checked. Full sweep to the ~26,000 ceiling would take several hours; not run
+yet — the owner's call whether/how much more to run. `rogaine corpus list` was not re-run this
+session (time-boxed); do that before trusting a fresh total count.
+
+**2026-09-04: owner approved continuing the harvest, explicitly targeting ~200 maps for T070**
+(M7's training corpus — beyond the 10-20 that alone would retire T017's palette-validation risk).
+ADR-014 flipped `proposed` -> `accepted` to record this. **Run mechanism changed from a Claude
+subagent to a plain background shell loop**, after two `Agent` tool calls failed mid-task with an
+org-level API error this session (see Resume here's infrastructure note) — rather than depend on
+that path working, `scratchpad/harvest_loop.sh`'s logic (written this session, not part of the
+repo) just calls `python data/maps/_ogps_harvest.py 540` in a loop and checks the manifest/
+checkpoint itself; zero LLM tokens spent while it runs. Stop conditions: 200 total maps in the
+manifest, `last_id_checked` near the ~26000 ID ceiling, ~5h cumulative run time, or two
+zero-`checked` chunks in a row (network trouble). Progress log: `data/maps/_ogps_harvest_loop.log`
+(one JSON line per ~9-minute chunk); live counts: `data/maps/_ogps_harvest_manifest.csv` (data rows
+= maps downloaded) and `data/maps/_ogps_harvest_checkpoint.json` (`last_id_checked`). Snapshot at
+the time this was written (2026-09-04 17:28 UTC, chunk density rising as later/denser ID ranges are
+swept — 7, 7, 4, 3 rogaine maps per most recent chunks): **39 maps total, `last_id_checked`=5597**.
+Check the log for the current, real number rather than trusting this snapshot — the loop was still
+running when this was written and is not supervised by any session.
+
+**2026-09-04, later same day: harvest finished, self-stopped clean.** Final line of
+`_ogps_harvest_loop.log`: `STOP: target reached (205 rows)` — 204 data rows (maps), not a dead-chunk
+or ID-ceiling stop. Verified against the filesystem, not just the manifest: 204
+`data/maps/ogps-<id>/map.jpg` directories exist, each a real downloaded JPEG (checked a sample:
+1.2-27 MB, plausible scanned-map sizes). Plus the 15 owner scans = 219 maps total. T070's volume
+blocker (ADR-010/014) is cleared. Its metadata blocker is not — see T078/ADR-016 above the fold and
+in TASKS.md: none of the 219 has a `meta.toml`, embedded JFIF `dpi` was checked and found
+untrustworthy (127/204 carry it, but 72/96 among them are indistinguishable from editor defaults),
+and the owner chose per-map scale-bar auto-calibration over guessing. T078 is filed, not
+plan-approved.
 
 **`crop_dense.png` is gone, deleted by accident, not by the owner.** It sat unexplained at repo
 root (a small cropped fragment of a real map — olive rough-open terrain, blue-hatched marsh, a
@@ -579,6 +793,70 @@ same session.
     Untracked, harmless, `git worktree remove` whenever convenient.
 - Known gap, still not acted on: `docs/status-archive.md`/`docs/tasks-archive.md` (CLAUDE.md's own
   project section describes these as where history already lives) do not exist — `STATUS.md` and
-  `TASKS.md` are both well past a session-readable size. Real restructuring work, deliberately not
-  done under time pressure in any pause so far (this one included, at the owner's own request to
-  keep this session's footprint small) — worth a session of its own.
+  `TASKS.md` are both well past a session-readable size (this file: ~61KB, 713+ lines). Real
+  restructuring work, deliberately not done under time pressure in any pause so far (this one
+  included) — worth a session of its own.
+- **2026-09-03: T073/T074/T075 (M8) coded and tested green, then an independent review found M8
+  is not actually done.** Full summary and the owner-facing decision: "Resume here" above and the
+  "T073-T075 landed" section further up. Two things worth a dedicated note so the next session
+  doesn't have to re-derive them:
+  - **Root-cause investigation for T073's real-scan failure, ruled out one hypothesis worth
+    knowing was checked.** The natural first guess for "detector's radius window is ~2.3x too
+    small for this file's true circles" is a bad DPI reading (e.g. a units mix-up — JFIF's density
+    field can mean dots/inch or dots/cm). Checked directly: `PIL.Image.open(...).info` on this file
+    reports `{'dpi': (200, 200), 'jfif_unit': 1, 'jfif_density': (200, 200)}` — `jfif_unit=1` is
+    unambiguously dots-per-inch, so there is no units bug, and the 200 DPI reading is a correct,
+    literal parse of what the file's own header states. The grid lines' pixel widths (1-3px) are
+    also consistent with a real ~200dpi scan of standard ISOM line weights. This means the true
+    explanation is almost certainly that the red circles were drawn by hand (by the owner, marking
+    up a scan) at whatever size looked clear on screen, independent of the underlying map's print
+    scale — not a metadata defect fixable by correcting one number in `meta.toml`. That reframes
+    the open decision: is "hand-circle a control at an arbitrary size" a real workflow this product
+    needs to support (needs a size-flexible detector), or is this one ad hoc fixture simply not
+    representative of what F7 promises to handle (a waiver)? Not this session's call.
+  - **Exit criterion 3 ("no reachable route" no longer happens) does not reproduce via an arbitrary
+    hub/control pick, and that is expected, not a bug.** At `graph.downsample`'s shipped default,
+    `cost/graph.py`'s `_aggregate_blocks` already treats a block as passable if even one of its
+    `downsample x downsample` pixels is passable (T031) — this bridges most single-column gaps
+    before the grid-line fix ever runs, so picking two arbitrary points straddling a column and
+    checking "does `plan` succeed" mostly proves nothing either way (confirmed: 0/72 sampled pairs
+    disconnected, pre-fix or post-fix). The fix's real, measurable effect is graph-wide: connected
+    components 9463 -> 580, giant component 96.3% -> 99.8% of all nodes (now a permanent test,
+    `TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`). The owner's original
+    report was against their own specific control placement on the unfragmented pre-fix graph,
+    which this session did not have and could not reproduce exactly — recorded here rather than
+    quietly assumed equivalent.
+- **2026-09-04: owner decided the M8 open item (Resume here item 1 as it stood that morning) —
+  "new task, size-flexible detector," not a waiver.** T076/ADR-015 designed (via the `architect`
+  subagent, plan approved by the owner, «Подтверждаю») and landed same session, closing M8's
+  acceptance criterion 1 and all 5 of iteration I1's exit criteria. Also that session: owner asked
+  for a parallel, token-minimal effort to grow the o-gps-center.ru corpus toward ~200 maps for
+  T070/M7 specifically (not just T017's smaller 10-20 need) — ADR-014 accepted. Two things worth a
+  dedicated note so a future session doesn't have to re-derive them:
+  - **T076 was built end-to-end, then independently reviewed, twice — both review passes found a
+    real, previously-undetected Critical, both fixed same session.** First: the task's own first
+    implementation attempt (pool every scale's Hough candidates, reduce by cross-scale NMS) reached
+    perfect recall but precision 0.448 on the real scan — caught by re-running the actual test
+    suite rather than trusting the (crashed, self-report-less) implementer's work at face value.
+    Second: after fixing that with a mean-coverage scale-selection rule, an independent `reviewer`
+    subagent pass found the mean-only rule's tie-break could still lose every true circle to one
+    lucky perfect-coverage false positive at the wrong scale — demonstrated with a constructed
+    adversarial test image, not just argued. Both fixes, their measurements, and the rejected
+    intermediate designs are recorded in `docs/DECISIONS.md` ADR-015 and `docs/TASKS.md`'s T076
+    entry — read those for the full technical account rather than this summary. The general lesson
+    this session drew from it, worth keeping in view: a design that looks sound and passes the one
+    real fixture available can still hide a demonstrable failure mode one adversarial test case
+    away — independent review that actually tries to break the code, not just re-reads it, found
+    real bugs twice in a row here.
+  - **Two `Agent` (subagent) tool calls failed mid-task this session with an org-level API error**
+    (`oauth_org_not_allowed`, "Your organization has disabled Claude subscription access for Claude
+    Code") — one `implementer` run (T076's first attempt), one `haiku`-model harvester run. Neither
+    was a project bug. The implementer's file edits survived the crash (edits are applied to disk
+    immediately, independent of whether the agent's own turn completes) and were treated as
+    unverified until independently re-run and re-tested in this same session, not trusted from a
+    silent/absent self-report. The harvest task was moved to a plain background shell loop instead
+    of retrying the subagent path (see "Blocked on the owner" above). A later `reviewer` subagent
+    call in the same session completed normally, so this looks transient rather than a hard,
+    permanent block — but a future session hitting the same error should know real work can precede
+    it (check `git status`/`git diff`), and that falling back to a direct/non-agent approach for a
+    mechanical task (like the harvest loop) is a reasonable, tested way to make progress around it.

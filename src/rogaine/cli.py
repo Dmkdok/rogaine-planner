@@ -28,7 +28,7 @@ from rogaine.cost.field import compute_cost_field
 from rogaine.cost.graph import build_grid_graph
 from rogaine.cost.travel import build_travel_matrix
 from rogaine.io.controls_csv import read_controls, write_controls
-from rogaine.io.corpus import list_corpus, read_entry
+from rogaine.io.corpus import CorpusEntry, list_corpus, read_entry
 from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.io.route_json import write_route_json
 from rogaine.io.scale import Calibration, mpp_from_dpi
@@ -89,6 +89,7 @@ def corpus_list(
     table.add_column("id")
     table.add_column("m/px", justify="right")
     table.add_column("plannable", justify="center")
+    table.add_column("scale source")
     table.add_column("missing / problems")
 
     for entry in entries:
@@ -98,9 +99,24 @@ def corpus_list(
             entry.map_id,
             mpp,
             "[green]yes[/]" if entry.is_plannable else "[red]no[/]",
+            _scale_source(entry),
             "; ".join(notes) if notes else "[green]complete[/]",
         )
     console.print(table)
+
+
+def _scale_source(entry: CorpusEntry) -> str:
+    """How an entry's scale was obtained -- surfaces T078/ADR-016's `calibration_source` (and, for
+    a "measured" one, which tier) so a human looking at the CLI sees when a map's scale is a
+    fabricated corpus default rather than a real measurement, instead of a plannable map with no
+    visible hint either way.
+    """
+    if entry.calibration_source == "assumed_default":
+        return "[yellow]assumed default[/]"
+    if entry.calibration_source == "measured":
+        tier = entry.calibration_tier or "?"
+        return f"measured ({tier})"
+    return "-"
 
 
 @corpus_app.command("check")
@@ -119,6 +135,7 @@ def corpus_check(
     console.print(f"  raster:     {entry.raster or '[red]missing[/]'}")
     console.print(f"  scale:      {entry.scale_denominator or '-'} at {entry.dpi or '-'} dpi")
     console.print(f"  calibrated: {'yes' if entry.calibration else 'no'}")
+    console.print(f"  scale src:  {_scale_source(entry)}")
     mpp = entry.meters_per_pixel
     console.print(f"  m/px:       {f'{mpp:.4f}' if mpp else '[red]unknown[/]'}")
     console.print(f"  controls:   {'controls.csv' if entry.has_controls else 'none (detect)'}")

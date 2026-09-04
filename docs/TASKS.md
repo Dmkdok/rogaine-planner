@@ -1,6 +1,6 @@
 # Tasks
 
-Requirement IDs (F1-F19) refer to [SPEC.md](SPEC.md). Workstreams (WS-A vision, WS-B routing,
+Requirement IDs (F1-F20) refer to [SPEC.md](SPEC.md). Workstreams (WS-A vision, WS-B routing,
 WS-C delivery) and owned paths come from [PLAN.md](PLAN.md) — no two open tasks share a path.
 
 ## M0 — Scaffold, contract, synthetic fixture
@@ -874,14 +874,248 @@ the implementer's self-report.
 
 ## M7 — Optional, only after the owner accepts the route
 
-- [ ] T070 — Tiling and mask export — paths: `ml/dataset.py` — deps: T016, T017 —
-  DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over the owner's
-  200+ scan corpus, with rotation, blur and JPEG augmentation, matching the article's data recipe;
-  tiles whose `unknown` fraction exceeds a threshold are dropped rather than taught as noise;
-  train/val split is by source map, never by tile, so the same map cannot appear on both sides.
+- [x] T078 — Per-map best-effort auto-calibration for the M7 corpus (ADR-016) — **plan approved
+  2026-09-05 (`утверждаю`); implemented, independently reviewed (FAIL: 1 Critical/4 High/6
+  Medium), fixed same day, re-verified against the real corpus — done** — paths:
+  `src/rogaine/vision/calibrate.py` (new), `src/rogaine/io/corpus.py`, `src/rogaine/cli.py`,
+  `data/README.md` — reuses `io/scale.py`'s `Calibration`/`mpp_from_dpi`, `vision/ocr.py`'s
+  text-crop patterns, and `vision/controls.py`'s `purple_mask` (T073-T076, ADR-011/012/015) —
+  deps: harvest volume (done, 2026-09-04: 204 maps, ADR-014).
+  Scale is secondary here — T070's corpus exists to improve object/content recognition, not
+  distance accuracy; a real end user's own map is still calibrated manually (SPEC F3,
+  `io/scale.py::Calibration`), unaffected by this task.
+  DoD, per map in `data/maps/`, tried in order (first hit wins), reusing `Calibration` throughout,
+  no new maths:
+  1. printed graphical scale bar (ruler with metre-labelled ticks) → `meters_per_pixel` directly;
+  2. coordinate/magnetic-north grid spacing, accepted **only** when cross-validated against an
+     OCR'd scale-ratio text on the same map (grid alone can't tell a real coordinate grid from
+     arbitrarily-spaced magnetic-north lines);
+  3. control-circle diameter (`config.circle_diameter_mm`) as fallback/cross-check only, never
+     primary (organiser-to-organiser size variance, ADR-015's own documented limitation).
+  When none hit (expected majority, see ADR-016's corpus survey), do not exclude the map: write a
+  real `meta.toml` with `dpi`/`scale_denominator` set to the median of this run's successful
+  measurements, plus `calibration_source = "measured"` or `"assumed_default"` so the two are
+  machine-distinguishable downstream (needed later for relief/terrain work, out of scope now).
+  Report counts (measured / assumed-default / total) at the end of the run.
+
+  **Landed 2026-09-05, fixed after independent review the same day (below) — this note describes
+  the fixed state.** `src/rogaine/vision/calibrate.py`: three detectors (`detect_scale_bar`,
+  `detect_grid_calibration`, `detect_circle_dpi`) + `calibrate_map` (tier priority) +
+  `calibrate_corpus`/`CorpusCalibrationReport` (the per-run orchestrator, scoped to
+  `name_prefix="ogps-"` by default, with a `refresh` flag to redo its own past output). Every tier
+  now requires `ocr_scale_denominator` before it can fire at all — tier 1 originally did not, the
+  review's Critical finding's root cause — and every tier's candidate passes through one shared
+  plausibility guard (`_accept`: implied dpi in [72, 1200], implied course extent in [1.5, 40]km,
+  and, tier 3 only, implied printed-sheet size in [100, 2000]mm) before being trusted, replacing
+  the original `_PLAUSIBLE_MPP` (a per-pixel ratio that rejected nothing physically real).
+  `src/rogaine/io/corpus.py`: additive `CorpusEntry.calibration_source`/`calibration_tier: str |
+  None`, informational only — `is_plannable`/`meters_per_pixel` don't read either.
+  `src/rogaine/cli.py`: `corpus list`/`corpus check` now surface both fields, so a human looking at
+  the CLI no longer sees a "plannable" map with no hint its scale is fabricated. `data/README.md`:
+  corrected `meta.toml` example (`calibration_source`/`calibration_tier` are top-level keys, not
+  nested inside `[calibration]`). `tests/unit/vision/test_calibrate.py`: rewritten around the fixed
+  API — the shared guard, the regex bound, per-tier detection (including a direct regression test
+  for the exact false positive the review found), priority/short-circuiting, corpus-run
+  orchestration, scoping, and refresh. `docker compose run --rm tests`: full suite green (exit 0).
+  `ruff check .` clean.
+
+  Real end-to-end run against `data/maps/` (219 directories) — every `meta.toml` the flawed first
+  version had written was deleted first (identified by its own `calibration_source` key, so the
+  one genuinely owner-authored file was left untouched), then the fixed detector re-ran from
+  scratch: **45 measured (1 scale_bar, 9 grid, 35 circle) / 159 assumed_default / 0 skipped / 15
+  out_of_scope (the owner's own T017 validation scans, e.g. `data/maps/michurinskoe` — never
+  touched, per the review's scoping finding, verified directly: zero of them carry a
+  `calibration_source` key) / 1 error (one `ogps-*` raster failed to decode, now visible via
+  `CorpusCalibrationReport.errors` instead of silently reading as "no signal") / 219 total**. Both
+  of the review's own cited false positives (`ogps-7212...`, `ogps-8043...`) now correctly fall to
+  `assumed_default` — spot-checked directly against the written files, not assumed. Measured rate:
+  22% (45/204 in-scope maps), down from the flawed run's unscoped 59/219 (27%) — not a regression:
+  that number mixed in owner-scan hits the fixed run no longer processes at all, plus candidates
+  the shared guard now correctly rejects. Judgement calls this task made where ADR-016 left
+  specifics implicit are documented in `calibrate.py`'s own module docstring, updated post-fix
+  (grid interval assumed 1000m; grid detection is vertical-lines-only, unconfirmed either way on
+  this corpus; OCR runs English only, no `tesseract-ocr-rus` in the image; literal fallback
+  `scale_denominator` constant never exercised on the real corpus; the plausibility bounds
+  themselves are this module's own judgement, not a cited standard).
+
+  **Independent review 2026-09-05: FAIL, then fixed** (1 Critical, 4 High, 6 Medium — two findings
+  independently re-verified by the reviewer against the real `meta.toml` files before being sent
+  back, not a rubber stamp; all addressed below, then the fix itself re-verified against the real
+  corpus, not just re-reviewed on paper). C1 (no working plausibility guard, confirmed 10/59
+  "measured" maps physically implausible — e.g. an implied 0.44x0.59km course, a 1790dpi scan —
+  plus no refresh path so a corrected re-run was a no-op) → the shared `_accept` guard described
+  above, plus `calibrate_corpus(..., refresh=True)`. H1 (tier 2's "cross-validated against OCR"
+  never actually compared the two numbers, only checked a ratio existed somewhere on the map) →
+  `_implied_dpi` now checked against `_accept` for every tier, not a presence check. H2 (tier
+  written only as a TOML comment, invisible to `tomllib`) → `calibration_tier` is a real, parsed
+  key. H3 (assumed-default fallback pooled tier 3's dpi only, not "this run's successful
+  measurements" as the DoD says) → all three tiers' dpis pool now. H4 (blanket exception handling
+  hid a systemic failure, e.g. Tesseract missing, as an ordinary hard corpus) →
+  `CorpusCalibrationReport.errors`, plus `pytesseract.TesseractNotFoundError` specifically no
+  longer swallowed inside the OCR helpers. M1 (this note's own tier tallies didn't sum) →
+  corrected above with the real post-fix numbers. M2 (`data/README.md` example nested
+  `calibration_source` inside `[calibration]`, silently unparsed by `read_entry`'s top-level
+  lookup) → moved to a top-level key. M3 (`_SCALE_RATIO_RE` unbounded, accepted a decimal point) →
+  digit-anchored, `:`-only, range-checked (2000-100000). M4 (`calibration_source`/tier invisible in
+  the CLI) → surfaced in both `corpus list` and `corpus check`. M5 (the owner's 15 validation scans
+  share `data/maps/` with the scraped corpus; 14 of them got written to) → `calibrate_corpus`'s
+  `name_prefix` scopes it to `ogps-*` by default; every `meta.toml` the flawed run had written to
+  an owner scan was deleted and the owner directories now carry zero T078 output (verified
+  directly, not assumed). M6 (the write pass had no exception guard, so one `OSError` would
+  half-write the corpus) → wrapped per-directory, counted in `errors`. The judgement-call docstring
+  gaps the review asked for are folded into `calibrate.py`'s module docstring alongside the fix
+  that resolved each one, except the one still-true limitation (grid detection is vertical-lines-
+  only) which is flagged as a real, unresolved limitation, not fixed away.
+- [ ] T070 — Tiling and mask export — paths: `ml/dataset.py` — deps: T016, T017, T078 —
+  Corpus volume resolved 2026-09-04: 204 o-gps-center maps (ADR-014) + 15 owner scans, past the
+  200+ ADR-010 assumed. Runs over T078's output — every map gets a `meta.toml` (measured or
+  flagged assumed-default), so this task is never blocked on calibration accuracy, only on T078
+  having run.
+  DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over the
+  T078-processed corpus, with rotation, blur and JPEG augmentation, matching the article's data
+  recipe; tiles whose `unknown` fraction exceeds a threshold are dropped rather than taught as
+  noise; train/val split is by source map, never by tile, so the same map cannot appear on both
+  sides.
 - [ ] T071 — SegFormer training — paths: `ml/train.py` — deps: T070 —
   DoD: MiT-B4 fine-tune with CE + Dice + Lovasz and rare-class weights, mixed precision, batch sized
   for 8 GB VRAM; per-class IoU reported on a held-out split.
 - [ ] T072 — Inference path — paths: `ml/infer.py`, `src/rogaine/vision/segment.py` (backend switch)
   — deps: T071 — DoD: `--segmenter palette|segformer`; palette stays the default; the CPU-only path
   keeps working without torch installed.
+
+## M8 — Real-scan vision robustness (Iteration I1, `docs/iterations/I1-real-scan-vision.md`)
+
+> Two real defects found by the owner's manual testing, not by audit or spec gap. T073 is the one
+> shared-primitive dependency (`config.py`'s renamed field) — T074 and T075 do not depend on each
+> other, but T075 depends on T073's shipped default existing before its colour-distance check means
+> anything. T076 is a third defect, found only while landing T073 itself (ink colour and circle
+> size turned out to be two independent problems on the same real scan) — deps T073.
+
+- [x] T073 — Configurable control-ink hue bands (F7, ADR-011) — paths: `src/rogaine/config.py`,
+  `config/default.toml`, `src/rogaine/vision/controls.py`,
+  `tests/unit/vision/test_controls.py` — deps: none — DoD: `DetectorSettings.purple_hue_range`
+  renamed to `ink_hue_ranges: list[tuple[int,int]]`; `purple_mask` unions the mask across every
+  configured band; shipped `config/default.toml` carries the existing purple band plus a red band
+  measured against `data/maps/grid-lines-red-controls/map.jpeg` (not guessed); the fixture-based
+  F7 floor (recall ≥0.95, precision ≥0.90, centre error ≤ quarter radius) is unchanged;
+  `test_rejects_a_saturated_non_purple_colour` rewritten to assert against a colour outside both
+  configured bands; a new test (skipped if the file is absent) confirms `detect_controls` finds the
+  real scan's red-ink controls. **Partially landed, checkbox left open** (commits dc39046, fixes in
+  675ea14): the mask-widening half is done and independently verified (`purple_mask` covers 98.99%
+  of the real scan's strict-red-ink pixels), but `detect_controls` end to end still does not find
+  the real controls — all 16 raw detections are false positives on hand-written digit glyphs, not
+  the true ~56px-radius rings (recall 0/13, precision 0/16, hub not found; an earlier, wrong
+  "recall 0.077" was corrected after independent review). Root cause, confirmed out of this task's
+  scope: `circle_radius_px(dpi=200)` predicts a window from ISOM's 6mm spec that is ~2.3x too small
+  for this file's hand-drawn circles — not a DPI-metadata bug (see docs/STATUS.md's Notes).
+  **Gap closed by T076/ADR-015 (2026-09-04)**: `circle_scale_multipliers` finds the true rings at
+  the correct scale; the real-scan test now passes recall 1.000, precision 1.000, hub found. M8's
+  acceptance criterion 1 is met.
+- [x] T074 — Grid-line shape exclusion in segmentation (F20, ADR-012) — paths:
+  `src/rogaine/vision/segment.py`, `tests/unit/vision/test_segment.py` — deps: none — DoD: a new
+  shape-based pass after `classify_palette` reclassifies extreme-elongated near-full-height/width
+  `water_shallow`/`water_uncrossable` components to `unknown`; F4's existing fixture IoU floors are
+  unchanged; a new test (skipped if the file is absent) confirms the five known grid columns in
+  `data/maps/grid-lines-red-controls/map.jpeg` drop from >30% `water_uncrossable` to ~0%, and that a
+  compact water body still classifies as `water_uncrossable`. Landed as whole-column/whole-row
+  water-fraction runs (`GridSettings.span_fraction_min`/`max_line_width_mm`,
+  `vision/segment.py::reclassify_grid_ink`) rather than a per-connected-component test — real grid
+  lines fragment into many small pieces where other ink crosses them, confirmed by measurement, so
+  a component-level shape test would have missed most of them. All 8 known grid columns (not 5 —
+  the real count once measured) drop from 0.338-0.898 to 0.000; fixture unaffected (0 pixels
+  changed, noisiest column measures 0.145 against the 0.25 threshold). Independent review found
+  `max_line_width_mm` alone (an absolute size) stops discriminating a line from a blob on a small
+  or cropped raster; fixed by adding `min_elongation_ratio = 10.0` as a second, image-relative
+  guard, plus a graph-connectivity test (9463 -> 580 connected components on the real scan) as the
+  real evidence for exit criterion 3, which does not reproduce via an arbitrary hub/control pick
+  (block-level graph passability already bridges most single-column gaps). See commits a5c086c,
+  675ea14.
+- [x] T075 — Route-overlay colour distinct from all seven forbidden inks — paths:
+  `src/rogaine/render/overlay.py`, `tests/unit/render/test_overlay.py` — deps: T073 — DoD:
+  `_CORE_COLOR` replaced with a value verified (via `config.cmyk_to_srgb`, not eyeballed) distinct
+  from all six ISOM inks plus red; existing pixel-sampling tests pass unchanged (they import
+  `_CORE_COLOR` rather than hardcoding it); one new test asserts the measured distance. Landed as
+  a pure magenta (255,0,255), min CIELAB distance ~48.3 to all seven forbidden inks (nearest:
+  purple) against the 35.0 threshold. See commit 20f7bed.
+- [x] T076 — Size-flexible control-circle/hub detection (F7, ADR-015) — paths:
+  `src/rogaine/config.py`, `config/default.toml`, `src/rogaine/vision/controls.py`,
+  `tests/unit/vision/test_controls.py` — deps: T073 — DoD: new
+  `DetectorSettings.circle_scale_multipliers: list[float]` (min_length=1, all > 0), shipped default
+  `[1.0, 1.5, 2.0, 2.5, 3.0]` in `config/default.toml`, comment citing the measured real-scan ratio
+  (~56px true radius vs ~23.6px `circle_radius_px(200)` mid-radius, ~2.37x, T073's own finding);
+  `_detect_circles` runs Hough once per multiplier against the scaled `(r_min, r_max)` window and
+  gates each pass's candidates through the existing unmodified `_ring_coverage` (same threshold,
+  same band fraction); `_detect_hub_triangle` sweeps the same multiplier list for `expected_side`,
+  selecting the best match across scales by normalised relative error (`diff / max_diff`), not raw
+  pixel diff. No change to `_ring_coverage`, `_RING_COVERAGE_MIN`/`_RING_COVERAGE_BAND_FRACTION`,
+  or `hough_dp`/`hough_param1`/`hough_param2` — the false-positive guard is reused unmodified at
+  every scale, never retuned. Fixture F7 floor unchanged (recall ≥0.95, precision ≥0.90, centre
+  error ≤ quarter radius) — `TestRecallPrecisionOnFixture` and `TestHubTriangleDetection` pass with
+  no test edits. The real-scan test loses its `xfail(strict=True)` marker and passes for real
+  against `data/maps/grid-lines-red-controls/map.jpeg` (recall 1.000, precision 1.000, hub found) —
+  skipped outright, not xfailed, when the file is absent (ADR-010's reproducibility rule,
+  unchanged). A new synthetic unit test (`TestSingleScaleSelected`, no real scan needed, renamed
+  from this task's first draft's `TestCrossScaleCircleDedup`) exercises the structural guarantee
+  directly: one true ring sized for multiplier 1.0 (also inside multiplier 1.5's overlapping
+  window) must yield exactly one `_detect_circles` candidate.
+
+  **Landed differently from this task's own first draft, after measurement — see ADR-015's
+  "Landed mechanism" note for the full account.** The originally planned mechanism (pool every
+  scale's ring-coverage-passing candidates, reduce with cross-scale non-max suppression) was
+  actually built first and independently re-verified end to end against the real scan before
+  being accepted: recall reached 1.000 (all 13 rings found, confirming the core multi-scale idea
+  works) but precision was only 0.448 (29 raw detections, 16 false) — the pre-existing base-scale
+  false positives on hand-written control-number digits (T073's own documented, unfixed problem;
+  the real-scan test was `xfail` precisely because of this) each individually clear the same 0.75
+  ring-coverage floor a true ring does, so pooling-then-NMS only ever collapses duplicates of the
+  *same* physical ring across scales — it does not and structurally cannot remove a distinct false
+  feature found at a different scale. Diagnosed by measuring every scale's candidates and their
+  mean ring-coverage independently (real scan): the true scale (2.0x) averaged 0.994 while the
+  false-prone base scale (1.0x) averaged only 0.881, despite every individual candidate on both
+  sides clearing the identical 0.75 floor — comparing scales *as sets* separates what no
+  per-candidate threshold can. Fixed by replacing pool+NMS with `_select_best_scale`: compute each
+  multiplier's candidates and mean coverage, keep only the single highest-mean multiplier's
+  candidates (ties keep the smaller multiplier). This also makes the separate NMS step
+  unnecessary — cross-scale duplication is structurally impossible once only one scale's output is
+  ever returned, so `_cross_scale_nms` was replaced rather than kept alongside the new selection.
+  Known, explicitly out-of-scope limitation of the landed design (also in ADR-015): a map mixing
+  ISOM-printed and oversized hand-drawn circles at more than one true scale would lose the
+  minority scale's real circles along with the losing scale's noise — no such map exists in this
+  project's corpus to design or test against.
+
+  **Independent review before this landed found one further Critical (C-1): the mean-only
+  selection rule above has its own failure mode.** `_ring_coverage` saturates at exactly 1.0 for
+  *any* candidate sitting inside a solid ink blob, not only a genuine ring, so two scales tying at
+  a perfect mean is the normal case, not a rare edge case — and a bare `mean_a > mean_b` comparison
+  hands every such tie to the smallest multiplier (sweep order), which can be the wrong one.
+  Demonstrated by the reviewer, not theorised: a synthetic map with five true rings at multiplier
+  2.5 plus one incidental filled purple blob at multiplier 1.0 lost all five true rings to the one
+  perfect-mean decoy. Fixed (same session) by scoring `(mean coverage bucketed to
+  `_SCALE_TIE_EPS`=0.02, candidate count)` instead of raw mean: a meaningfully higher mean still
+  wins outright, but among scales close enough to call a tie, the one with more corroborating
+  candidates wins. Real scan's own selection unaffected (still multiplier 2.0, 13/13 recall and
+  precision). New permanent regression test: `TestOversizedRingsBeatABaseScaleDecoy`. Review's
+  other findings, all addressed: `docs/STATUS.md` rewritten to the post-T076 state (was a day
+  stale, still describing the pre-T076 failure as unresolved); T077 filed below for the
+  `vision/ocr.py::_ocr_crop` base-scale-only crop sizing (was flagged but not filed); iteration
+  I1's exit criterion 3 reworded to state what was actually demonstrated (graph-wide fragmentation
+  fix) rather than the literal, never-reproduced "no reachable route" wording; one clarifying
+  sentence added to ADR-015 on why `_detect_hub_triangle` keeps its original per-candidate
+  selection rather than the same set-level one (a hub is a single expected symbol, so there is no
+  "many corroborating candidates" signal to weigh — review tried to break it with a base-scale
+  decoy triangle and could not, true hub won at 0.996 confidence).
+
+  389 tests pass (386 baseline + the real-scan test converting from xfailed to a real pass + 2 new
+  tests), `ruff check .` clean.
+- [ ] T077 — Scale-aware OCR crop sizing — paths: `src/rogaine/vision/ocr.py` — deps: T076 — DoD:
+  `_ocr_crop` (or its caller) sizes the number-search crop and ring-erase disk from the actual
+  matched circle's fitted radius/scale, not `circle_radius_px(dpi)` at the base scale unconditionally
+  — `Control` (T020's output, `models.py`, frozen per ADR-008) carries no matched-radius field
+  today, so this likely needs either a new non-frozen carrier between `detect_controls` and
+  `read_control_numbers`, or a `models.py` amendment (needs its own ADR first, ADR-008). Filed by
+  T076/ADR-015 after real-scan detection started finding controls at non-base scales for the first
+  time: OCR on any such control crops with the base scale's (too small) window, likely missing the
+  digits. Degradation is currently safe (`min_ocr_confidence` gate → `number=None` + flag, F8's
+  "never silently guessed" holds) but untested at non-base scale — DoD should include a real-scan
+  regression test once this lands (`data/maps/grid-lines-red-controls/map.jpeg`'s 13 controls all
+  land at multiplier 2.0 per T076, a real fixture for exactly this gap).

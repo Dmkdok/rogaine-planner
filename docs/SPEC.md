@@ -49,7 +49,7 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 | F4 | Classify every pixel into the ISOM terrain classes (open land, rough open, runnable forest, slow-run green, walk green, fight green, marsh, uncrossable water, shallow water, bare rock, paved road, road, vehicle track, footpath, out-of-bounds, contour, unknown) | On the synthetic fixture with known ground truth: per-class IoU at least 0.95 for area classes and 0.80 for linear classes |
 | F5 | Recover linear features (roads, tracks, paths) as connected corridors, not scattered black pixels | On the fixture, a path drawn end-to-end is recovered as one connected component covering at least 90% of its length |
 | F6 | Derive a slope penalty from contour density, without reconstructing elevation | Contour-dense regions cost strictly more to traverse than flat regions of the same terrain class; the coefficient is config-driven |
-| F7 | Detect control circles (purple, ISOM 5-6 mm) and the start marker | On the fixture: recall at least 0.95, precision at least 0.90, centre error at most a quarter of the circle radius |
+| F7 | Detect control circles (ISOM 5-6 mm at the base scale, or a larger hand-drawn size within `config/default.toml`'s `[detector].circle_scale_multipliers` range, in any ink colour listed in the same file's `[detector].ink_hue_ranges` — purple by default, plus others as real scans require) and the start marker | On the fixture: recall at least 0.95, precision at least 0.90, centre error at most a quarter of the circle radius. On a real scan whose controls use a configured non-purple ink and/or an oversized hand-drawn circle within the configured scale range (I1, `data/maps/grid-lines-red-controls/`): recall at least 0.90, precision at least 0.90, hub found |
 | F8 | Read control numbers and derive points | OCR per control; points rule configurable (first_digit, constant, or from CSV). Unreadable numbers are emitted with null points and flagged, never silently guessed |
 | F9 | Import/export controls as CSV (`id,x,y,number,points,confidence`) | Round-trip is lossless; a hand-edited CSV overrides detection entirely |
 | F10 | Build a per-pixel travel-time field, `t = mpp / (v_base * k_terrain * k_slope)` | Impassable classes are excluded from the graph; the graph is 8-connected with sqrt(2) diagonal weighting |
@@ -62,6 +62,7 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 | F17 | Local web viewer: upload, calibrate, edit controls, run, inspect, export | A Playwright script completes the full flow on the fixture map with no manual steps |
 | F18 | Every tunable (terrain coefficients, slope factor, circle radius range, solver budgets, penalty) lives in one config file, overridable per run | Changing a coefficient in the config changes the route with no code edit |
 | F19 | Deterministic runs | Same inputs and same seed produce byte-identical JSON |
+| F20 | Non-terrain map ink (grid lines, magnetic-north lines) is never misread as a real terrain feature | On a real scan with full-height grid lines (I1, `data/maps/grid-lines-red-controls/`): the grid columns classify as `unknown`, not `water_uncrossable`; a real water body in the same fixture family still classifies as water |
 
 ## Non-functional
 - Performance on a 4000x3000 map at 1:10000, CPU only: segmentation at most 30 s, all-pairs travel
@@ -98,7 +99,8 @@ None. No external APIs, no VLM, no telemetry.
    photos. Mitigation: white-balance and illumination normalisation before classification; the
    optional SegFormer milestone exists precisely for this, trained on palette-generated masks.
 2. **Map text and symbols pollute the terrain classes.** Black numbers and symbols look like rock or
-   path. Mitigation: size and elongation filters plus an `unknown` class filled from its neighbourhood.
+   path; grid/magnetic-north lines read as water by colour alone (I1, F20). Mitigation: size and
+   elongation filters plus an `unknown` class filled from its neighbourhood.
 3. **Contour density is a proxy, not a slope.** It cannot tell uphill from downhill, so route
    direction does not change cost. Accepted for v1 and stated in the output.
 4. **OCR of control numbers is the most fragile step.** Mitigation: it is never load-bearing — points

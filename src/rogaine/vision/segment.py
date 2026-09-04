@@ -15,6 +15,13 @@ whatever `contour`-labelled pixels remain, which the road split never touches (l
 ever rewrite pixels the palette called `road`) -- running it last simply matches the pipeline order
 in `docs/PLAN.md`'s architecture diagram.
 
+:func:`reclassify_grid_ink` (T074, F20, ADR-012) runs between those last two: it must see
+`classify_palette`'s raw water classes before anything downstream treats them as real water.
+`extract_linear_features` only ever rewrites pixels the palette called `road`, never `road`'s own
+water-class siblings, so the two passes are independent in practice -- but this is the order
+ADR-012 states, and it is the one that lets `reclassify_grid_ink` see the palette's classification
+untouched by any later stage.
+
 `dpi` and `meters_per_pixel` are both required here, independently, because neither derives from
 the other: `dpi` is scan resolution, needed to convert this config's millimetre-based tunables
 (stroke widths, blur sigma) into pixels for `extract_linear_features` and `contour_density`;
@@ -67,9 +74,100 @@ def segment(
     cfg = config or default_config()
     normalized = normalize(image)
     labels = classify_palette(normalized, cfg)
+    labels = reclassify_grid_ink(labels, dpi, cfg)
     labels = extract_linear_features(labels, dpi, cfg)
     density = contour_density(labels, dpi, cfg)
     return TerrainMap(labels=labels, contour_density=density, meters_per_pixel=meters_per_pixel)
+
+
+def _true_runs(flags: np.ndarray) -> list[tuple[int, int]]:
+    """Inclusive ``(start, end)`` index pairs of every contiguous ``True`` run in a 1-D boolean
+    array, vectorised (no Python loop over indices).
+    """
+    padded = np.concatenate(([False], flags, [False]))
+    edges = np.diff(padded.astype(np.int8))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1) - 1
+    return list(zip(starts.tolist(), ends.tolist(), strict=True))
+
+
+def reclassify_grid_ink(
+    labels: np.ndarray, dpi: float, config: AppConfig | None = None
+) -> np.ndarray:
+    """Reclassify grid/magnetic-north/border-rule ink misread as water to `unknown` (T074, F20,
+    ADR-012).
+
+    Real orienteering maps print thin solid lines (a UTM/magnetic-north grid, the map's own border
+    rule) that can sit close enough to the water reference colour to be classified
+    `water_shallow`/`water_uncrossable` (confirmed on a real scan, `docs/STATUS.md`, I1). Left
+    alone, a full-height column of `speed_factor 0.0` slices the routable graph into disconnected
+    strips.
+
+    Rather than a per-connected-component shape test (`vision/linear.py`'s precedent),
+    this looks at whole-column and whole-row coverage: for each column, what fraction of its
+    pixels (over the image's full height) are one of the two water classes, and symmetrically for
+    each row over the full width. A real grid/border line is solid enough, and near enough the full
+    height or width, to spike this fraction (measured 0.338-0.898 across 9 columns of the real
+    scan named above); real water bodies never come close on the synthetic fixture used to floor
+    this pipeline's other tests (measured max 0.145) -- see `config/default.toml`'s `[grid]`
+    section for the exact numbers this threshold is picked from. Two narrower checks then reject a
+    run that clears the fraction but is not actually line-shaped: `GridSettings.max_line_width_mm`
+    rejects a run *wider* than any real printed line (a lake or marsh large enough to clear the
+    fraction threshold is, at any real map scale, far wider than that); `min_elongation_ratio`
+    independently requires the run to be many times longer (the image's own height or width) than
+    it is wide -- `max_line_width_mm` alone is an *absolute* size, so on a small or heavily-cropped
+    raster it stops discriminating a line from a squarish blob (see `GridSettings`'s own docstring
+    for the measured numbers). Together these are what keep a compact water body's own columns from
+    being caught by the fraction check alone (the non-negotiable this task's own DoD states).
+
+    Only pixels the palette actually called `water_shallow`/`water_uncrossable` are ever touched --
+    a column or row flagged as a line does not drag its non-water neighbours along, the same
+    "rejected components become `unknown`, not the whole bounding box" discipline
+    `extract_linear_features` already follows.
+
+    The column pass and the row pass both test against the *same* original water mask, not against
+    each other's output -- deliberately: reading an already-partially-reclassified array would make
+    the result depend on which pass happens to run first, for no benefit (a pixel either passage
+    would flag is flagged either way; nothing here depends on running both to convergence).
+    """
+    if labels.ndim != 2:
+        raise ValueError(f"expected an (H, W) labels array, got shape {labels.shape}")
+    if labels.dtype != np.uint8:
+        raise ValueError(f"expected uint8 labels, got {labels.dtype}")
+    if not dpi > 0:
+        raise ValueError(f"dpi must be positive, got {dpi}")
+
+    cfg = config or default_config()
+    grid = cfg.grid
+
+    water_lbls = (
+        terrain_label(TerrainClass.WATER_SHALLOW),
+        terrain_label(TerrainClass.WATER_UNCROSSABLE),
+    )
+    mask = np.isin(labels, water_lbls)
+    out = labels.copy()
+    if not mask.any():
+        return out
+
+    unknown_lbl = terrain_label(TerrainClass.UNKNOWN)
+    height, width = mask.shape
+    max_width_px = grid.max_line_width_px(dpi)
+
+    col_frac = mask.sum(axis=0) / height
+    for start, end in _true_runs(col_frac >= grid.span_fraction_min):
+        run_width = end - start + 1
+        if run_width <= max_width_px and height / run_width >= grid.min_elongation_ratio:
+            band = mask[:, start : end + 1]
+            out[:, start : end + 1][band] = unknown_lbl
+
+    row_frac = mask.sum(axis=1) / width
+    for start, end in _true_runs(row_frac >= grid.span_fraction_min):
+        run_width = end - start + 1
+        if run_width <= max_width_px and width / run_width >= grid.min_elongation_ratio:
+            band = mask[start : end + 1, :]
+            out[start : end + 1, :][band] = unknown_lbl
+
+    return out
 
 
 def save_terrain_map(path: Path, terrain_map: TerrainMap) -> None:

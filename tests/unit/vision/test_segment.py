@@ -6,18 +6,35 @@ class (this module tests the string-returning `format_iou_report`, not a live `p
 
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
 import numpy as np
 import pytest
+from PIL import Image
+from scipy.sparse.csgraph import connected_components
 
 from rogaine.config import default_config
+from rogaine.cost.field import compute_cost_field
+from rogaine.cost.graph import build_grid_graph
 from rogaine.models import TERRAIN_ORDER, TerrainClass, TerrainMap, terrain_label
+from rogaine.vision.contours import contour_density
+from rogaine.vision.linear import extract_linear_features
+from rogaine.vision.normalize import normalize
+from rogaine.vision.palette import classify_palette
 from rogaine.vision.segment import (
     format_iou_report,
     iou_report,
     load_terrain_map,
+    reclassify_grid_ink,
     save_terrain_map,
     segment,
 )
+
+#: I1 (docs/iterations/I1-real-scan-vision.md): same real scan and skip-if-absent convention as
+#: `test_controls.py` -- gitignored per ADR-010, present only on machines the owner handed it to.
+_REAL_SCAN_DIR = Path(__file__).resolve().parents[3] / "data" / "maps" / "grid-lines-red-controls"
+_REAL_SCAN_PATH = _REAL_SCAN_DIR / "map.jpeg"
 
 # Same list, same reason as `test_palette.py`'s `AREA_CLASSES`: the 11 ISOM area classes with a
 # unique shade -- the ones a colour classifier alone should nail on the clean fixture render.
@@ -59,6 +76,182 @@ class TestSegmentInputValidation:
         image = np.zeros((10, 10, 3), dtype=np.uint8)
         with pytest.raises(ValueError, match="dpi"):
             segment(image, 0.0, 2.5)
+
+
+class TestReclassifyGridInk:
+    """T074, F20, ADR-012: a shape-based carve-out for grid/border ink misread as water. Uses
+    small hand-built label arrays (not the fixture, which has no grid lines at all -- see
+    `TestIouReportOnFixture` for the fixture-level non-regression check) at ``dpi=100.0``, so
+    ``GridSettings.max_line_width_px(100.0)`` (``config/default.toml``'s ``max_line_width_mm =
+    6.0``) is ``6.0 * 100 / 25.4`` ~= 23.6px, and ``min_elongation_ratio`` is ``10.0``.
+    """
+
+    _H, _W = 100, 60
+    _OPEN = terrain_label(TerrainClass.OPEN_LAND)
+    _ROAD = terrain_label(TerrainClass.ROAD)
+    _WU = terrain_label(TerrainClass.WATER_UNCROSSABLE)
+    _WS = terrain_label(TerrainClass.WATER_SHALLOW)
+    _UNKNOWN = terrain_label(TerrainClass.UNKNOWN)
+
+    def _blank(self) -> np.ndarray:
+        return np.full((self._H, self._W), self._OPEN, dtype=np.uint8)
+
+    def test_thin_full_height_column_becomes_unknown(self) -> None:
+        labels = self._blank()
+        labels[:, 10] = self._WU  # 100% of height, 1px wide -- a grid/magnetic-north line
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.all(out[:, 10] == self._UNKNOWN)
+        assert np.array_equal(np.delete(out, 10, axis=1), np.delete(labels, 10, axis=1))
+
+    def test_thin_full_width_row_becomes_unknown(self) -> None:
+        labels = self._blank()
+        labels[50, :] = self._WS  # 100% of width, 1px tall -- a border rule
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.all(out[50, :] == self._UNKNOWN)
+        assert np.array_equal(np.delete(out, 50, axis=0), np.delete(labels, 50, axis=0))
+
+    def test_compact_water_body_below_the_span_threshold_is_untouched(self) -> None:
+        labels = self._blank()
+        labels[40:61, 5:16] = self._WU  # 21/100 = 0.21 of height, well under span_fraction_min
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.array_equal(out, labels)
+
+    def test_wide_span_clearing_run_is_rejected_by_the_width_cap(self) -> None:
+        """A lake wide enough to also clear `span_fraction_min` in every one of its columns must
+        not be caught -- `max_line_width_mm` is exactly the guard the DoD's non-negotiable
+        ("a real water body must still classify as water_uncrossable") needs. 50px is chosen to be
+        both well over `max_line_width_px(100.0)` (~23.6px) and, unlike a real 1-3px grid line,
+        obviously not a printed line.
+        """
+        labels = self._blank()
+        labels[0:30, 0:50] = self._WU  # 30/100 = 0.30 of height (clears 0.25), 50px wide (> cap)
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.array_equal(out, labels)
+
+    def test_narrower_than_the_width_cap_but_not_elongated_is_untouched(self) -> None:
+        """`max_line_width_mm` alone is an *absolute* size: on this 100px-tall array it would
+        accept anything under ~23.6px wide even though a 20px-wide run is nowhere near
+        line-shaped (elongation 100/20 = 5.0, under `min_elongation_ratio`'s 10.0). This is the
+        gap `min_elongation_ratio` closes -- a run this squarish must stay real terrain regardless
+        of the image's absolute size.
+        """
+        labels = self._blank()
+        labels[0:30, 0:20] = self._WU  # 30% of height (clears 0.25), 20px wide (under the mm cap)
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert np.array_equal(out, labels)
+
+    def test_only_water_pixels_in_a_flagged_column_are_touched(self) -> None:
+        """A non-water pixel sitting inside an otherwise-water grid column keeps its own label --
+        the reclassification follows the water mask, not the column's bounding box (the same
+        "rejected components become `unknown` at exactly their own pixels" discipline
+        `extract_linear_features` already follows).
+        """
+        labels = self._blank()
+        labels[:, 10] = self._WU
+        labels[7, 10] = self._ROAD  # one foreign pixel inside the flagged column
+
+        out = reclassify_grid_ink(labels, dpi=100.0)
+
+        assert out[7, 10] == self._ROAD
+        assert np.all(np.delete(out[:, 10], 7) == self._UNKNOWN)
+
+    def test_rejects_non_2d_labels(self) -> None:
+        with pytest.raises(ValueError, match="H, W"):
+            reclassify_grid_ink(np.zeros((4, 4, 3), dtype=np.uint8), 100.0)
+
+    def test_rejects_non_uint8_labels(self) -> None:
+        with pytest.raises(ValueError, match="uint8"):
+            reclassify_grid_ink(np.zeros((4, 4), dtype=np.int32), 100.0)
+
+    def test_rejects_non_positive_dpi(self) -> None:
+        with pytest.raises(ValueError, match="dpi"):
+            reclassify_grid_ink(np.zeros((4, 4), dtype=np.uint8), 0.0)
+
+
+class TestGridInkOnRealScan:
+    """I1, F20's acceptance clause: on `data/maps/grid-lines-red-controls/map.jpeg`, whose 8 grid
+    columns measured >30% `water_uncrossable`/`water_shallow` over their height before this task
+    (`docs/STATUS.md`), each must drop to ~0% once `segment()` runs `reclassify_grid_ink`.
+    """
+
+    @pytest.mark.skipif(
+        not _REAL_SCAN_PATH.is_file(),
+        reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
+    )
+    def test_known_grid_columns_drop_to_near_zero_water_fraction(self) -> None:
+        with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        dpi = float(meta["dpi"])
+
+        image = np.array(Image.open(_REAL_SCAN_PATH).convert("RGB"))
+        cfg = default_config()
+        terrain_map = segment(image, dpi, meters_per_pixel=1.0, config=cfg)
+
+        wu = terrain_label(TerrainClass.WATER_UNCROSSABLE)
+        ws = terrain_label(TerrainClass.WATER_SHALLOW)
+        height = terrain_map.labels.shape[0]
+
+        # Measured pre-fix (docs/STATUS.md, ADR-012): these 8 columns ranged 0.338-0.898.
+        known_grid_columns = [142, 339, 535, 928, 1128, 1520, 1716, 2112]
+        for x in known_grid_columns:
+            column = terrain_map.labels[:, x]
+            frac = float(((column == wu) | (column == ws)).sum() / height)
+            assert frac < 0.05, f"column x={x}: water fraction {frac:.3f}, expected ~0"
+
+    @pytest.mark.skipif(
+        not _REAL_SCAN_PATH.is_file(),
+        reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
+    )
+    def test_routable_graph_is_far_less_fragmented(self) -> None:
+        """I1's exit criterion 3 ("a plan across one of those columns no longer fails with 'no
+        reachable route'") in the terms the graph solver actually reasons in: connected components
+        of the routable graph, not one hand-picked hub/control pair -- at `graph.downsample`'s
+        default block size, `_aggregate_blocks`' own "passable iff at least one passable pixel"
+        rule (T031) already bridges most individual gaps in a partially-fragmented column, so a
+        pair straddling any one column may or may not disconnect depending on exactly where it
+        sits; the graph-wide component count is what the misclassification actually damages, and
+        what this fix actually repairs, regardless of which two points a route happens to use.
+        Measured on this scan (`docker compose run --rm tests`, this session): 9463 components pre-
+        fix (largest 244595/254065 nodes, 96.3%) vs 580 post-fix (largest 253486/254065, 99.8%).
+        """
+        with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        dpi = float(meta["dpi"])
+        image = np.array(Image.open(_REAL_SCAN_PATH).convert("RGB"))
+        cfg = default_config()
+
+        normalized = normalize(image)
+        palette_labels = classify_palette(normalized, cfg)
+        pre_labels = extract_linear_features(palette_labels, dpi, cfg)
+        pre_terrain = TerrainMap(
+            labels=pre_labels,
+            contour_density=contour_density(pre_labels, dpi, cfg),
+            meters_per_pixel=1.0,
+        )
+        post_terrain = segment(image, dpi, meters_per_pixel=1.0, config=cfg)
+
+        def _n_components_and_giant_fraction(terrain: TerrainMap) -> tuple[int, float]:
+            cost_field = compute_cost_field(terrain, base_speed_mps=2.0, config=cfg)
+            graph = build_grid_graph(cost_field, config=cfg)
+            n_components, comp_labels = connected_components(graph.csr, directed=False)
+            giant_fraction = float(np.bincount(comp_labels).max() / graph.csr.shape[0])
+            return n_components, giant_fraction
+
+        pre_n, _pre_giant = _n_components_and_giant_fraction(pre_terrain)
+        post_n, post_giant = _n_components_and_giant_fraction(post_terrain)
+
+        assert post_n < pre_n / 5, f"post-fix components {post_n} not far below pre-fix {pre_n}"
+        assert post_giant >= 0.99, f"post-fix giant component only {post_giant:.3f} of all nodes"
 
 
 class TestIouReportOnFixture:

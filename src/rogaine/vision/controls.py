@@ -67,19 +67,34 @@ _TRIANGLE_MIN_SIDE_RATIO = 0.5
 _RING_COVERAGE_BAND_FRACTION = 1.0 / 8.0
 _RING_COVERAGE_MIN = 0.75
 
+# `_select_best_scale`'s (T076, ADR-015) mean-coverage bucket width. Coarse enough that the real
+# scan's two false-prone scales (mean 0.8806, 0.9394) fall in different buckets from the true
+# scale (0.9943) and so still lose outright on coverage alone, but coarse enough that scales whose
+# means are close by CV noise (the real scan's true scale itself splits 0.9943/0.9907/0.9307 across
+# three multipliers) don't spuriously out-rank each other on the mean term before the candidate-
+# count tie-break gets a say.
+_SCALE_TIE_EPS = 0.02
+
 
 def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
-    """Boolean `(H, W)` mask of pixels inside `config.detector.purple_hue_range` (ISOM purple
-    35/85/0/0), the ink both the control circle (703) and the start triangle (701) are printed in.
+    """Boolean `(H, W)` mask of pixels inside any of `config.detector.ink_hue_ranges`, the ink both
+    the control circle (703) and the start triangle (701) are printed in.
+
+    The name predates ADR-011 (I1): the shipped default still leads with ISOM purple 35/85/0/0, but
+    the config now carries a *list* of hue bands so a real scan whose controls are hand-marked in a
+    different ink family -- e.g. red -- is not silently undetected. The returned mask is the union
+    (OR) of the per-band `cv2.inRange` masks, all sharing the same saturation/value floors.
 
     *image* is RGB uint8, the convention `rogaine.models.MapContext` and every other vision
     module in this package use -- converted via `cv2.COLOR_RGB2HSV` below, not `BGR2HSV`. OpenCV's
-    H channel is `[0, 179]` and wraps at that boundary; this project's configured range
+    H channel is `[0, 179]` and wraps at that boundary; this project's configured purple band
     (`[140, 175]`, `config/default.toml`) sits entirely below the wrap, so no wrap-around handling
-    is needed -- verified against the fixture's own rendered purple, not assumed:
+    is needed there -- verified against the fixture's own rendered purple, not assumed:
     `RENDER_SRGB["purple_100"]` (`tests/fixtures/synth_map.py`) is RGB `(170, 60, 150)`, which
     converts to HSV `(155, 165, 170)`, comfortably inside the configured hue/saturation/value
-    floors.
+    floors. Red *does* wrap around the 0/179 boundary, so its band is configured as two entries
+    straddling the wrap rather than one -- see the comment on `ink_hue_ranges` in
+    `config/default.toml`.
     """
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError(f"expected an (H, W, 3) RGB image, got shape {image.shape}")
@@ -89,11 +104,12 @@ def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarra
     cfg = config or default_config()
     det = cfg.detector
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-    lower = np.array(
-        [det.purple_hue_range[0], det.purple_min_saturation, det.purple_min_value], dtype=np.uint8
-    )
-    upper = np.array([det.purple_hue_range[1], 255, 255], dtype=np.uint8)
-    return cv2.inRange(hsv, lower, upper) > 0
+    mask = np.zeros(image.shape[:2], dtype=bool)
+    for hue_lo, hue_hi in det.ink_hue_ranges:
+        lower = np.array([hue_lo, det.purple_min_saturation, det.purple_min_value], dtype=np.uint8)
+        upper = np.array([hue_hi, 255, 255], dtype=np.uint8)
+        mask |= cv2.inRange(hsv, lower, upper) > 0
+    return mask
 
 
 def _ring_coverage(mask: np.ndarray, cx: float, cy: float, r: float, band: float) -> float:
@@ -117,43 +133,112 @@ def _ring_coverage(mask: np.ndarray, cx: float, cy: float, r: float, band: float
     return float(hit.sum()) / n
 
 
+def _select_best_scale(
+    per_multiplier: list[tuple[float, list[tuple[float, float, float]]]],
+) -> list[tuple[float, float, float]]:
+    """Pick the single scale (multiplier) whose ring-coverage-passing candidates fit most
+    convincingly, and return only that scale's candidates (T076, ADR-015).
+
+    *per_multiplier* is `(multiplier, candidates)` for every configured multiplier, in sweep
+    order; *candidates* are `(x, y, coverage)` triples that already cleared `_ring_coverage`'s
+    unmodified threshold at that multiplier's own scaled window.
+
+    A real map draws every control circle at one consistent hand size, so the *correct* scale is
+    the one whose fits clear the (unmodified) ring-coverage bar most convincingly on average --
+    measured directly against the real scan (`data/maps/grid-lines-red-controls/map.jpeg`): the
+    true scale's 13 candidates average >=0.99 ring coverage, while the too-small base scale's 16
+    false fits on hand-written control-number digits average only ~0.88, even though every one of
+    them still individually clears the same 0.75 floor a true fit does. This is why pooling every
+    scale's passing candidates (this task's first design, replaced after that measurement) cannot
+    be fixed by retuning any per-candidate threshold: a false fit clearing the identical bar a true
+    fit clears is not separable candidate-by-candidate, only scale-by-scale.
+
+    Scoring by raw mean coverage alone is not enough, though (found by independent review, before
+    this shipped): `_ring_coverage` saturates at exactly `1.0` for *any* candidate sitting inside a
+    solid ink blob, not only a true ring, so two scales tying at a perfect mean is the normal case,
+    not a rare edge case -- and a bare `mean_a > mean_b` comparison hands every such tie to
+    whichever multiplier is checked first (the smallest, by sweep order), which can be the wrong
+    one: a single lucky solid-blob false positive at the base scale scores an unbeatable `1.0`
+    mean just as easily as many genuine, slightly-noisier true rings at the correct scale.  The
+    score is therefore `(coverage bucketed to _SCALE_TIE_EPS, candidate count)`: only scales whose
+    mean coverage is *meaningfully* higher win outright; among scales close enough to call a tie,
+    the one with more corroborating candidates wins, since a real map's true scale finds many
+    consistent circles, a lucky false positive finds one. `TestOversizedRingsBeatABaseScaleDecoy`
+    is the regression test for exactly this failure mode.
+
+    Known limitation, not fixed here: this still assumes one map uses one hand-drawn scale
+    throughout, and the count-based tie-break only protects against a tie against *few* false
+    candidates -- a wrong scale producing *many* same-bucket false fits (more than the true scale's
+    real candidate count) would still win. No evidence of either case exists in this project's
+    corpus to design or test against further (same "measured, not guessed" bound ADR-011/ADR-014
+    already apply elsewhere). `_detect_hub_triangle` picks its single best match across scales by
+    per-candidate normalised error rather than this set-level rule -- consistent so far (no
+    real-scan or adversarial-test failure found), but a genuine design asymmetry worth noting: a
+    hub is a single expected symbol, so there is no "many corroborating candidates" signal to
+    weigh in the first place, which is why the two functions do not share one selection rule.
+    """
+    best: list[tuple[float, float, float]] = []
+    best_score: tuple[int, int] = (-1, -1)
+    for _mult, candidates in per_multiplier:
+        if not candidates:
+            continue
+        mean_coverage = sum(c for _, _, c in candidates) / len(candidates)
+        score = (round(mean_coverage / _SCALE_TIE_EPS), len(candidates))
+        if score > best_score:
+            best_score = score
+            best = candidates
+    return best
+
+
 def _detect_circles(
     mask: np.ndarray, dpi: float, config: AppConfig
 ) -> list[tuple[float, float, float]]:
     """Hough-circle candidates on the purple mask, filtered to those actually ringed in purple.
 
-    Returns `(x, y, confidence)` triples, deduplicated by `_ring_coverage` rather than by Hough's
-    own `minDist` alone (see the module docstring's finding).
+    Runs once per `config.detector.circle_scale_multipliers` entry, each pass against that
+    multiplier's own scaled `(r_min, r_max)` window, gated through the same unmodified
+    `_ring_coverage` check every pass uses (T076, ADR-015) -- a real ring drawn larger than the
+    ISOM print size is found by a larger-multiplier pass without loosening the check that rejects
+    spurious fits at the base scale. `_select_best_scale` then picks the single multiplier whose
+    passing candidates fit most convincingly *on average* and returns only that scale's
+    candidates -- see its own docstring for why comparing scales as sets, not pooling every
+    scale's individually-passing candidates, is what actually separates a real ring from a
+    same-threshold-clearing false fit at the wrong scale.
     """
     det = config.detector
-    r_min, r_max = det.circle_radius_px(dpi)
-    r_mid = (r_min + r_max) / 2.0
+    base_r_min, base_r_max = det.circle_radius_px(dpi)
 
     mask_u8 = mask.astype(np.uint8) * 255
     # A small blur softens the mask's hard-binary edges before Hough's internal Canny/Sobel step --
     # a jagged, pixel-quantised ring boundary otherwise produces noisier gradient directions than a
     # smoothly antialiased one would.
     blurred = cv2.GaussianBlur(mask_u8, (0, 0), 1.0)
-    raw = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=det.hough_dp,
-        minDist=r_min * 1.5,
-        param1=det.hough_param1,
-        param2=det.hough_param2,
-        minRadius=round(r_min),
-        maxRadius=round(r_max),
-    )
-    if raw is None:
-        return []
 
-    band = r_mid * _RING_COVERAGE_BAND_FRACTION
-    out: list[tuple[float, float, float]] = []
-    for x, y, r in raw[0]:
-        coverage = _ring_coverage(mask, float(x), float(y), float(r), band)
-        if coverage >= _RING_COVERAGE_MIN:
-            out.append((float(x), float(y), coverage))
-    return out
+    per_multiplier: list[tuple[float, list[tuple[float, float, float]]]] = []
+    for mult in det.circle_scale_multipliers:
+        r_min = base_r_min * mult
+        r_max = base_r_max * mult
+        r_mid = (r_min + r_max) / 2.0
+        raw = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=det.hough_dp,
+            minDist=r_min * 1.5,
+            param1=det.hough_param1,
+            param2=det.hough_param2,
+            minRadius=round(r_min),
+            maxRadius=round(r_max),
+        )
+        candidates: list[tuple[float, float, float]] = []
+        if raw is not None:
+            band = r_mid * _RING_COVERAGE_BAND_FRACTION
+            for x, y, r in raw[0]:
+                coverage = _ring_coverage(mask, float(x), float(y), float(r), band)
+                if coverage >= _RING_COVERAGE_MIN:
+                    candidates.append((float(x), float(y), coverage))
+        per_multiplier.append((mult, candidates))
+
+    return _select_best_scale(per_multiplier)
 
 
 def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Control | None:
@@ -167,19 +252,25 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
     exactly, by construction -- using the mean of the three `approxPolyDP` vertices as the returned
     centre is therefore not an approximation of convenience, it is the same point the fixture itself
     used to place the triangle.
+
+    Sweeps `config.detector.circle_scale_multipliers` the same way `_detect_circles` scales its
+    radius window (T076, ADR-015), since a hand-drawn triangle at a hub scales with whatever size
+    its ring counterparts were drawn at. Contour extraction and the polygon fit don't depend on
+    scale, so those run once; only `expected_side` (and thus `max_diff`) is recomputed per
+    multiplier. The best match across scales is chosen by *normalised* relative error
+    (`diff / max_diff`), not raw pixel `diff` -- `max_diff` itself grows with the multiplier, so
+    comparing raw `diff` across scales would bias the choice toward larger scales merely because
+    their tolerance band is wider in absolute pixels.
     """
     det = config.detector
-    r_min, r_max = det.circle_radius_px(dpi)
-    r_mid = (r_min + r_max) / 2.0
-    expected_side = r_mid * _TRIANGLE_SIDE_TO_RADIUS
+    base_r_min, base_r_max = det.circle_radius_px(dpi)
+    base_r_mid = (base_r_min + base_r_max) / 2.0
     tol = det.circle_diameter_tolerance
-    max_diff = expected_side * tol
 
     mask_u8 = mask.astype(np.uint8) * 255
     contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    best_diff: float | None = None
-    best_center: np.ndarray | None = None
+    triangles: list[tuple[np.ndarray, float]] = []  # (centre, mean side length)
     for contour in contours:
         perimeter = cv2.arcLength(contour, True)
         if perimeter <= 0:
@@ -196,18 +287,28 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
         ]
         if min(sides) < _TRIANGLE_MIN_SIDE_RATIO * max(sides):
             continue  # near-degenerate (near-collinear) fit, not a real triangle
+        triangles.append((pts.mean(axis=0), sum(sides) / 3.0))
 
-        diff = abs(sum(sides) / 3.0 - expected_side)
-        if diff > max_diff:
+    best_rel_error: float | None = None
+    best_center: np.ndarray | None = None
+    for mult in det.circle_scale_multipliers:
+        expected_side = base_r_mid * mult * _TRIANGLE_SIDE_TO_RADIUS
+        max_diff = expected_side * tol
+        if max_diff <= 0:
             continue
-        if best_diff is None or diff < best_diff:
-            best_diff = diff
-            best_center = pts.mean(axis=0)
+        for center, mean_side in triangles:
+            diff = abs(mean_side - expected_side)
+            if diff > max_diff:
+                continue
+            rel_error = diff / max_diff
+            if best_rel_error is None or rel_error < best_rel_error:
+                best_rel_error = rel_error
+                best_center = center
 
-    if best_center is None or best_diff is None:
+    if best_center is None or best_rel_error is None:
         return None
 
-    confidence = max(0.0, min(1.0, 1.0 - best_diff / max_diff)) if max_diff > 0 else 1.0
+    confidence = max(0.0, min(1.0, 1.0 - best_rel_error))
     return Control(
         id=0,
         x=float(best_center[0]),
