@@ -16,7 +16,9 @@
 | 011 | Control ink is a configured list of hue bands, not a fixed purple; the default ships both purple and red | accepted |
 | 012 | Grid/annotation ink is excluded from colour classification by shape, not by narrowing the colour threshold | accepted |
 | 013 | Track-derived travel-cost calibration from o-gps-center GPS tracks | proposed |
-| 014 | o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise | proposed |
+| 014 | o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise | accepted |
+| 015 | Control-circle/hub detection sweeps multiple size scales, not a fixed ISOM print size | accepted |
+| 016 | Per-map auto-calibration from the printed scale bar, not embedded scan DPI | proposed |
 
 ---
 
@@ -240,9 +242,11 @@
   unrelated code paths).
 - Consequences: none yet — nothing implemented, no task created, no corpus collected.
 
-## ADR-014 — o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise (proposed)
+## ADR-014 — o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise
 - Date: 2026-09-02
-- Status: proposed — needs the owner's sign-off before harvesting past the sample already taken.
+- Status: accepted — owner approved continuing the harvest 2026-09-04, explicitly targeting ~200
+  maps for T070 (M7's training corpus), beyond the 10-20 that alone would retire T017's palette
+  risk. A harvester agent was dispatched the same session to sweep further (see docs/STATUS.md).
 - Context: ADR-010 assumed "the owner can supply 200+ scanned maps"; only 15 exist (see
   docs/STATUS.md "Blocked on the owner"). A second, free source is available: o-gps-center.ru
   publishes a participant-facing scanned map per event, plain HTTP GET, no auth, no JS. Its
@@ -270,3 +274,142 @@
   another one entirely. Not run to completion — 1 map harvested as a timeboxed sample
   (`ogps-367_180afd874454c167cddab2aa89c78354`, "Рогейн-2015"); the owner decides whether/how much
   further to run it.
+
+## ADR-015 — Control-circle/hub detection sweeps multiple size scales, not a fixed ISOM print size
+- Date: 2026-09-04
+- Status: accepted
+- Context: Iteration I1, following ADR-011. T073 fixed control-ink *colour* on the real scan
+  (`data/maps/grid-lines-red-controls/map.jpeg`) but `detect_controls` still finds no real
+  controls: `circle_radius_px(dpi)` predicts a Hough radius window from ISOM's fixed 6mm
+  printed-circle spec, but this file's hand-drawn circles measure ~56px radius at 200dpi — ~2.37x
+  the predicted window — so every raw Hough detection is a false positive on hand-written digit
+  glyphs instead (recall 0/13, precision 0/16, hub not found; independently measured, confirmed not
+  a DPI-metadata bug via PIL JFIF `jfif_unit=1`, see docs/STATUS.md).
+- Decision: `DetectorSettings` gains `circle_scale_multipliers: list[float]` (shipped default
+  `[1.0, 1.5, 2.0, 2.5, 3.0]`, measured against the real scan's ~2.37x ratio). `_detect_circles`
+  runs its existing Hough search once per multiplier against the scaled radius window, gating every
+  candidate through the existing, unmodified ring-coverage check (same threshold, same band
+  fraction, applied per scale — never weakened). `_detect_hub_triangle` similarly sweeps the same
+  multiplier list for `expected_side`, picking the single best match across scales by normalised
+  relative error.
+  **Landed mechanism differs from this ADR's first draft** (which proposed pooling every scale's
+  passing circle candidates and reducing them with cross-scale non-max suppression): implementing
+  and measuring that against the real scan found it insufficient — `detect_controls` reached
+  recall 1.000 but precision only 0.448 (29 detections, 16 false), because the pre-existing
+  base-scale false positives on hand-written digit glyphs (T073's own documented, unfixed problem)
+  each individually clear the *same* 0.75 ring-coverage floor a true ring does; no per-candidate
+  threshold, however tuned, separates the two, since NMS only ever collapses duplicates of the
+  *same* physical ring across scales, not distinct false features at a different scale. What
+  actually separates them, measured directly: the true scale's candidates clear ring-coverage far
+  more convincingly *on average* (real scan: ~0.99 mean coverage at the correct scale vs. ~0.88 at
+  the false-prone base scale, every individual candidate on both sides still ≥0.75). `_detect_circles`
+  therefore computes each multiplier's candidates and their mean coverage, then keeps only the
+  single best-scoring multiplier's candidates — comparing scales as *sets*, not individual
+  candidates. `1.0` stays first in the sweep, so on the synthetic fixture (printed at exact ISOM
+  scale, the only scale with any candidates at all there) the returned set is unchanged from before
+  this task. Selecting one scale also makes cross-scale duplicate-counting structurally impossible,
+  so the separate NMS step is no longer needed.
+  **Second amendment, from independent review before this landed:** scoring by raw mean coverage
+  alone, with ties broken toward the smaller multiplier, has its own failure mode — `_ring_coverage`
+  saturates at exactly `1.0` for *any* candidate sitting inside a solid ink blob, not only a
+  genuine ring, so two scales tying at a perfect mean is the normal case, not a rare edge case, and
+  the tie-break then always favours the (often wrong) smaller scale. Demonstrated, not theorised: a
+  synthetic map with five true rings at multiplier 2.5 plus one incidental filled purple blob at
+  multiplier 1.0 lost all five true rings to the one perfect-mean decoy under the mean-only rule.
+  Fixed by scoring `(mean coverage bucketed to a tolerance, candidate count)` instead — a
+  meaningfully higher mean still wins outright, but among scales close enough to call a tie, the
+  one with more corroborating candidates wins, since a real map's true scale finds many consistent
+  circles and a lucky false positive finds one. `TestOversizedRingsBeatABaseScaleDecoy`
+  (`tests/unit/vision/test_controls.py`) is the permanent regression test; the real scan's own
+  selection is unaffected (still multiplier 2.0, mean 0.9943, 13/13 recall and precision).
+  Known limitation of the landed design, not fixed here: it still assumes one map uses one
+  hand-drawn circle scale throughout, and the count-based tie-break only protects against a tie
+  against *few* false candidates — a wrong scale producing *many* same-bucket false fits (more than
+  the true scale's real candidate count) would still win. No evidence of either case exists in this
+  project's corpus to design or test against further. `_detect_hub_triangle` was left on its
+  original per-candidate normalised-error rule rather than given the same set-level treatment — a
+  hub is a single expected symbol, so there is no "many corroborating candidates" signal available
+  to weigh in the first place; review specifically tried to break it with a base-scale decoy
+  triangle and could not (the true hub still won, 0.996 confidence).
+  Rejected: a single widened Hough window spanning both scales — the literal repeat of T073's own
+  failure mode, since digit-glyph- and true-ring-scale candidates would then compete inside the same
+  Hough call and the same `minDist` instead of being judged independently per scale; a manual
+  per-map size override — needs new config-override plumbing to reach the web viewer (no per-run
+  config path exists, per ADR-011's own grep-confirmed finding) and does not generalise past one
+  manually-measured map, the same objection ADR-011 raised against an opt-in colour override.
+- Consequences: `vision/ocr.py::_ocr_crop` still sizes its number-search crop from
+  `circle_radius_px(dpi)` at the base scale only (`Control` carries no matched-scale/radius field)
+  — OCR on a control found at a non-1.0 multiplier will crop the wrong window size. Flagged and
+  filed as T077 (docs/TASKS.md), not fixed here. `detect_controls` now runs Hough multiple times
+  per image (once per configured multiplier) — measured on the real scan (1708x2379): 0.05s before
+  this task, 0.24s after (4.45x), a real but small absolute cost; no NFR names a detection-time
+  ceiling.
+
+## ADR-016 — Per-map best-effort auto-calibration for the M7 training corpus; scale is secondary to content recognition there
+- Date: 2026-09-04, revised and **accepted 2026-09-05** (`утверждаю`)
+- Status: accepted. Superseded its own first draft same-session: the original version made a
+  correctly-calibrated scale bar the *gate* (uncalibratable maps excluded from T070's corpus). The
+  owner overrode that after seeing real corpus numbers (below): auto-calibration is now explicitly
+  **secondary** to T070's real goal — the 204 scraped maps exist to improve *object/content*
+  recognition (controls, terrain classes), not to produce distance-accurate output. Rationale in
+  the owner's own words: "Карты изначально скачивались для улучшения распознавания самого
+  содержания карт... автоопределение масштаба это второстепенная задача... Масштаб всегда может
+  скорректировать и задать пользователь" — a real end user's own map is calibrated through the
+  existing manual path (SPEC F3, `io/scale.py::Calibration` — pick two points, enter the true
+  distance), unaffected by anything here. Also noted: each organiser draws their map somewhat
+  differently (inconsistent circle sizes, grid conventions, legend styles), so no single automatic
+  signal was ever going to reach the whole corpus — confirmed empirically below.
+- Context: the harvest (ADR-014) reached 204 scraped maps, clearing T070's volume blocker, but
+  every one of them still lacks `meta.toml`. `dpi` is not purely cosmetic even for training-mask
+  generation: `vision/controls.py`, `segment.py`, `linear.py` and `contours.py` convert this
+  project's mm-based ISOM print-size tunables to pixels through it, so the heuristic
+  palette-classifier masks T070 exports do depend on it, if only loosely (ADR-015's multi-scale
+  sweep already buys some tolerance to an approximate value). Checked before designing further —
+  **the article this project follows for M7 (habr.com/ru/articles/1065342/) does not cover scale
+  calibration at all**: its own SegFormer training works purely in pixel space (`image.jpg` +
+  `channels.npy` tiles, no real-world units), real distance appearing only in its separate
+  travel-cost/speed model — the same separation this project already keeps between `segment.py`
+  and `io/scale.py`. Also checked: JFIF `dpi` metadata survives in 127/204 scraped JPEGs but mixes
+  real scanner presets with image-editor defaults (72/96, 44 files) indistinguishably — not
+  trustworthy alone, and a rendering artefact possible for the sub-population of these maps that
+  turn out to be OSM-rendered digital exports rather than physical scans (seen in the visual
+  sample, not universal).
+  **Corpus survey** (crude heuristics, random sample of 40/204, throwaway scripts —
+  `data/maps/_survey_calibration.py`, `_survey_grid_color.py`, gitignored): OCR-detected scale-ratio
+  text ("1:20000"-style) 8/40 (20%, some garbled); regularly-spaced grid/magnetic-north-style lines
+  4/40 (10%, grayscale Hough) to 6/40 (15%, blue-channel-aware — the better estimate); both signals
+  together on the same map 1/40. No graphical scale bar (a labelled ruler, as opposed to a bare
+  ratio) was confirmed in the sample at all. Net: an auto-detector chasing only trustworthy,
+  cross-validated signals would calibrate on the rough order of a quarter to a third of the corpus
+  at best — a real number, not a guess, and the reason the owner chose to stop optimising this path
+  further rather than sink more design time into raising it.
+- Decision: T078 builds one lightweight, best-effort layered detector, tried in this priority order
+  per map (reusing `io/scale.py::Calibration` throughout — no new maths):
+  1. printed graphical scale bar (rare per the survey, but most trustworthy where found — its
+     pixel length against its own printed labels needs no assumption about grid/scale convention);
+  2. coordinate/magnetic-north grid spacing (`grid` ink, ADR-012), **only** accepted when
+     cross-validated against an OCR'd scale-ratio text on the same map (grid alone cannot
+     distinguish a real coordinate grid at a known interval from magnetic-north lines drawn at an
+     arbitrary spacing for visual clarity — the risk the first draft of this ADR missed);
+  3. control-circle diameter (`config.circle_diameter_mm`, reusing ADR-011/012/015's existing
+     detection) as a **fallback/cross-check only, never primary** — organiser-to-organiser
+     variance in hand-drawn circle size makes it too unreliable to trust standalone, per the
+     owner's own instinct, and per ADR-015's already-documented limitation ("assumes one map uses
+     one hand-drawn circle scale throughout").
+  When none of the three yield a confident value (expected majority of the corpus, per the
+  survey), the map is **not excluded**. It gets a real `meta.toml` with an assumed default —
+  `dpi`/`scale_denominator` set to the median of whatever this session's successful measurements
+  turn out to be (a data-informed default, not an arbitrary pick) — and an explicit
+  `calibration_source = "assumed_default"` field, versus `"measured"` for the maps calibration
+  actually succeeded on. This is a deliberate, scoped, owner-approved exception to ADR-010/014's
+  no-fabrication rule, narrowed specifically to this internal M7 training corpus: never presented
+  as measured fact, machine-distinguishable from real calibration via `calibration_source`, and
+  with zero effect on the production/user-facing path (a real user's own map still requires actual
+  calibration to be `is_plannable`, per `io/corpus.py`, completely unchanged by this ADR).
+- Consequences: T070 still depends on T078 (order in M7 unchanged) but T078's scope is now
+  bounded — one detector pass, no chase for ever-higher auto-calibration coverage. Forward note,
+  not scoped here: the owner's stated next milestone beyond M7 is relief/terrain recognition (real
+  elevation from contour spacing), which ADR-006/007 currently exclude from v1 — that future work
+  will need real `meters_per_pixel`, not the assumed-default fallback this ADR introduces, so
+  `calibration_source` exists precisely so that future work can filter to `"measured"` maps only
+  rather than re-deriving this distinction from scratch.

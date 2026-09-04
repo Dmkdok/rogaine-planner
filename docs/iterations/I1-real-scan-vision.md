@@ -15,6 +15,7 @@
 | Control/hub detector (`vision/controls.py`) only matches a fixed ISOM purple hue band | Confirmed on the real scan: 13 clearly visible red-circled numbered controls, `detect_controls` returns zero controls and no hub |
 | Terrain segmenter (`vision/segment.py`) reads the map's grid/magnetic-north lines as `water_uncrossable` | Confirmed on the real scan: 5 full-height vertical columns >30% `water_uncrossable`; a hub/control pair straddling one got `no reachable route`, unrelated to the time limit |
 | `render/overlay.py`'s route colour is hardcoded red, chosen because *no ISOM ink is red* | Direct consequence of the first item: once red is a recognised control ink, the route line and a real control marking on a red-ink map become visually indistinguishable — the invariant the module's own docstring states breaks |
+| Control/hub detector's radius window is pinned to ISOM's exact 6mm print spec (T076, ADR-015, added 2026-09-04) | Confirmed while landing T073: hand-drawn circles measure ~56px radius at 200dpi (~2.37x the ISOM spec) — Hough's minRadius/maxRadius never contains a candidate near a true ring regardless of ink colour; recall 0/13, hub not found |
 
 ## Out of scope this round
 
@@ -39,7 +40,12 @@
 ## Budget
 
 Bounded to what item 1 and item 2 above need, plus the overlay-colour consequence they force. No
-new UI, no new config-override plumbing, no corpus-wide validation.
+new UI, no new config-override plumbing, no corpus-wide validation. ("Config-override plumbing"
+means a new surface for choosing a value per run/per map — a CLI flag, a web-viewer control, a
+per-map `meta.toml` field read at run time. A new *tunable with a shipped default* in
+`config/default.toml`, reachable identically by every caller with zero new surface, is not that —
+T073's `ink_hue_ranges` already established this reading inside this same Budget line, and T076's
+`circle_scale_multipliers` follows the identical pattern, confirmed with the owner 2026-09-04.)
 
 ## Non-negotiables
 
@@ -75,12 +81,21 @@ field). The overlay-colour row has no code dependency on the other two — it on
 
 ## Exit criteria
 
-- [ ] `rogaine detect --map data/maps/grid-lines-red-controls/map.jpeg` finds the map's red-ink
-  controls (recall measured and stated, not just "some found")
-- [ ] `rogaine segment --map data/maps/grid-lines-red-controls/map.jpeg` no longer marks the five
-  known grid columns as majority `water_uncrossable`
-- [ ] A plan across one of those columns, on this map, no longer fails with "no reachable route"
-  for that reason
-- [ ] `render/overlay.py`'s route colour is measurably distinct from all seven forbidden inks
-- [ ] Baseline suite green at 372 passed or better (372 minus the one named edited assertion, plus
-  whatever new tests this milestone adds)
+- [x] `rogaine detect --map data/maps/grid-lines-red-controls/map.jpeg` finds the map's red-ink
+  controls — T073 (ink colour) + T076 (circle size, ADR-015): recall 1.000, precision 1.000, hub
+  found (`TestRealScanRedInk::test_recall_and_hub_match_the_true_positions`)
+- [x] `rogaine segment --map data/maps/grid-lines-red-controls/map.jpeg` no longer marks the five
+  (actually 8, once measured) known grid columns as majority `water_uncrossable` — T074: all 8
+  drop from 0.338-0.898 to 0.000 (`TestGridInkOnRealScan`)
+- [x] Restated to match what was actually demonstrated (independent review flagged the original
+  wording as a mild overclaim: an exact repro of the owner's "no reachable route" was never
+  obtained, pre- or post-fix — see below): grid-ink misclassification's graph-wide fragmentation is
+  eliminated — permanent test `TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`
+  measures connected components 9463 -> 580, giant component 96.3% -> 99.8% of all nodes. An
+  arbitrary hub/control pick straddling a grid column does not reproduce "no reachable route"
+  either pre- or post-fix (0/72 sampled pairs disconnected either way) because block-level graph
+  passability already bridges most single-column gaps regardless of this fix — expected, not a
+  bug; see docs/STATUS.md's Notes for the full account
+- [x] `render/overlay.py`'s route colour is measurably distinct from all seven forbidden inks — T075:
+  magenta (255,0,255), min CIELAB distance ~48.3 against the 35.0 threshold
+- [x] Baseline suite green at 372 passed or better — 388 passed, `ruff check .` clean (2026-09-04)
