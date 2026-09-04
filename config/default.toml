@@ -360,6 +360,16 @@ purple_min_value = 60
 hough_dp = 1.2
 hough_param1 = 100
 hough_param2 = 30
+# Scale multipliers `_detect_circles`/`_detect_hub_triangle` sweep the printed-size radius window
+# through (T076, ADR-015). `1.0` (the ISOM 6mm print size above, unscaled) must stay first so the
+# synthetic fixture -- printed at exact ISOM scale -- keeps matching today's window unchanged. The
+# rest cover hand-marked scans whose circles are drawn larger than print spec: measured on
+# data/maps/grid-lines-red-controls/map.jpeg (I1, ADR-011/ADR-015), the true control rings are
+# ~56px radius at 200dpi versus circle_radius_px(200)'s ~23.6px mid-radius -- a ~2.37x ratio,
+# bracketed by both 2.0 and 2.5 (2.0 is the one `_select_best_scale` actually picks on this file:
+# highest mean ring-coverage, 0.9943 vs 2.5's 0.9907 -- 2.5 is kept in the list as headroom, not
+# because it's load-bearing here).
+circle_scale_multipliers = [1.0, 1.5, 2.0, 2.5, 3.0]
 # [ISOM] symbol 704 control number: Arial 4.0 mm, non-bold, non-italic, oriented north.
 number_font_height_mm = 4.0
 # How far from the circle edge to look for the number, in circle radii.

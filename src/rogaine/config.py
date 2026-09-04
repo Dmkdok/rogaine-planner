@@ -229,6 +229,7 @@ class DetectorSettings(BaseModel):
     hough_dp: float = Field(gt=0.0)
     hough_param1: float = Field(gt=0.0)
     hough_param2: float = Field(gt=0.0)
+    circle_scale_multipliers: list[float] = Field(min_length=1)
     number_font_height_mm: float = Field(gt=0.0)
     number_search_radius: float = Field(gt=0.0)
     points_rule: Literal["first_digit", "constant", "csv"]
@@ -244,6 +245,16 @@ class DetectorSettings(BaseModel):
                     "(OpenCV's 0-179 H scale) -- a hue above 179 overflows the uint8 HSV frame "
                     "purple_mask builds, and lo > hi would silently match nothing"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _scale_multipliers_are_positive(self) -> DetectorSettings:
+        if any(m <= 0.0 for m in self.circle_scale_multipliers):
+            raise ValueError(
+                f"circle_scale_multipliers must all be > 0, got {self.circle_scale_multipliers} "
+                "-- a zero or negative multiplier collapses or inverts the scaled Hough radius "
+                "window _detect_circles/_detect_hub_triangle derive from it"
+            )
         return self
 
     def circle_radius_px(self, dpi: float) -> tuple[float, float]:

@@ -13,14 +13,15 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
 
-from fixtures.synth_map import CIRCLE_DIAMETER_MM
+from fixtures.synth_map import CIRCLE_DIAMETER_MM, RENDER_SRGB
 from rogaine.config import default_config
 from rogaine.models import Control
-from rogaine.vision.controls import detect_controls, purple_mask
+from rogaine.vision.controls import _detect_circles, detect_controls, purple_mask
 
 #: I1 (docs/iterations/I1-real-scan-vision.md): a real scan whose controls and hub are hand-marked
 #: in red, not ISOM purple. Gitignored per ADR-010 -- present only on machines the owner handed it
@@ -169,6 +170,108 @@ class TestRecallPrecisionOnFixture:
         assert all(e <= centre_error_tol for e in errors), report
 
 
+class TestOversizedRingsBeatABaseScaleDecoy:
+    """T076, ADR-015 -- independent-review finding (C-1), fixed before landing: `_select_best_scale`
+    must not let one base-scale false positive with a *perfect* mean coverage outrank many true,
+    slightly-noisier rings at the map's real (larger) scale. A first version scored scales by raw
+    mean coverage alone and handed every tie to the smallest multiplier (sweep order) -- but
+    `_ring_coverage` saturates at exactly 1.0 for *any* candidate sitting inside a solid ink blob,
+    not only a genuine ring, so a lone filled dot at the base scale ties a real scale's mean
+    trivially. This is not a contrived edge case: it is what a single stray purple pixel-blob
+    (unrelated debris, a printed legend swatch, anything solid and roughly round) would do to the
+    old scoring on a real map. The fix scores `(coverage bucketed to _SCALE_TIE_EPS, candidate
+    count)`, so a scale's *support* -- how many consistent circles it finds -- breaks ties between
+    scales whose means are close enough to call equal.
+    """
+
+    def test_five_true_rings_at_2_5x_beat_one_perfect_base_scale_blob(self) -> None:
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_mid = (r_min + r_max) / 2.0
+        r_true = r_mid * 2.5  # a scale actually offered by the shipped circle_scale_multipliers
+
+        gap = r_true * 3.0
+        start_x = r_true * 2.0
+        row_y = round(r_true * 2.0)
+        true_centres = [(round(start_x + i * gap), row_y) for i in range(5)]
+
+        width = round(true_centres[-1][0] + r_true * 2.0)
+        decoy_centre = (round(r_mid * 2.0), round(row_y + r_true * 2.0 + r_mid * 2.0))
+        height = round(decoy_centre[1] + r_mid * 2.0)
+
+        image = np.full((height, width, 3), 255, dtype=np.uint8)
+        ring_width = max(1, round(r_true * 0.15))
+        for cx, cy in true_centres:
+            cv2.circle(image, (cx, cy), round(r_true), RENDER_SRGB["purple_100"], ring_width)
+        # A solid (filled, thickness=-1) blob at the base scale: ring-coverage samples its
+        # circumference and finds ink all the way around, coverage 1.0, exactly as a genuine ring
+        # would -- but it is one candidate against the true scale's five.
+        cv2.circle(image, decoy_centre, round(r_mid), RENDER_SRGB["purple_100"], -1)
+
+        mask = purple_mask(image, config)
+        candidates = _detect_circles(mask, dpi, config)
+
+        assert len(candidates) == len(true_centres), (
+            f"expected the true scale's {len(true_centres)} rings, not the base-scale decoy; "
+            f"got {len(candidates)}: {candidates}"
+        )
+
+        def _dist(ax: float, ay: float, bx: float, by: float) -> float:
+            return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+        for cx, cy in true_centres:
+            assert any(_dist(cx, cy, x, y) <= r_true / 4.0 for x, y, _ in candidates), (
+                f"no candidate near true ring centre ({cx}, {cy}): {candidates}"
+            )
+
+
+class TestSingleScaleSelected:
+    """T076, ADR-015: one true ring must not be counted once per `circle_scale_multipliers` entry
+    whose scaled window also passes `_ring_coverage` on it -- `_detect_circles` returns exactly one
+    scale's candidates (`_select_best_scale`), so a ring cannot appear twice regardless of how many
+    scales' windows it happens to fall inside.
+
+    Adjacent multipliers' tolerance-widened windows overlap (`circle_diameter_tolerance=0.35`
+    widens each scale's window to [0.65x, 1.35x] its own scaled radius, so e.g. multiplier 1.0's
+    upper bound 1.35r and multiplier 1.5's lower bound 1.5r*0.65=0.975r overlap between 0.975r and
+    1.35r). A ring whose true radius sits at the base scale's mid-radius therefore falls inside
+    *both* the 1.0x and the 1.5x Hough search windows and can pass `_ring_coverage` at both --
+    `_detect_circles` only ever returns one scale's candidates (`_select_best_scale`, T076,
+    ADR-015), so this ring must not appear twice in the result regardless of how many scales it
+    happens to clear the coverage bar at.
+    """
+
+    def test_one_true_ring_yields_exactly_one_candidate(self) -> None:
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_mid = (r_min + r_max) / 2.0
+
+        size = round(r_mid * 8)
+        cx = cy = size // 2
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        ring_width = max(1, round(r_mid * 0.15))
+        cv2.circle(image, (cx, cy), round(r_mid), RENDER_SRGB["purple_100"], ring_width)
+
+        mask = purple_mask(image, config)
+        candidates = _detect_circles(mask, dpi, config)
+
+        assert len(candidates) == 1, (
+            f"expected exactly one candidate for the one true ring at multiplier 1.0's mid-radius "
+            f"(which also falls inside multiplier 1.5's overlapping window), got "
+            f"{len(candidates)}: {candidates}"
+        )
+        x, y, _ = candidates[0]
+        dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+        assert dist <= r_mid / 4.0, (
+            f"candidate at ({x:.1f}, {y:.1f}) is {dist:.2f}px from the true centre "
+            f"({cx}, {cy}), tol={r_mid / 4.0:.2f}px"
+        )
+
+
 class TestRealScanRedInk:
     """I1, SPEC F7's second acceptance clause: on `data/maps/grid-lines-red-controls/map.jpeg`,
     whose controls and hub are hand-marked in red rather than ISOM purple, `purple_mask` (the
@@ -177,25 +280,18 @@ class TestRealScanRedInk:
     passes outright -- this is T073's genuine, narrow claim (widen the *colour* mask), independent
     of whatever the shape stage built on top of it does with that mask.
 
-    That shape stage -- `cv2.HoughCircles` plus the ring-coverage gate -- does NOT currently turn
-    that mask into correct detections on this file, and does not just fall short of a high bar: it
-    is wrong. Independently re-measured this session (`test_recall_and_hub_match_the_true_positions`
-    below, `xfail(strict=True)`): `detect_controls` returns 16 "circles" and no hub, and **every
-    one of the 16 is a false positive** -- nearest true ring 97.7-466.9px away, recall 0/13 =
-    0.000, hub not found. Connected-component analysis of the real scan's strict red-ink mask
-    (`R>150, R-G>60, R-B>60`) identifies what the 16 actually are: the hand-written control
-    *digits* (~43x67px components), not the ~111-113x110-113px (~56px radius) ring components the
-    detector is supposed to find. The digits happen to fall inside `circle_radius_px(200)`'s
-    predicted window ([15.4, 31.9]px from ISOM's 6mm circle spec); the true rings, at ~56px
-    radius, do not -- `cv2.HoughCircles`' `minRadius`/`maxRadius` (from that same window) can
-    therefore never return a candidate anywhere near a true ring, whatever ink colour the mask
-    searches for. This is a radius/geometry defect, orthogonal to ink colour, and fixing it means
-    changing the Hough radius derivation or `circle_diameter_mm`/`circle_diameter_tolerance` --
-    exactly what T073's task brief calls non-negotiable not to touch ("No change to
-    _ring_coverage/Hough parameters or any other false-positive guard"). Left for a follow-up
-    task (not yet filed as of this session); flagged here rather than silently passed over, and
-    **SPEC F7's acceptance clause "finds the map's red-circled controls (shape-filtered, not 'any
-    red pixel')" does not hold on this file** until it lands -- see `docs/STATUS.md`.
+    That shape stage -- `cv2.HoughCircles` plus the ring-coverage gate -- did not turn that mask
+    into correct detections on this file under T073 alone: `circle_radius_px(200)`'s predicted
+    window ([15.4, 31.9]px from ISOM's 6mm circle spec) never contains a candidate near a true
+    ~56px-radius ring, whatever ink colour the mask searches for, so every one of 16 raw detections
+    was a false positive on the hand-written control *digits* (~43x67px components) instead
+    (recall 0/13, precision 0/16, hub not found -- independently measured, see
+    `docs/DECISIONS.md` ADR-015). Fixing it without loosening `_ring_coverage`/Hough's own
+    parameters (non-negotiable per T073's own brief) is T076/ADR-015:
+    `circle_scale_multipliers` sweeps the same, unmodified ring-coverage check across several
+    scaled radius windows instead. `test_recall_and_hub_match_the_true_positions` below now
+    asserts the real, fixed outcome (recall/precision >= 0.90, hub found) rather than documenting
+    the prior failure.
     """
 
     @pytest.mark.skipif(
@@ -222,16 +318,6 @@ class TestRealScanRedInk:
     @pytest.mark.skipif(
         not _REAL_SCAN_PATH.is_file(),
         reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
-    )
-    @pytest.mark.xfail(
-        reason=(
-            "measured this session: recall 0/13 = 0.000, precision 0/16 = 0.000, hub not found. "
-            "known, out-of-T073-scope radius/geometry mismatch: this file's true control rings "
-            "measure ~56px radius and its hub triangle ~125px side, versus the "
-            "[15.4, 31.9]px / [33.8, 70.2]px windows DetectorSettings.circle_radius_px(200) "
-            "predicts -- see TestRealScanRedInk's class docstring for the full measurement."
-        ),
-        strict=True,
     )
     def test_recall_and_hub_match_the_true_positions(self) -> None:
         with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
