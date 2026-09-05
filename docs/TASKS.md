@@ -1132,7 +1132,7 @@ the implementer's self-report.
 > (M8, pulled in here), reads its output and is serialized after it since all share
 > `vision/controls.py`. See the iteration doc for the full reproduction table and impact map.
 
-- [ ] **T079** — Tighten ink-hue false-positive rate on real scans (F7, ADR-018) — paths:
+- [x] **T079** — Tighten ink-hue false-positive rate on real scans (F7, ADR-018) — paths:
   `config/default.toml`, `src/rogaine/vision/controls.py::purple_mask`,
   `tests/unit/vision/test_controls.py` — deps: none — DoD: `purple_mask` density on
   `data/maps/ozero-shchuche/map.jpg` measured and reduced from the current 6.82% (measured this
@@ -1143,6 +1143,24 @@ the implementer's self-report.
   `ozero-shchuche` (skipped if the file is absent, ADR-010's rule). If one measured change cannot
   satisfy both the existing floor and the new scan, stop and report — do not loosen either
   assertion (ADR-018).
+
+  **Landed.** Root cause confirmed: brown contour ink (mean RGB (161,106,90)) was passing
+  `ink_hue_ranges`' red band under the shared `purple_min_saturation`/`purple_min_value` floor
+  (60/60) — `grid-lines-red-controls`' own real red ink always measures saturation>=61, value>=151,
+  `min(R-G, R-B)>=61`, brown mostly does not. Fix: red split out of `ink_hue_ranges` into its own
+  `red_hue_ranges` (unchanged bands `[[0,9],[167,179]]`) with a measured-tighter floor
+  (`red_min_saturation=61`, `red_min_value=151`) plus a new `red_min_channel_gap=60` check
+  (`min(R-G, R-B) >= 60`), which real red ink clears by definition and brown mostly doesn't.
+  `purple_mask` now unions the purple-band mask and the red-band-plus-channel-gap mask separately
+  instead of sharing one floor. `DetectorSettings` (extra="forbid") gained the three new keys.
+  Measured: `ozero-shchuche` density 6.82% → 1.34% (now *below* `grid-lines-red-controls`' own
+  1.93%, not just the same order of magnitude); `grid-lines-red-controls` unaffected —
+  `test_purple_mask_flags_the_real_red_ink` coverage 99.01% (floor 95%, was 98.99%),
+  `test_recall_and_hub_match_the_true_positions` recall/precision 1.000/1.000, hub found (unchanged
+  pass). New test `TestInkHueFalsePositiveRateOnOzeroShchuche` (skipped if the gitignored file is
+  absent) asserts the density drop as a permanent regression guard. No stop-and-report case hit —
+  one change cleared both floors. 448 passed (447 baseline + 1 new test), `ruff check .` clean
+  (independently re-run, not just trusted from the implementer). See commit fade5fd.
 - [ ] **T080** — `_select_best_scale` tie-break re-measured against high-false-positive scales
   (ADR-015's documented limitation) — paths: `src/rogaine/vision/controls.py::_select_best_scale`,
   `tests/unit/vision/test_controls.py` — deps: T079 — DoD: re-run the 13-map reproduction table
