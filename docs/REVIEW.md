@@ -21,6 +21,15 @@ deliverable, not a T060-T062 defect, but is called out now so it isn't silently 
 None.
 
 ## High
+- ~~**No root README yet**~~ — **fixed 2026-09-05**: root `README.md` written, covering install
+  (Docker + best-effort host), every CLI command (`segment`/`detect`/`plan`/`bench`/`serve`/
+  `corpus list`/`corpus check`) with its flags, the web viewer flow, the `config/default.toml`
+  section reference, the `route.json` schema (with a validated example), the controls CSV format,
+  and known limitations (OCR non-load-bearing, contour-density slope proxy, grid/ink heuristics
+  tuned to a small real-scan set, heuristic optimality above `exact_max_controls`, no
+  georeferencing/GPX/VLM/fatigue modelling, `.ocd` not parsed). Left below verbatim as the record
+  of what was found; Phase 7 ("handoff") still also needs the owner accepting a route on their own
+  map (Launch checklist item, separate from README) before it can close.
 - **No root README yet, though SPEC.md's own "Launch checklist" and PLAN.md's "Definition of
   Done" both require one** ("README covers install, run, config reference, JSON schema, and known
   limitations" / "...documents install, every CLI command, the config reference, the route JSON

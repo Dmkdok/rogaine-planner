@@ -54,8 +54,9 @@ earlier work, not touched this session.
      above the bound — changed to 20 (still far more than the fixture's 2 reachable route sets, so
      the test still exercises the same behaviour). +8 tests (bound checks in `test_models.py`,
      `test_app.py`'s `TestValidation`/`TestWorkerErrorHandling`).
-   - Write root `README.md` (install, CLI commands, config reference, route JSON schema, known
-     limitations).
+   - ~~Write root `README.md`~~ — done, 2026-09-05: covers install (Docker + best-effort host),
+     every CLI command with its flags, the web viewer flow, the config section reference, the
+     `route.json` schema (validated example), the controls CSV format, and known limitations.
    - ~~T078 needs a plan-approval pass~~ — done, 2026-09-05 (`утверждаю`). Next session: implement
      it (TASKS.md/ADR-016 carry the full DoD).
 
@@ -207,8 +208,8 @@ count taken from the dot tally, all dots, zero `F`/`E`).
 - [x] Phase 5 tests green — 372 passed, 2026-09-02
 - [x] Phase 6 review clean — `/review-product`, verdict PASS, 2026-09-02 (docs/REVIEW.md; two
   non-blocking follow-ups are items 1-2 above)
-- [ ] Phase 7 handoff — needs README.md (item 2 above) and the owner accepting a route on their own
-  map (Launch checklist item, needs a plannable real map — same corpus blocker as item 3)
+- [ ] Phase 7 handoff — README.md done (2026-09-05); still needs the owner accepting a route on
+  their own map (Launch checklist item, needs a plannable real map — same corpus blocker as item 3)
 
 ## Test report
 
