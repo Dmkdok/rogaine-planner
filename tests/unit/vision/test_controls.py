@@ -29,6 +29,14 @@ from rogaine.vision.controls import _detect_circles, detect_controls, purple_mas
 _REAL_SCAN_DIR = Path(__file__).resolve().parents[3] / "data" / "maps" / "grid-lines-red-controls"
 _REAL_SCAN_PATH = _REAL_SCAN_DIR / "map.jpeg"
 
+#: ADR-018 (I2): a second real scan whose controls are ISOM purple, not red -- used only to check
+#: `purple_mask`'s false-positive *rate* (brown contour ink leaking into the red band), never
+#: recall/precision (no `meta.toml`/dpi ships with it, so `detect_controls` cannot be run against
+#: it). Gitignored per ADR-010, same as `_REAL_SCAN_PATH` above.
+_OZERO_SCAN_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "maps" / "ozero-shchuche" / "map.jpg"
+)
+
 
 def _match_detections(
     truth: list[Control], detections: list[Control], tol: float
@@ -366,3 +374,35 @@ class TestRealScanRedInk:
         assert recall >= 0.90, report
         assert precision >= 0.90, report
         assert hub_ok, f"hub not found within {match_tol}px of the true centre"
+
+
+class TestInkHueFalsePositiveRateOnOzeroShchuche:
+    """ADR-018 (I2): `purple_mask` flagged 6.82% of this file (measured once, T079's own baseline
+    session), 3.5x `grid-lines-red-controls`' 1.93% (`TestRecallPrecisionOnFixture` and
+    `TestRealScanRedInk` above hold that file's own floor). 88% of the flagged pixels were brown
+    contour ink (mean RGB (161, 106, 90)) passing the red band's then-shared 60/60
+    saturation/value floor, not real control ink (only 12% were true purple, mean RGB
+    (234, 66, 221)). This file carries no `meta.toml`/dpi, so only the pixel-level `purple_mask`
+    primitive is testable here -- the same constraint `TestRealScanRedInk` documents for its own
+    file's `test_purple_mask_flags_the_real_red_ink`.
+    """
+
+    @pytest.mark.skipif(
+        not _OZERO_SCAN_PATH.is_file(),
+        reason="data/maps/ozero-shchuche/map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_density_dropped_towards_the_red_controls_files_order_of_magnitude(self) -> None:
+        image = np.array(Image.open(_OZERO_SCAN_PATH).convert("RGB"))
+        mask = purple_mask(image, default_config())
+        density = float(mask.sum()) / mask.size
+
+        baseline_density = 0.0682  # measured pre-ADR-018, this file, T079's own baseline session
+        report = (
+            f"purple_mask density on ozero-shchuche is {density:.4f} "
+            f"(pre-fix: {baseline_density:.4f})"
+        )
+        # A regression guard (density must actually have dropped, substantially) plus an absolute
+        # cap keeping it in the same order of magnitude as grid-lines-red-controls' own 1.93%
+        # floor, without hard-coding that file's exact, independently-tuned number here.
+        assert density < baseline_density * 0.5, report
+        assert density < 0.02, report

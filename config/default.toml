@@ -335,28 +335,57 @@ penalty = 2.0
 circle_diameter_mm = 6.0
 circle_diameter_tolerance = 0.35
 # Control/hub ink hue bands (OpenCV HSV ranges: H 0-179, S 0-255, V 0-255). A mask is the union
-# (OR) of every band listed here, all sharing the saturation/value floors below (I1, ADR-011).
-# Purple: around ISOM purple 35_85_0_0.
-# Red: measured, not guessed, from a real hand-marked scan
-# (data/maps/grid-lines-red-controls/map.jpeg, I1) -- sampled every strongly-red pixel (R channel
-# dominant over G and B by >60) and read its HSV. Saturation floor 61-255, value floor 151-255
-# (comfortably above the shared floors below); hue clusters in two bands because red straddles
-# OpenCV's H=0/179 wrap: hue 0-20 held 99% of the red-like pixels (hue=0: 12841px, hue=1: 9218px,
-# tapering off through hue=20: 1px) and 167-179 the wrapped tail (hue=179: 11236px, hue=176:
-# 781px). The low band is capped at 9, short of the full observed 0-20, because ISOM brown and
-# yellow sit right next to red in hue: `tests/fixtures/synth_map.py`'s RENDER_SRGB["brown_100"]
-# is HSV (13, 201, 190) and RENDER_SRGB["yellow_100"] is HSV (20, 191, 253) -- both fully saturated
-# enough to pass the floors below, so a band reaching hue 20 pulled contour lines and open-land
-# fill into the mask too and broke TestHubTriangleDetection (a real regression found running this
-# task's own suite). 0-9 keeps ~95% of the sampled red-ink pixels (hue<=9: 31043/32794) with a
-# clear margin below brown's hue=13.
+# (OR) of every band listed here, all sharing the purple saturation/value floors below (I1,
+# ADR-011). Purple: around ISOM purple 35_85_0_0. Red used to live here too (T073, ADR-011) but
+# moved to its own `red_hue_ranges` below (ADR-018) once a second real scan showed the shared
+# floor here is too permissive for red specifically -- see that comment for why.
 # Renamed from the single `purple_hue_range = [lo, hi]` this replaced (T073, ADR-011): a hand-edited
 # config file still carrying the old key name fails validation (DetectorSettings is extra="forbid")
 # rather than being silently ignored -- rename the key to ink_hue_ranges = [[lo, hi]] (a list of
 # bands, even for just one) to migrate it.
-ink_hue_ranges = [[140, 175], [0, 9], [167, 179]]
+ink_hue_ranges = [[140, 175]]
 purple_min_saturation = 60
 purple_min_value = 60
+# Red control/hub ink, split into its own band list with its own floor (ADR-018, T079). Originally
+# folded into ink_hue_ranges above (T073, ADR-011) and measured off
+# data/maps/grid-lines-red-controls/map.jpeg (I1) the same way: sampled every strongly-red pixel
+# (R channel dominant over G and B by >60) and read its HSV. Saturation floor 61-255, value floor
+# 151-255; hue clusters in two bands because red straddles OpenCV's H=0/179 wrap: hue 0-20 held
+# 99% of the red-like pixels (hue=0: 12841px, hue=1: 9218px, tapering off through hue=20: 1px) and
+# 167-179 the wrapped tail (hue=179: 11236px, hue=176: 781px). The low band is capped at 9, short
+# of the full observed 0-20, because ISOM brown and yellow sit right next to red in hue:
+# `tests/fixtures/synth_map.py`'s RENDER_SRGB["brown_100"] is HSV (13, 201, 190) and
+# RENDER_SRGB["yellow_100"] is HSV (20, 191, 253) -- both fully saturated enough to pass a loose
+# floor, so a band reaching hue 20 pulled contour lines and open-land fill into the mask too and
+# broke TestHubTriangleDetection (a real regression found running T073's own suite). 0-9 keeps
+# ~95% of the sampled red-ink pixels (hue<=9: 31043/32794) with a clear margin below brown's
+# hue=13.
+#
+# ADR-018: a second real scan (data/maps/ozero-shchuche/map.jpg, no meta.toml/dpi, gitignored per
+# ADR-010) showed the *shared* saturation/value floor above (60/60) is too permissive for this red
+# band specifically -- brown contour ink on that file is saturated but dimmer than real red
+# control ink (measured: 88% of that file's then-flagged pixels were brown, mean RGB
+# (161, 106, 90), against 12% true purple, mean RGB (234, 66, 221)), and the red hue band was where
+# nearly all of that brown leaked in. Two changes, both measured against grid-lines-red-controls
+# (must not regress TestRealScanRedInk) and ozero-shchuche (must measurably drop) before landing:
+#  - red_min_saturation/red_min_value raised from the shared 60/60 to this file's own measured
+#    floor, 61/151 (see above) -- exact, not rounded, because the sampled red ink's minimum is
+#    already 61/151: raising further would start cutting into the true ink (grid coverage drops
+#    below the 95% floor above ~s=90), while this exact value loses nothing (still 99.01% coverage
+#    of grid's strict-red pixels, same as the unrestricted 60/60 floor).
+#  - red_min_channel_gap: minimum of (R-G) and (R-B) required within the red band, catching what
+#    the saturation/value floor alone could not -- brown contour ink is saturated enough to pass
+#    almost any S/V floor tried, but its R channel barely leads G/B (grid-lines-red-controls'
+#    strict-red ink, by definition, always has R-G>60 and R-B>60, so a floor of 60 loses zero
+#    coverage there; ozero-shchuche's brown-band pixels mostly sit at R-G/R-B 25-95, so most of
+#    them fail it). Measured on ozero-shchuche: purple_mask density 6.818% -> 1.337% (below
+#    grid-lines-red-controls' own 1.930%, now 1.345% with the same tightened floor); grid-lines-
+#    red-controls' TestRealScanRedInk unaffected (coverage 99.01% >= 95% floor; recall/precision/
+#    hub unchanged, see tests/unit/vision/test_controls.py).
+red_hue_ranges = [[0, 9], [167, 179]]
+red_min_saturation = 61
+red_min_value = 151
+red_min_channel_gap = 60
 hough_dp = 1.2
 hough_param1 = 100
 hough_param2 = 30

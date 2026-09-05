@@ -172,7 +172,7 @@ missing a terrain class, or carrying an unknown key (every table is `extra="forb
 | `[grid]` | Shape thresholds that keep grid/magnetic-north/border lines from misclassifying as water (ADR-012, SPEC F20). |
 | `[linear]` | Nominal printed widths (road/track/footpath) and shape filters (elongation, aspect ratio, minimum length) that split the shared black-ink `road` placeholder into the three linear classes. |
 | `[slope]` | Contour-density blur sigma and the speed penalty it drives (a slope *proxy*, not elevation — ADR-006). |
-| `[detector]` | Control-circle geometry and tolerance, ink hue bands (`ink_hue_ranges`, ADR-011), Hough parameters, the scale multipliers swept for oversized hand-drawn circles (ADR-015), control-number OCR search window and points rule (`first_digit` / `constant` / `csv`). |
+| `[detector]` | Control-circle geometry and tolerance, ink hue bands (`ink_hue_ranges` for purple, `red_hue_ranges` with its own tighter saturation/value/channel-gap floor for red, ADR-011/ADR-018), Hough parameters, the scale multipliers swept for oversized hand-drawn circles (ADR-015), control-number OCR search window and points rule (`first_digit` / `constant` / `csv`). |
 | `[graph]` | Grid downsampling factor and the impassable-terrain cost multiplier. |
 | `[solver]` | Solver strategy/dispatch cap, heuristic time budget and GRASP parameters, seed, alternatives count. |
 | `[rules]` | Default points penalty per minute late. |

@@ -77,13 +77,19 @@ _SCALE_TIE_EPS = 0.02
 
 
 def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
-    """Boolean `(H, W)` mask of pixels inside any of `config.detector.ink_hue_ranges`, the ink both
-    the control circle (703) and the start triangle (701) are printed in.
+    """Boolean `(H, W)` mask of pixels inside any of `config.detector`'s configured ink bands, the
+    ink both the control circle (703) and the start triangle (701) are printed in.
 
     The name predates ADR-011 (I1): the shipped default still leads with ISOM purple 35/85/0/0, but
-    the config now carries a *list* of hue bands so a real scan whose controls are hand-marked in a
-    different ink family -- e.g. red -- is not silently undetected. The returned mask is the union
-    (OR) of the per-band `cv2.inRange` masks, all sharing the same saturation/value floors.
+    the config now carries a *list* of hue bands (`ink_hue_ranges`) so a real scan whose controls
+    are hand-marked in a different ink family -- e.g. red -- is not silently undetected. Red is
+    handled by a second, separate band list, `red_hue_ranges` (ADR-018): a real scan
+    (`data/maps/ozero-shchuche`) showed brown contour ink passing the shared purple/value floor
+    that `ink_hue_ranges` bands use, because brown is saturated but dimmer than real red control
+    ink (mean RGB (161, 106, 90) vs (234, 66, 221) for that file's true purple ink) -- so red gets
+    its own, measured-tighter saturation/value floor plus a red-vs-brown minimum channel-gap check
+    (`min(R-G, R-B) >= red_min_channel_gap`), which the true red ink easily clears but brown does
+    not. The returned mask is the union (OR) of every band's own `cv2.inRange` mask.
 
     *image* is RGB uint8, the convention `rogaine.models.MapContext` and every other vision
     module in this package use -- converted via `cv2.COLOR_RGB2HSV` below, not `BGR2HSV`. OpenCV's
@@ -93,7 +99,7 @@ def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarra
     `RENDER_SRGB["purple_100"]` (`tests/fixtures/synth_map.py`) is RGB `(170, 60, 150)`, which
     converts to HSV `(155, 165, 170)`, comfortably inside the configured hue/saturation/value
     floors. Red *does* wrap around the 0/179 boundary, so its band is configured as two entries
-    straddling the wrap rather than one -- see the comment on `ink_hue_ranges` in
+    straddling the wrap rather than one -- see the comments on `ink_hue_ranges`/`red_hue_ranges` in
     `config/default.toml`.
     """
     if image.ndim != 3 or image.shape[2] != 3:
@@ -109,6 +115,19 @@ def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarra
         lower = np.array([hue_lo, det.purple_min_saturation, det.purple_min_value], dtype=np.uint8)
         upper = np.array([hue_hi, 255, 255], dtype=np.uint8)
         mask |= cv2.inRange(hsv, lower, upper) > 0
+
+    red = np.zeros(image.shape[:2], dtype=bool)
+    for hue_lo, hue_hi in det.red_hue_ranges:
+        lower = np.array([hue_lo, det.red_min_saturation, det.red_min_value], dtype=np.uint8)
+        upper = np.array([hue_hi, 255, 255], dtype=np.uint8)
+        red |= cv2.inRange(hsv, lower, upper) > 0
+    if det.red_min_channel_gap > 0:
+        r = image[..., 0].astype(np.int16)
+        g = image[..., 1].astype(np.int16)
+        b = image[..., 2].astype(np.int16)
+        red &= np.minimum(r - g, r - b) >= det.red_min_channel_gap
+    mask |= red
+
     return mask
 
 

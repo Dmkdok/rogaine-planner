@@ -226,6 +226,15 @@ class DetectorSettings(BaseModel):
     ink_hue_ranges: list[tuple[int, int]] = Field(min_length=1)
     purple_min_saturation: int = Field(ge=0, le=255)
     purple_min_value: int = Field(ge=0, le=255)
+    # Red is split out from ink_hue_ranges (ADR-018): on a real scan (data/maps/ozero-shchuche),
+    # the shared purple_min_saturation/value floor above let brown contour ink pass the red hue
+    # band, because brown is saturated but dimmer than real red control ink. Red gets its own,
+    # measured floor plus a red-vs-brown channel-gap check; every other configured ink colour
+    # (purple today) keeps using the shared floor above.
+    red_hue_ranges: list[tuple[int, int]] = Field(min_length=1)
+    red_min_saturation: int = Field(ge=0, le=255)
+    red_min_value: int = Field(ge=0, le=255)
+    red_min_channel_gap: int = Field(ge=0, le=255)
     hough_dp: float = Field(gt=0.0)
     hough_param1: float = Field(gt=0.0)
     hough_param2: float = Field(gt=0.0)
@@ -238,12 +247,13 @@ class DetectorSettings(BaseModel):
 
     @model_validator(mode="after")
     def _hue_ranges_are_valid_opencv_bands(self) -> DetectorSettings:
-        for lo, hi in self.ink_hue_ranges:
+        for lo, hi in [*self.ink_hue_ranges, *self.red_hue_ranges]:
             if not (0 <= lo <= hi <= 179):
                 raise ValueError(
-                    f"ink_hue_ranges band ({lo}, {hi}) must satisfy 0 <= lo <= hi <= 179 "
-                    "(OpenCV's 0-179 H scale) -- a hue above 179 overflows the uint8 HSV frame "
-                    "purple_mask builds, and lo > hi would silently match nothing"
+                    f"ink_hue_ranges/red_hue_ranges band ({lo}, {hi}) must satisfy "
+                    "0 <= lo <= hi <= 179 (OpenCV's 0-179 H scale) -- a hue above 179 overflows "
+                    "the uint8 HSV frame purple_mask builds, and lo > hi would silently match "
+                    "nothing"
                 )
         return self
 
