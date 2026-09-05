@@ -437,3 +437,58 @@
   (422) instead of deep inside a worker; an unexpected failure of any kind now surfaces to the
   client rather than only `ValueError`/`OSError` ones. No behaviour change for any value already in
   range — every existing test, fixture, and the M7 corpus run stay within bounds.
+
+## ADR-018 — Ink-hue false-positive rate is tightened by measurement; the red band is narrowed, not removed
+- Date: 2026-09-05
+- Status: accepted
+- Context: Iteration I2. Owner bug report ("не видит цифры контролей ... вообще, а контроли
+  распознает ... неправильно"), reproduced on all 13 of the owner's own scans
+  (`docs/iterations/I2-real-scan-detection-failure.md`): `detect_controls` over-detects by 2x-10x
+  and OCR reads ~0% of numbers on every one. Root cause measured on `ozero-shchuche/map.jpg`:
+  `purple_mask` flags 6.82% of the image (3.5x `grid-lines-red-controls`' 1.93%, the file F7's
+  floor is measured against); 88% of the masked pixels sit in `ink_hue_ranges`' red band (ADR-011),
+  mean RGB `(161, 106, 90)` — a brownish contour-line colour, not control ink. Restricting the mask
+  to the purple band alone drops detections on this file from 71 to 21. This is ADR-015's own
+  documented caveat ("a wrong scale producing many same-bucket false fits ... would still win. No
+  evidence of either case exists in this project's corpus") turning out to have evidence once the
+  owner's own scans — never in the corpus ADR-011/015 were tuned or tested against — were run.
+- Decision: Tighten the red band's discriminating power (exact mechanism — narrower
+  saturation/value floor for that band specifically, and/or an added red-vs-brown check such as a
+  minimum `R-G`/`R-B` channel gap — is an implementation-measured choice, not fixed here) rather
+  than removing the red band outright. Removing it would silently regress `grid-lines-red-controls`
+  (ADR-011's whole reason for the band existing: a real scan with every control hand-marked in
+  red). The two existing real-scan assertions this must keep clearing are the actual specification:
+  `TestRealScanRedInk::test_purple_mask_flags_the_real_red_ink` (>=95% coverage of the strict-red
+  ink on `grid-lines-red-controls`) and `::test_recall_and_hub_match_the_true_positions`
+  (recall/precision >=0.90, hub found, same file). If one measured threshold cannot satisfy both
+  that floor and a materially lower false-positive rate on the owner's other scans, that is a
+  finding for the owner, not a reason to quietly loosen either assertion (I2's "Expectations that
+  change: none").
+- Consequences: `config/default.toml`'s `[detector]` gains whatever new/adjusted keys the
+  implementation needs (`DetectorSettings` is `extra="forbid"`, so a stale local config with only
+  the old keys will fail loudly, not silently ignore the new ones — same migration story as
+  ADR-011's own `ink_hue_ranges` rename). `_select_best_scale` and `_detect_hub_triangle` are downstream of
+  `purple_mask` and are re-measured against the tightened mask (T080, T081) rather than assumed
+  fixed by this change alone — the hub-triangle failure on `ozero-shchuche` was independently
+  confirmed to persist even under a mask restricted to the pure purple band, so it has its own,
+  separate cause.
+
+## ADR-019 — The owner's real-scan corpus stays spot-checked, not a full labelled ground-truth set, this iteration
+- Date: 2026-09-05
+- Status: accepted
+- Context: Iteration I2's intake asked how to define "fixed" with no ground-truth CSV for any of
+  the owner's 13 real scans. Producing hand-labelled `(x, y, number)` ground truth for all 13 —
+  the only way to compute exact recall/precision the way F7's fixture and
+  `grid-lines-red-controls` do — is a distinct, disproportionate effort next to fixing the
+  detection defect itself, and ADR-010 already established that these rasters are validation input,
+  never a committed test fixture.
+- Decision: Acceptance for this iteration is the owner manually reviewing 2-3 of their own maps
+  (CLI output and/or the viewer) post-fix and confirming the result looks right by eye — not a new
+  automated floor across the full 13-map corpus. `grid-lines-red-controls` (the one owner scan that
+  already carries a `meta.toml` and hand-verified ground truth) remains the only real scan with a
+  numeric recall/precision assertion in the suite.
+- Consequences: A regression on one of the 10 real scans without a spot-check is not
+  automated-test-visible; it would surface the same way this bug did — an owner running their own
+  map and getting a wrong answer. `docs/TASKS.md`'s M7 gate ("owner runs their own map through both
+  CLI and viewer and accepts the route") is exactly this same open Launch-checklist item — this
+  iteration is a direct attempt to clear it, not a separate track.

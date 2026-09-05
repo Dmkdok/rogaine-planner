@@ -1118,4 +1118,49 @@ the implementer's self-report.
   digits. Degradation is currently safe (`min_ocr_confidence` gate → `number=None` + flag, F8's
   "never silently guessed" holds) but untested at non-base scale — DoD should include a real-scan
   regression test once this lands (`data/maps/grid-lines-red-controls/map.jpeg`'s 13 controls all
-  land at multiplier 2.0 per T076, a real fixture for exactly this gap).
+  land at multiplier 2.0 per T076, a real fixture for exactly this gap). **Pulled into Iteration
+  I2/M9 below** — deps amended to `T076, T079` (shares `vision/controls.py` with T079-T081,
+  serialized after them per M9's ordering note).
+
+## M9 — Real-scan detection/OCR failure on the owner's own scans (Iteration I2, `docs/iterations/I2-real-scan-detection-failure.md`)
+
+> Owner bug report, reproduced on all 13 of the owner's own scans (not the harvested o-gps-center.ru
+> corpus): gross circle over-detection (2x-10x the true count), ~0% OCR read rate, hub not found on
+> 8/13. Root cause measured, not guessed: `purple_mask`'s ADR-011 red band over-matches brown
+> contour-line ink on these scans (88% of matched pixels, real scan `ozero-shchuche`). T079 is the
+> shared-primitive dependency (`purple_mask` itself) — everything else in this milestone, plus T077
+> (M8, pulled in here), reads its output and is serialized after it since all share
+> `vision/controls.py`. See the iteration doc for the full reproduction table and impact map.
+
+- [ ] **T079** — Tighten ink-hue false-positive rate on real scans (F7, ADR-018) — paths:
+  `config/default.toml`, `src/rogaine/vision/controls.py::purple_mask`,
+  `tests/unit/vision/test_controls.py` — deps: none — DoD: `purple_mask` density on
+  `data/maps/ozero-shchuche/map.jpg` measured and reduced from the current 6.82% (measured this
+  session) toward `grid-lines-red-controls`' 1.93% order of magnitude, without regressing
+  `TestRealScanRedInk::test_purple_mask_flags_the_real_red_ink` (>=95% coverage of that file's
+  strict-red ink) or `::test_recall_and_hub_match_the_true_positions` (recall/precision >=0.90, hub
+  found) or `TestPurpleMask`/`TestRecallPrecisionOnFixture`. A new test measures the density drop on
+  `ozero-shchuche` (skipped if the file is absent, ADR-010's rule). If one measured change cannot
+  satisfy both the existing floor and the new scan, stop and report — do not loosen either
+  assertion (ADR-018).
+- [ ] **T080** — `_select_best_scale` tie-break re-measured against high-false-positive scales
+  (ADR-015's documented limitation) — paths: `src/rogaine/vision/controls.py::_select_best_scale`,
+  `tests/unit/vision/test_controls.py` — deps: T079 — DoD: re-run the 13-map reproduction table
+  (iteration doc) after T079 lands. If any map still shows gross over-detection from a losing-scale
+  false-positive volume beating a genuinely better scale inside `_SCALE_TIE_EPS`'s bucket, fix the
+  selection rule (with a new regression test using that map's actual numbers) without touching
+  `TestOversizedRingsBeatABaseScaleDecoy`/`TestSingleScaleSelected`'s existing assertions. If T079
+  alone resolves every measured case, close this task with the measurement recorded — no speculative
+  algorithm change.
+- [ ] **T081** — Hub triangle not found on real scans — paths:
+  `src/rogaine/vision/controls.py::_detect_hub_triangle`, `tests/unit/vision/test_controls.py` —
+  deps: T079 — DoD: hub found on `ozero-shchuche` (confirmed to still fail even under a mask
+  restricted to the pure purple band — a separate cause from T079/T080) and on every owner scan in
+  the reproduction table that actually shows a start triangle in the source map, without changing
+  `TestHubTriangleDetection`'s (synthetic fixture) existing assertion.
+- [ ] **T082** — Owner spot-check across the real-scan corpus (ADR-019) — paths: none (validation
+  only; a throwaway script under `data/maps/` if useful, gitignored like its siblings) — deps:
+  T077, T079, T080, T081 — DoD: re-run `rogaine detect` (and/or the viewer) on 2-3 of the owner's
+  own maps post-fix; owner reviews the output and confirms circle positions, hub, and numbers look
+  right. Recorded in `docs/STATUS.md`, not a new automated floor (ADR-019 — no ground truth exists
+  for these files).

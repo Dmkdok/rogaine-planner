@@ -19,57 +19,61 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   `heuristic_time_budget_s`/`alternatives` (ADR-017, new since `models.py` is frozen), the three
   background workers' `except` widened to bare `except Exception` so no failure can wedge a job at
   `status: "running"` forever. `docker compose run --rm tests` — 447 passed, exit 0 (439 baseline +
-  8 new); `ruff check .` clean.
+  8 new); `ruff check .` clean. **Iteration I2 (real-scan detection/OCR failure) approved
+  2026-09-05** (`утверждаю`) — M9 filed in `docs/TASKS.md`, in progress, not yet implemented.
+
+## Baseline I2
+`docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
+`iteration/I2-vision-recognition-fix` off `master`@640dce9, tree clean apart from one pre-existing,
+unrelated uncommitted change (`docker-compose.yml`, `app` service's host port 8000→8001 — not this
+session's edit, doesn't touch the `tests` service, left alone; owner has not said whether to keep,
+commit or revert it).
 
 ## Resume here
-`master`, tree clean. `iteration/I1-real-scan-vision` merged (`--no-ff`, 2026-09-05) as three
-commits (T076, T078, docs) on top of the branch's own five pre-existing commits — 9 commits total,
-no conflicts. Same session, later: S-001 fixed (ADR-017) and committed. `docker compose run --rm
-tests` — 447 passed, exit 0; `ruff check .` clean (2026-09-05, own re-run post-fix, not trusted
-from any subagent report — no subagent was used for S-001). `iteration/I1-real-scan-vision` branch
-still exists (not deleted) but has nothing further queued on it — the two other worktrees under
-`.claude/worktrees/` (`s001-readme-followups`, `t061-viewer-ui`) are unrelated stray state from
-earlier work, not touched this session.
+`master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`.
+**Iteration I2 approved 2026-09-05, M9 in progress, nothing implemented yet.** Full intake + impact
+map: `docs/iterations/I2-real-scan-detection-failure.md`. New ADRs: ADR-018 (tighten `purple_mask`'s
+red ink band by measurement, don't remove it), ADR-019 (acceptance is the owner spot-checking 2-3
+real scans, not a full ground-truth corpus).
 
-1. **T070 (tiling/mask export) is next in M7, not started.** deps: T016, T017, T078 — all now
-   satisfied. DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over
-   the T078-processed corpus (docs/TASKS.md's own entry has the full recipe: rotation/blur/JPEG
-   augmentation, unknown-fraction tile dropping, train/val split by source map). Recall M7's own
-   gate, though: TASKS.md heads it "Optional, only after the owner accepts the route", and SPEC's
-   Launch checklist item "owner runs their own map through both CLI and viewer and accepts the
-   route" is still unmet — no real owner scan is plannable yet (T078 explicitly left the owner's 15
-   scans untouched, ADR-016's own scoping). Whether to proceed with T070 ahead of that gate being
-   met is a standing choice, not a blocker this session resolved.
-2. **T077 filed, not started** (TASKS.md, M8): `vision/ocr.py::_ocr_crop` sizes its number-search
-   crop from the base scale only; T076 now finds real controls at non-base scales, so OCR on them
-   will crop the wrong window. Currently degrades safely (null + flagged, not a wrong guess).
-3. Still open from before I1 (docs/REVIEW.md's follow-ups):
-   - ~~Fix S-001~~ — done, 2026-09-05 (ADR-017): `le=` bounds added (`SegmentRequest.dpi` 2400 in
-     `web/app.py`, no ADR needed; `RunConfig.time_limit_s` 86400/`heuristic_time_budget_s`
-     600/`alternatives` 20 in the frozen `models.py`, ADR-017 covers that change), the three
-     background workers' `except (ValueError, OSError)` widened to bare `except Exception`. Viewer
-     HTML (`static/index.html`) got matching `max=` attributes on the time-limit/DPI inputs so the
-     UI never trips the new 422 unexpectedly. One pre-existing test broke and was fixed in the same
-     commit: `test_alternatives.py`'s "k larger than available" case used `alternatives=50`, now
-     above the bound — changed to 20 (still far more than the fixture's 2 reachable route sets, so
-     the test still exercises the same behaviour). +8 tests (bound checks in `test_models.py`,
-     `test_app.py`'s `TestValidation`/`TestWorkerErrorHandling`).
-   - ~~Write root `README.md`~~ — done, 2026-09-05: covers install (Docker + best-effort host),
-     every CLI command with its flags, the web viewer flow, the config section reference, the
-     `route.json` schema (validated example), the controls CSV format, and known limitations.
-   - ~~T078 needs a plan-approval pass~~ — done, 2026-09-05 (`утверждаю`). Next session: implement
-     it (TASKS.md/ADR-016 carry the full DoD).
+**Why:** owner reported the app doesn't read control numbers at all and misdetects controls on most
+maps. Reproduced this session on all 13 of the owner's own scans under `data/maps/` (not the
+harvested o-gps-center.ru corpus): 2x-10x over-detection, ~0% OCR read rate on 10/13, hub not found
+on 8/13. Root cause measured on `ozero-shchuche/map.jpg`: `purple_mask` flags 6.82% of the image
+(3.5x `grid-lines-red-controls`' 1.93%) — 88% of the matched pixels are brown contour-line ink
+caught by `ink_hue_ranges`' red band (ADR-011), not control ink. Restricting to the pure purple band
+drops that file's detections from 71 to 21, but hub is still not found even under that clean mask —
+a second, separate cause.
 
-**This session hit an infrastructure issue worth knowing about**: two `Agent` (subagent) calls
-failed mid-task with `oauth_org_not_allowed` / "Your organization has disabled Claude subscription
-access for Claude Code" (one implementer run, one haiku-model harvester run). Both are `Agent`-tool
-API errors, not this project's bug. The implementer's work was not lost — its file edits persisted
-on disk despite the agent's own final report never completing, and were independently re-verified
-in this same session rather than trusted blind. A later `reviewer` subagent call in the same
-session succeeded normally, so this looks transient/intermittent rather than a hard block — but if
-a future session sees the same error, know that subagent tool calls can fail mid-task while still
-having committed real file edits before the failure; check `git status`/`git diff` for real work
-before assuming nothing happened, rather than retrying blind.
+**Next: implement M9's four tasks, in this order (shared file, serial — see the iteration doc):**
+1. **T079** — tighten the red band's discriminating power in `purple_mask`
+   (`vision/controls.py`, `config/default.toml`) without regressing
+   `TestRealScanRedInk`'s two tests or the synthetic-fixture floors. No dependencies, do this first.
+2. **T080** — re-measure `_select_best_scale`'s known tie-break limitation (ADR-015) against the
+   13-map reproduction table after T079; fix only if still broken, else close as measured-no-change.
+3. **T081** — why `_detect_hub_triangle` still misses the hub on `ozero-shchuche` even under a
+   clean purple-only mask.
+4. **T077** (filed earlier, M8, pulled into this iteration, deps now `T076, T079`) — OCR crop
+   sizing from the actual matched scale, not the base scale; needs a `Control`/`models.py` schema
+   addition, which needs its own ADR (`models.py` is frozen, ADR-008).
+5. **T082** — after 1-4, have the owner spot-check 2-3 of their own maps and confirm the result.
+
+Fresh session: `/clear`, then «продолжай по docs/STATUS.md».
+
+Deferred, unrelated to I2: **T070 (tiling/mask export)** still next in M7 after M9, not started —
+deps T016/T017/T078 all satisfied, but M7's own gate ("owner accepts the route" on their own map) is
+exactly what I2 is trying to clear, so T070 stays parked until I2 lands.
+
+**Earlier infrastructure note (kept for reference, from the I1 session):** two `Agent` (subagent)
+calls failed mid-task with `oauth_org_not_allowed` / "Your organization has disabled Claude
+subscription access for Claude Code" (one implementer run, one haiku-model harvester run). Both are
+`Agent`-tool API errors, not this project's bug. The implementer's work was not lost — its file
+edits persisted on disk despite the agent's own final report never completing, and were
+independently re-verified in that same session rather than trusted blind. A later `reviewer`
+subagent call in that session succeeded normally, so this looks transient/intermittent rather than a
+hard block — but if a future session sees the same error, know that subagent tool calls can fail
+mid-task while still having committed real file edits before the failure; check `git status`/`git
+diff` for real work before assuming nothing happened, rather than retrying blind.
 
 ## Iteration I1: real-scan vision robustness (in progress, branch `iteration/I1-real-scan-vision`)
 
