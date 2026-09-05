@@ -1161,7 +1161,7 @@ the implementer's self-report.
   absent) asserts the density drop as a permanent regression guard. No stop-and-report case hit —
   one change cleared both floors. 448 passed (447 baseline + 1 new test), `ruff check .` clean
   (independently re-run, not just trusted from the implementer). See commit fade5fd.
-- [ ] **T080** — `_select_best_scale` tie-break re-measured against high-false-positive scales
+- [x] **T080** — `_select_best_scale` tie-break re-measured against high-false-positive scales
   (ADR-015's documented limitation) — paths: `src/rogaine/vision/controls.py::_select_best_scale`,
   `tests/unit/vision/test_controls.py` — deps: T079 — DoD: re-run the 13-map reproduction table
   (iteration doc) after T079 lands. If any map still shows gross over-detection from a losing-scale
@@ -1170,6 +1170,27 @@ the implementer's self-report.
   `TestOversizedRingsBeatABaseScaleDecoy`/`TestSingleScaleSelected`'s existing assertions. If T079
   alone resolves every measured case, close this task with the measurement recorded — no speculative
   algorithm change.
+
+  **Closed: measured, no change needed.** Re-ran `rogaine detect` on all 13 owner maps post-T079
+  (`--dpi` omitted, auto-probed): counts dropped sharply on the maps T079 targeted (ozero-shchuche
+  71→21, kkm-3-2020 71→21, kkm-5-2020 52→21, kkm-toksovo 159→25, novo-kavgolovsky-lesopark 62→21),
+  held flat or rose slightly elsewhere. Checked every map still above the ~10-20 plausible range
+  (pervomayskoe 41, treugolnoe 58, history-race-primorsk 49, kkm-toksovo 25) for the exact
+  mechanism T080 is scoped to — a losing scale's same-bucket false-positive *count* beating a
+  genuinely better scale. Found: pervomayskoe's and history-race-primorsk's winning scale wins
+  outright (no competing bucket-tie to arbitrate — `_ring_coverage` saturating on solid ink blobs
+  at one scale, out of this task's scope); treugolnoe's multiplier 1.5 beats 1.0 by 3 buckets on
+  coverage, not a tie. kkm-toksovo is the one real instance of the mechanism (multiplier 1.0's 25
+  candidates tie multiplier 1.5's 20 at the same bucket, 1.0 wins on count; 20 of the 25 are shared
+  rings, the other 5 are small-radius candidates near two shared y-coordinates, likely printed
+  digits) — but mild (5-candidate inflation), not the "gross over-detection" the DoD's fix trigger
+  requires. No map meets the DoD's fix-triggering conjunction (gross count *and* tie-break-caused),
+  so no change made to `_select_best_scale`, `TestOversizedRingsBeatABaseScaleDecoy`, or
+  `TestSingleScaleSelected`. 448 passed (unchanged, no test added), `ruff check .` clean.
+  Full post-T079 hub column handed to T081 below (michurinskoe, pervomayskoe, toksovo-zubry,
+  treugolnoe, history-race-2024-michurinskoe found; ozero-shchuche, kkm-3-2020, kkm-5-2020,
+  kkm-toksovo, lembolovo-kkm, novo-kavgolovsky-lesopark, toksovo-1, history-race-primorsk not
+  found — same not-found set as pre-T079, none flipped).
 - [ ] **T081** — Hub triangle not found on real scans — paths:
   `src/rogaine/vision/controls.py::_detect_hub_triangle`, `tests/unit/vision/test_controls.py` —
   deps: T079 — DoD: hub found on `ozero-shchuche` (confirmed to still fail even under a mask
