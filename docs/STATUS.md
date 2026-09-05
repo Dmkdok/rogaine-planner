@@ -3,43 +3,41 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 complete** (iteration I1,
-  real-scan vision robustness): T073-T076 all landed on branch `iteration/I1-real-scan-vision`,
-  independently reviewed (two review rounds, both FAIL-then-fixed — see Iteration I1 below), all 5
-  of I1's exit criteria met. Not yet merged to `master`. M7 in progress: harvest complete
-  (2026-09-04, 204 o-gps-center.ru maps, past the ~200 target, ADR-014). **T078 (per-map
-  best-effort auto-calibration, ADR-016) landed 2026-09-05** — independently reviewed, FAILed
-  (1 Critical, 4 High, 6 Medium), fixed, fix independently re-verified against the real corpus
-  (own read of the diff, own `docker compose run --rm tests` — 439 passed, own `ruff check .`, own
-  tally of all 219 `meta.toml` files, not trusted from the subagent's report). Real corpus run: 45
-  measured / 159 assumed_default / 15 out_of_scope (owner's own scans, never touched) / 1 error /
-  219 total. T070 unblocked — every in-scope map has a `meta.toml`, calibration accuracy no longer
-  gates it (scale is secondary for this corpus; see ADR-016).
+current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 complete and merged to
+  `master`** (iteration I1, real-scan vision robustness): T073-T076 landed, independently reviewed
+  (two review rounds, both FAIL-then-fixed — see Iteration I1 below), all 5 of I1's exit criteria
+  met. M7 in progress: harvest complete (2026-09-04, 204 o-gps-center.ru maps, past the ~200
+  target, ADR-014). **T078 (per-map best-effort auto-calibration, ADR-016) landed 2026-09-05 and
+  merged to `master`** — independently reviewed, FAILed (1 Critical, 4 High, 6 Medium), fixed, fix
+  independently re-verified against the real corpus (own read of the diff, own
+  `docker compose run --rm tests`, own `ruff check .`, own tally of all 219 `meta.toml` files, not
+  trusted from the subagent's report). Real corpus run: 45 measured / 159 assumed_default / 15
+  out_of_scope (owner's own scans, never touched) / 1 error / 219 total. T070 unblocked — every
+  in-scope map has a `meta.toml`, calibration accuracy no longer gates it (scale is secondary for
+  this corpus; see ADR-016).
 
 ## Resume here
-Branch `iteration/I1-real-scan-vision`, **tree has uncommitted changes** (T073-T076, T078 + doc
-updates — not committed this session or the one before, see `git status`/`git diff` before doing
-anything else). `docker compose run --rm tests` — 439 passed, exit 0; `ruff check .` clean
-(2026-09-05, own re-run, not trusted from any subagent report).
+`master`, tree clean. `iteration/I1-real-scan-vision` merged (`--no-ff`, 2026-09-05) as three
+commits (T076, T078, docs) on top of the branch's own five pre-existing commits — 9 commits total,
+no conflicts. `docker compose run --rm tests` — 439 passed, exit 0; `ruff check .` clean
+(2026-09-05, re-run on `master` post-merge, own verification, not trusted from any subagent
+report). `iteration/I1-real-scan-vision` branch still exists (not deleted) but has nothing further
+queued on it — the two other worktrees under `.claude/worktrees/` (`s001-readme-followups`,
+`t061-viewer-ui`) are unrelated stray state from earlier work, not touched this session.
 
-1. **Decide whether/when to commit and merge `iteration/I1-real-scan-vision` to `master`.** M8 and
-   T078 are code-complete and reviewed clean (see below) but nothing from this branch has been
-   committed — the working tree carries the changes raw. Not done automatically since committing
-   wasn't asked for.
-2. **Harvest + T078 both done** (2026-09-04/05). Harvest: self-stopped clean on "target reached
-   (205 rows)" — 204 maps in `data/maps/ogps-<id>/map.jpg`, plus the 15 owner scans = 219 total,
-   past the ~200 target (ADR-014). T078: every in-scope (`ogps-*`) map now has a `meta.toml` (45
-   measured, 159 assumed_default, 1 error) via `src/rogaine/vision/calibrate.py` — layered
-   scale-bar → grid+OCR → circle-diameter detector, `calibration_source`/`calibration_tier` flag
-   which, owner's 15 scans explicitly out-of-scope and untouched. Independently reviewed (FAIL,
-   1 Critical/4 High/6 Medium — the only plausibility guard rejected nothing real), fixed same
-   session, fix re-verified directly against the written files, not just re-reviewed on paper. Full
-   story: `docs/TASKS.md`'s T078 entry, `docs/DECISIONS.md`'s ADR-016. **T070 (tiling/mask export)
-   is next and now unblocked** — not started.
-3. **T077 filed, not started** (TASKS.md, M8): `vision/ocr.py::_ocr_crop` sizes its number-search
+1. **T070 (tiling/mask export) is next in M7, not started.** deps: T016, T017, T078 — all now
+   satisfied. DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over
+   the T078-processed corpus (docs/TASKS.md's own entry has the full recipe: rotation/blur/JPEG
+   augmentation, unknown-fraction tile dropping, train/val split by source map). Recall M7's own
+   gate, though: TASKS.md heads it "Optional, only after the owner accepts the route", and SPEC's
+   Launch checklist item "owner runs their own map through both CLI and viewer and accepts the
+   route" is still unmet — no real owner scan is plannable yet (T078 explicitly left the owner's 15
+   scans untouched, ADR-016's own scoping). Whether to proceed with T070 ahead of that gate being
+   met is a standing choice, not a blocker this session resolved.
+2. **T077 filed, not started** (TASKS.md, M8): `vision/ocr.py::_ocr_crop` sizes its number-search
    crop from the base scale only; T076 now finds real controls at non-base scales, so OCR on them
    will crop the wrong window. Currently degrades safely (null + flagged, not a wrong guess).
-4. Still open from before I1 (docs/REVIEW.md's follow-ups):
+3. Still open from before I1 (docs/REVIEW.md's follow-ups):
    - **Fix S-001** (Medium, security): `SegmentRequest.dpi` (`web/app.py:113`) and
      `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py:122-129`) have a
      lower bound only — an extreme `dpi` can OOM inside `pdfium.render()`, and the worker's
