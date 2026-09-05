@@ -180,6 +180,56 @@ class TestSecurity:
         run_id = _upload(synthetic_map.image)
         assert client.post(f"/api/runs/{run_id}/detect").status_code == 400
 
+    # -- S-001 / ADR-017: upper bounds reject extreme values at the API boundary, before a
+    # background worker ever runs -- validation happens ahead of the run-id lookup, so a
+    # nonexistent run id still 422s rather than 404ing. --
+
+    def test_dpi_above_bound_is_rejected(self) -> None:
+        resp = client.post(
+            "/api/runs/does-not-exist/segment", json={"dpi": 2400.1, "scale": 30000}
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"time_limit_s": 86400.1},
+            {"heuristic_time_budget_s": 600.1},
+            {"alternatives": 21},
+        ],
+    )
+    def test_run_config_field_above_bound_is_rejected(self, overrides: dict) -> None:
+        resp = client.post(
+            "/api/runs/does-not-exist/plan", json=_run_config(**overrides)
+        )
+        assert resp.status_code == 422
+
+
+class TestWorkerErrorHandling:
+    """S-001 / ADR-017: the three background workers used to catch only `(ValueError, OSError)`,
+    so any other failure (a `MemoryError` from an extreme dpi, say) left the job stuck at
+    `status: "running"` forever instead of surfacing to the client.
+    """
+
+    def test_unexpected_error_still_marks_the_job_as_errored(
+        self, synthetic_map, monkeypatch
+    ) -> None:
+        sm = synthetic_map
+        run_id = _upload(sm.image)
+        run_dir = web_app.RUNS_ROOT / run_id
+        map_path = next(run_dir.glob("map.*"))
+        job_id = web_app._create_job(run_id, "segment")
+
+        def _boom(*args: object, **kwargs: object) -> None:
+            raise MemoryError("simulated OOM")
+
+        monkeypatch.setattr(web_app, "load_config", _boom)
+        web_app._segment_worker(job_id, run_dir, map_path, sm.dpi, 1.0, 0)
+
+        job = client.get(f"/api/jobs/{job_id}").json()
+        assert job["status"] == "error"
+        assert "simulated OOM" in job["error"]
+
 
 class TestStaticViewer:
     """T061's `src/rogaine/web/static/**` mount, added alongside its own endpoints above."""

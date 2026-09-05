@@ -19,6 +19,7 @@
 | 014 | o-gps-center.ru scraped maps supplement ADR-010's owner-corpus premise | accepted |
 | 015 | Control-circle/hub detection sweeps multiple size scales, not a fixed ISOM print size | accepted |
 | 016 | Per-map auto-calibration from the printed scale bar, not embedded scan DPI | proposed |
+| 017 | Upper bounds on `RunConfig`'s numeric fields (S-001) | accepted |
 
 ---
 
@@ -413,3 +414,26 @@
   will need real `meters_per_pixel`, not the assumed-default fallback this ADR introduces, so
   `calibration_source` exists precisely so that future work can filter to `"measured"` maps only
   rather than re-deriving this distinction from scratch.
+
+## ADR-017 — Upper bounds on `RunConfig`'s numeric fields (S-001)
+- Date: 2026-09-05
+- Status: accepted
+- Context: docs/REVIEW.md's S-001 (Medium, security): `SegmentRequest.dpi` (`web/app.py`) and
+  `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py`) validate a lower
+  bound only. An extreme `dpi` on a PDF drives `pdfium.render(scale=dpi/72)`
+  (`io/raster.py::load_raster`) toward an arbitrarily large bitmap allocation *before*
+  `MAX_DECODED_PIXELS`'s own cap ever runs (that check is post-decode) — the resulting
+  `MemoryError` isn't `ValueError`/`OSError`, so the background workers' narrow `except` clause
+  didn't catch it and the job hung at `status: "running"` forever instead of erroring. `models.py`
+  is a frozen contract (ADR-008): changing `RunConfig` needs its own ADR.
+- Decision: Add `le=` upper bounds — `dpi` 2400 (`web/app.py`'s `SegmentRequest`, not frozen, no
+  ADR needed for that half), `time_limit_s` 86400 (24h), `heuristic_time_budget_s` 600 (10min),
+  `alternatives` 20 — all judgement calls, generous enough that no real run ever hits them, tight
+  enough to keep a single request's resource use bounded. Widen the three background workers'
+  `except (ValueError, OSError)` to bare `except Exception` (REVIEW.md's own suggested fix) rather
+  than enumerate more exception types one at a time — a job that fails for *any* reason should
+  reach the client as `status: "error"`, never hang at `"running"` forever.
+- Consequences: Rejects a `dpi`/time/`alternatives` value above these ceilings at the API boundary
+  (422) instead of deep inside a worker; an unexpected failure of any kind now surfaces to the
+  client rather than only `ValueError`/`OSError` ones. No behaviour change for any value already in
+  range — every existing test, fixture, and the M7 corpus run stay within bounds.

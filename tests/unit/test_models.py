@@ -124,6 +124,20 @@ class TestRunConfig:
         with pytest.raises(ValidationError):
             RunConfig(base_speed_mps=0.0, time_limit_s=3600)
 
+    # ADR-017 / S-001: upper bounds keep a single run's resource use bounded.
+
+    def test_time_limit_above_bound_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            RunConfig(base_speed_mps=2.0, time_limit_s=86400.1)
+
+    def test_heuristic_time_budget_above_bound_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            RunConfig(base_speed_mps=2.0, time_limit_s=3600, heuristic_time_budget_s=600.1)
+
+    def test_alternatives_above_bound_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            RunConfig(base_speed_mps=2.0, time_limit_s=3600, alternatives=21)
+
 
 class TestRasterStructures:
     def test_map_context_accepts_an_rgb_image(self) -> None:

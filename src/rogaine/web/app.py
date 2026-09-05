@@ -110,7 +110,9 @@ class CalibrationIn(BaseModel):
 class SegmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    dpi: float | None = Field(default=None, gt=0.0)
+    # le=2400 (ADR-017, S-001): an unbounded dpi drives pdfium.render(scale=dpi/72) toward an
+    # arbitrarily large allocation before load_raster's own post-decode pixel cap ever runs.
+    dpi: float | None = Field(default=None, gt=0.0, le=2400.0)
     scale: float | None = Field(default=None, gt=0.0)
     calibrate: CalibrationIn | None = None
     page: int = Field(default=0, ge=0)
@@ -241,7 +243,9 @@ def _segment_worker(
         terrain_map = run_segmentation(image, dpi, mpp, cfg)
         save_terrain_map(run_dir / "terrain.npz", terrain_map)
         _write_run_state(run_dir, dpi=dpi)
-    except (ValueError, OSError) as exc:
+    # Broad on purpose (ADR-017, S-001): any failure -- MemoryError from an extreme dpi included
+    # -- must reach the client as status="error", never leave the job stuck at "running" forever.
+    except Exception as exc:
         _update_job(job_id, status="error", error=str(exc))
         return
     h, w = terrain_map.shape
@@ -260,7 +264,8 @@ def _detect_worker(job_id: str, run_dir: Path, map_path: Path, dpi: float) -> No
         controls = detect_controls(image, dpi, cfg)
         controls, flags = read_control_numbers(image, controls, dpi, cfg)
         write_controls(run_dir / "controls.csv", controls)
-    except (ValueError, OSError) as exc:
+    # Broad on purpose (ADR-017, S-001) -- see _segment_worker.
+    except Exception as exc:
         _update_job(job_id, status="error", error=str(exc))
         return
     # Unlike `detect_cmd`, a missing hub does not fail the job: SPEC user flow 3 has the user add
@@ -311,7 +316,8 @@ def _plan_worker(
 
         write_route_json(run_dir / "route.json", route, run_config)
         write_overlay(run_dir / "route.png", image, route, controls)
-    except (ValueError, OSError) as exc:
+    # Broad on purpose (ADR-017, S-001) -- see _segment_worker.
+    except Exception as exc:
         _update_job(job_id, status="error", error=str(exc))
         return
 

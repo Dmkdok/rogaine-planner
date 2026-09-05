@@ -33,6 +33,9 @@ None.
   own acceptance bar, independent of M6's code quality.
 
 ## Medium / polish
+- ~~**S-001 (security, Medium)**~~ — **fixed 2026-09-05, ADR-017** (see docs/STATUS.md's "Resume
+  here" and its 2026-09-05 Notes entry for the concrete diff and the one test regression it caught
+  and fixed). Left below verbatim as the record of what was found.
 - **S-001 (security, Medium)** — `SegmentRequest.dpi` (`src/rogaine/web/app.py:113`) and
   `RunConfig.heuristic_time_budget_s`/`time_limit_s`/`alternatives` (`src/rogaine/models.py:122-
   129`) validate a lower bound only (`gt=0`/`ge=0`), no upper bound. Verified directly: an extreme

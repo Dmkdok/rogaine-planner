@@ -122,11 +122,13 @@ class RunConfig(BaseModel):
     base_speed_mps: float = Field(
         gt=0.0, description="speed on a road; every terrain scales off it"
     )
-    time_limit_s: float = Field(gt=0.0)
+    # Upper bounds (ADR-017, S-001) are judgement calls -- generous enough that no real run ever
+    # hits them, tight enough to keep one request's resource use bounded.
+    time_limit_s: float = Field(gt=0.0, le=86400.0)
     penalty_per_min: float = Field(default=1.0, ge=0.0)
     strategy: Literal["auto", "exact", "heuristic"] = "auto"
-    heuristic_time_budget_s: float = Field(default=30.0, gt=0.0)
-    alternatives: int = Field(default=3, ge=0)
+    heuristic_time_budget_s: float = Field(default=30.0, gt=0.0, le=600.0)
+    alternatives: int = Field(default=3, ge=0, le=20)
     seed: int = 0
 
 

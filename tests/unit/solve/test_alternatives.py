@@ -183,7 +183,9 @@ class TestHandComputedTwoCandidates:
         assert result.interestingness == 0.0
 
     def test_k_larger_than_available_returns_only_the_distinct_ones_found(self):
-        controls, matrix, run_config = self._instance(alternatives=50)
+        # 20 is RunConfig.alternatives' own upper bound (ADR-017, S-001) -- still far larger than
+        # the 2 distinct visited-control sets this fixture can ever produce.
+        controls, matrix, run_config = self._instance(alternatives=20)
         result = solve_alternatives(controls, matrix, run_config)
 
         assert len(result.routes) == 2  # never padded, never an error

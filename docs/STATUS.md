@@ -14,16 +14,22 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   trusted from the subagent's report). Real corpus run: 45 measured / 159 assumed_default / 15
   out_of_scope (owner's own scans, never touched) / 1 error / 219 total. T070 unblocked — every
   in-scope map has a `meta.toml`, calibration accuracy no longer gates it (scale is secondary for
-  this corpus; see ADR-016).
+  this corpus; see ADR-016). **S-001 (docs/REVIEW.md, security, Medium) fixed 2026-09-05** —
+  `le=` upper bounds on `SegmentRequest.dpi` and `RunConfig.time_limit_s`/
+  `heuristic_time_budget_s`/`alternatives` (ADR-017, new since `models.py` is frozen), the three
+  background workers' `except` widened to bare `except Exception` so no failure can wedge a job at
+  `status: "running"` forever. `docker compose run --rm tests` — 447 passed, exit 0 (439 baseline +
+  8 new); `ruff check .` clean.
 
 ## Resume here
 `master`, tree clean. `iteration/I1-real-scan-vision` merged (`--no-ff`, 2026-09-05) as three
 commits (T076, T078, docs) on top of the branch's own five pre-existing commits — 9 commits total,
-no conflicts. `docker compose run --rm tests` — 439 passed, exit 0; `ruff check .` clean
-(2026-09-05, re-run on `master` post-merge, own verification, not trusted from any subagent
-report). `iteration/I1-real-scan-vision` branch still exists (not deleted) but has nothing further
-queued on it — the two other worktrees under `.claude/worktrees/` (`s001-readme-followups`,
-`t061-viewer-ui`) are unrelated stray state from earlier work, not touched this session.
+no conflicts. Same session, later: S-001 fixed (ADR-017) and committed. `docker compose run --rm
+tests` — 447 passed, exit 0; `ruff check .` clean (2026-09-05, own re-run post-fix, not trusted
+from any subagent report — no subagent was used for S-001). `iteration/I1-real-scan-vision` branch
+still exists (not deleted) but has nothing further queued on it — the two other worktrees under
+`.claude/worktrees/` (`s001-readme-followups`, `t061-viewer-ui`) are unrelated stray state from
+earlier work, not touched this session.
 
 1. **T070 (tiling/mask export) is next in M7, not started.** deps: T016, T017, T078 — all now
    satisfied. DoD: 512x512 tiles as `image.jpg` + `channels.npy` from palette-generated masks over
@@ -38,13 +44,16 @@ queued on it — the two other worktrees under `.claude/worktrees/` (`s001-readm
    crop from the base scale only; T076 now finds real controls at non-base scales, so OCR on them
    will crop the wrong window. Currently degrades safely (null + flagged, not a wrong guess).
 3. Still open from before I1 (docs/REVIEW.md's follow-ups):
-   - **Fix S-001** (Medium, security): `SegmentRequest.dpi` (`web/app.py:113`) and
-     `RunConfig.time_limit_s`/`heuristic_time_budget_s`/`alternatives` (`models.py:122-129`) have a
-     lower bound only — an extreme `dpi` can OOM inside `pdfium.render()`, and the worker's
-     `except (ValueError, OSError)` doesn't catch `MemoryError`, so the job hangs at `"running"`
-     forever. Add `le=` bounds (`dpi` le=2400, `time_limit_s` le=86400, `heuristic_time_budget_s`
-     le=600, `alternatives` le=20 — judgement calls) and widen the worker's `except` clauses.
-     `models.py` is frozen (ADR-008) — its bounds need a new ADR first; `web/app.py`'s does not.
+   - ~~Fix S-001~~ — done, 2026-09-05 (ADR-017): `le=` bounds added (`SegmentRequest.dpi` 2400 in
+     `web/app.py`, no ADR needed; `RunConfig.time_limit_s` 86400/`heuristic_time_budget_s`
+     600/`alternatives` 20 in the frozen `models.py`, ADR-017 covers that change), the three
+     background workers' `except (ValueError, OSError)` widened to bare `except Exception`. Viewer
+     HTML (`static/index.html`) got matching `max=` attributes on the time-limit/DPI inputs so the
+     UI never trips the new 422 unexpectedly. One pre-existing test broke and was fixed in the same
+     commit: `test_alternatives.py`'s "k larger than available" case used `alternatives=50`, now
+     above the bound — changed to 20 (still far more than the fixture's 2 reachable route sets, so
+     the test still exercises the same behaviour). +8 tests (bound checks in `test_models.py`,
+     `test_app.py`'s `TestValidation`/`TestWorkerErrorHandling`).
    - Write root `README.md` (install, CLI commands, config reference, route JSON schema, known
      limitations).
    - ~~T078 needs a plan-approval pass~~ — done, 2026-09-05 (`утверждаю`). Next session: implement
@@ -858,3 +867,16 @@ same session.
     permanent block — but a future session hitting the same error should know real work can precede
     it (check `git status`/`git diff`), and that falling back to a direct/non-agent approach for a
     mechanical task (like the harvest loop) is a reasonable, tested way to make progress around it.
+- **2026-09-05: S-001 fixed (ADR-017), no subagent used.** `docs/REVIEW.md`'s own suggested fix
+  applied directly: `le=` bounds on `SegmentRequest.dpi`/`RunConfig.time_limit_s`/
+  `heuristic_time_budget_s`/`alternatives`, `except (ValueError, OSError)` widened to bare
+  `except Exception` in `_segment_worker`/`_detect_worker`/`_plan_worker` (the fourth occurrence,
+  `start_segment`'s synchronous dpi/mpp resolution, is not a background worker and was left
+  alone — narrower `except` there is still correct, it turns a bad request into a 400 before any
+  job exists). One real regression caught by the full suite, not by inspection:
+  `test_alternatives.py::test_k_larger_than_available_returns_only_the_distinct_ones_found`
+  constructed `RunConfig(alternatives=50)` specifically to prove "K past what's reachable never
+  pads or errors" — 50 now exceeds the new bound of 20, so the fix broke a real, correct test.
+  Changed to `alternatives=20` (the bound itself): still far more than the fixture's 2 reachable
+  route sets, so the test still proves the same thing. `docker compose run --rm tests`: 439 -> 447
+  passed (own run, not trusted from any subagent since none ran this task); `ruff check .` clean.
