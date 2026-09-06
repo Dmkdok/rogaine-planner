@@ -22,7 +22,7 @@
 | 017 | Upper bounds on `RunConfig`'s numeric fields (S-001) | accepted |
 | 018 | Ink-hue false-positive rate is tightened by measurement; the red band is narrowed, not removed | accepted |
 | 019 | The owner's real-scan corpus stays spot-checked, not a full labelled ground-truth set, this iteration | accepted |
-| 020 | `Control` carries the fitted circle radius, so OCR can size its crop from the matched scale | accepted |
+| 020 | `Control` carries the matched scale's nominal circle radius, so OCR can size its crop from it | accepted |
 
 ---
 
@@ -496,7 +496,7 @@
   CLI and viewer and accepts the route") is exactly this same open Launch-checklist item — this
   iteration is a direct attempt to clear it, not a separate track.
 
-## ADR-020 — `Control` carries the fitted circle radius, so OCR can size its crop from the matched scale
+## ADR-020 — `Control` carries the matched scale's nominal circle radius, so OCR can size its crop from it
 - Date: 2026-09-06
 - Status: accepted
 - Context: T076/ADR-015 made control-circle detection scale-aware (`circle_scale_multipliers`), so a
@@ -510,15 +510,24 @@
   scale — filed as T077 during the T076 review, pulled into this iteration (M9) because it shares
   `vision/controls.py` with T079-T081.
 - Decision: Add one field to `Control`: `radius_px: float | None = Field(default=None, ge=0.0)` —
-  the fitted Hough radius in pixels for a detected circle, `None` for the hub (a triangle has no
-  radius) and for any control this project's own model creates other ways (e.g. a future manual
-  edit). `_detect_circles` (`vision/controls.py`) already computes this radius per Hough candidate
-  and discards it after `_ring_coverage` filtering; it is threaded through `_select_best_scale`
-  (widening its candidate tuples from `(x, y, coverage)` to `(x, y, r, coverage)`) and into
-  `detect_controls`'s `Control(...)` construction instead of being dropped. `_ocr_crop` (T077, not
-  this ADR) uses `control.radius_px` when present, falling back to `circle_radius_px(dpi)`'s own
-  mid-value for a `Control` where it's `None` — so a caller that never sets it keeps today's exact
-  behaviour, this is additive, not a breaking change to the frozen contract's existing fields.
+  `None` for the hub (a triangle has no radius) and for any control this project's own model
+  creates other ways (e.g. a future manual edit). `_detect_circles` (`vision/controls.py`) computes
+  this per Hough candidate and previously discarded it after `_ring_coverage` filtering; it is
+  threaded through `_select_best_scale` (widening its candidate tuples from `(x, y, coverage)` to
+  `(x, y, r, coverage)`) and into `detect_controls`'s `Control(...)` construction instead of being
+  dropped. **`r` is the matched multiplier's own nominal mid radius (`(r_min + r_max) / 2` at that
+  scale), not Hough's raw per-candidate fit — measured, not the first design tried.** Threading the
+  raw fit through directly regressed `TestReadsNumbersOnFixture` on the clean synthetic fixture
+  from 11/12 to 9/12: Hough's per-circle radius jitters roughly ±10% around the nominal mid-radius
+  even at the base scale, and `_ocr_crop`'s crop-margin constants
+  (`_CROP_MARGIN_FACTOR`/`_CIRCLE_MASK_RADIUS_FACTOR`) were tuned against the noiseless nominal
+  value, not that jitter. Using the nominal mid radius instead removes the regression entirely and
+  is bit-identical to `_ocr_crop`'s own pre-T077 fallback for any base-scale (multiplier 1.0)
+  control, since that fallback already computed the same `(r_min + r_max) / 2` from
+  `circle_radius_px(dpi)` — so this change is strictly additive: only a control matched at a
+  non-base multiplier sees a different (correctly larger) crop. `_ocr_crop` (T077, not this ADR)
+  uses `control.radius_px` when present, falling back to `circle_radius_px(dpi)`'s own mid-value
+  for a `Control` where it's `None`.
 - Consequences: `Control`'s JSON shape gains one optional key; every existing constructor call
   (fixtures, CLI, tests, the web layer) that doesn't pass `radius_px` keeps working unchanged
   (pydantic default `None`, `extra="forbid"` only rejects *unknown* keys, not missing optional
@@ -527,3 +536,5 @@
   confidence,source,is_hub`) and does not gain `radius_px` — it never needs to survive a CSV round
   trip, since `detect_controls` and `read_control_numbers` (T077) run back to back on the same
   in-memory list, before `write_controls` is ever called (`cli.py`'s `detect_cmd`/`route_cmd`).
+  A `Control.radius_px` reader elsewhere in future should not assume it is the literal fitted
+  circle edge — it is that scale's nominal size, deliberately smoothed of per-candidate fit noise.

@@ -175,14 +175,17 @@ def _ring_coverage(mask: np.ndarray, cx: float, cy: float, r: float, band: float
 
 
 def _select_best_scale(
-    per_multiplier: list[tuple[float, list[tuple[float, float, float]]]],
-) -> list[tuple[float, float, float]]:
+    per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]],
+) -> list[tuple[float, float, float, float]]:
     """Pick the single scale (multiplier) whose ring-coverage-passing candidates fit most
     convincingly, and return only that scale's candidates (T076, ADR-015).
 
     *per_multiplier* is `(multiplier, candidates)` for every configured multiplier, in sweep
-    order; *candidates* are `(x, y, coverage)` triples that already cleared `_ring_coverage`'s
-    unmodified threshold at that multiplier's own scaled window.
+    order; *candidates* are `(x, y, r, coverage)` tuples that already cleared `_ring_coverage`'s
+    unmodified threshold at that multiplier's own scaled window (`r` is that multiplier's nominal
+    mid radius, not Hough's own per-candidate fit -- see `_detect_circles`'s inline comment for why
+    -- threaded through since T077/ADR-020 purely for `Control.radius_px`; the scoring below never
+    reads it).
 
     A real map draws every control circle at one consistent hand size, so the *correct* scale is
     the one whose fits clear the (unmodified) ring-coverage bar most convincingly on average --
@@ -218,12 +221,12 @@ def _select_best_scale(
     hub is a single expected symbol, so there is no "many corroborating candidates" signal to
     weigh in the first place, which is why the two functions do not share one selection rule.
     """
-    best: list[tuple[float, float, float]] = []
+    best: list[tuple[float, float, float, float]] = []
     best_score: tuple[int, int] = (-1, -1)
     for _mult, candidates in per_multiplier:
         if not candidates:
             continue
-        mean_coverage = sum(c for _, _, c in candidates) / len(candidates)
+        mean_coverage = sum(c for _, _, _, c in candidates) / len(candidates)
         score = (round(mean_coverage / _SCALE_TIE_EPS), len(candidates))
         if score > best_score:
             best_score = score
@@ -233,7 +236,7 @@ def _select_best_scale(
 
 def _detect_circles(
     mask: np.ndarray, dpi: float, config: AppConfig
-) -> list[tuple[float, float, float]]:
+) -> list[tuple[float, float, float, float]]:
     """Hough-circle candidates on the purple mask, filtered to those actually ringed in purple.
 
     Runs once per `config.detector.circle_scale_multipliers` entry, each pass against that
@@ -255,7 +258,7 @@ def _detect_circles(
     # smoothly antialiased one would.
     blurred = cv2.GaussianBlur(mask_u8, (0, 0), 1.0)
 
-    per_multiplier: list[tuple[float, list[tuple[float, float, float]]]] = []
+    per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]] = []
     for mult in det.circle_scale_multipliers:
         r_min = base_r_min * mult
         r_max = base_r_max * mult
@@ -270,13 +273,24 @@ def _detect_circles(
             minRadius=round(r_min),
             maxRadius=round(r_max),
         )
-        candidates: list[tuple[float, float, float]] = []
+        candidates: list[tuple[float, float, float, float]] = []
         if raw is not None:
             band = r_mid * _RING_COVERAGE_BAND_FRACTION
             for x, y, r in raw[0]:
                 coverage = _ring_coverage(mask, float(x), float(y), float(r), band)
                 if coverage >= _RING_COVERAGE_MIN:
-                    candidates.append((float(x), float(y), coverage))
+                    # r_mid (this multiplier's nominal radius), not Hough's own per-candidate `r`:
+                    # measured against the clean fixture (T077/ADR-020), Hough's raw fit jitters
+                    # +-10% around r_mid even at the base scale, and `_ocr_crop`'s crop-margin
+                    # constants (`_CROP_MARGIN_FACTOR`/`_CIRCLE_MASK_RADIUS_FACTOR`) were tuned
+                    # against the noiseless r_mid, not that jitter -- feeding the raw fit through
+                    # regressed 2 of 12 already-passing fixture reads (11/12 -> 9/12) for zero
+                    # benefit, since every candidate at one scale shares the same nominal radius
+                    # anyway. Using r_mid keeps a base-scale (multiplier 1.0) `Control.radius_px`
+                    # bit-identical to `_ocr_crop`'s own pre-T077 fallback value, so base-scale
+                    # controls see no behaviour change at all -- only a control actually matched at
+                    # a non-base multiplier gets a different (correctly larger) crop.
+                    candidates.append((float(x), float(y), r_mid, coverage))
         per_multiplier.append((mult, candidates))
 
     return _select_best_scale(per_multiplier)
@@ -416,9 +430,17 @@ def detect_controls(
 
     circles = _detect_circles(mask, dpi, cfg)
     circles.sort(key=lambda c: (c[1], c[0]))
-    for i, (x, y, confidence) in enumerate(circles, start=1):
+    for i, (x, y, r, confidence) in enumerate(circles, start=1):
         controls.append(
-            Control(id=i, x=x, y=y, confidence=confidence, source="detected", is_hub=False)
+            Control(
+                id=i,
+                x=x,
+                y=y,
+                confidence=confidence,
+                radius_px=r,
+                source="detected",
+                is_hub=False,
+            )
         )
 
     return controls

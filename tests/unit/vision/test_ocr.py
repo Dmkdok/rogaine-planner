@@ -14,8 +14,12 @@ not a bug, and exactly the case F8's "never a guess" line exists for.
 
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
 import numpy as np
 import pytest
+from PIL import Image
 
 from rogaine.config import AppConfig, default_config
 from rogaine.models import Control
@@ -25,6 +29,12 @@ from rogaine.vision.ocr import read_control_number, read_control_numbers
 # The one fixture control close enough to the course boundary that its number is unreadable even
 # with this module's widened crop margin (see the module docstring above and ocr.py's own).
 _UNREADABLE_CONTROL_TRUTH_NUMBER = 83
+
+#: T077/ADR-020's own regression fixture: a real scan whose 13 controls all detect at multiplier
+#: 2.0, not the base ISOM print scale (T076's measurement) -- gitignored per ADR-010, same as
+#: `tests/unit/vision/test_controls.py`'s own `_REAL_SCAN_PATH`.
+_REAL_SCAN_DIR = Path(__file__).resolve().parents[3] / "data" / "maps" / "grid-lines-red-controls"
+_REAL_SCAN_PATH = _REAL_SCAN_DIR / "map.jpeg"
 
 
 def _with_detector(cfg: AppConfig, **overrides: object) -> AppConfig:
@@ -229,3 +239,58 @@ class TestConfidenceCombination:
         updated, _flag = read_control_number(sm.image, control, sm.dpi, default_config())
 
         assert updated.confidence < 1.0  # bounded by the OCR side, not the detection side
+
+
+class TestScaleAwareCropOnRealScan:
+    """T077, ADR-020: `_ocr_crop` now sizes its number-search crop and ring-erase disk from
+    `control.radius_px` (the nominal mid radius for whatever scale the control actually matched,
+    not Hough's own per-candidate fit) when it is set, instead of always assuming the base ISOM
+    print scale. On
+    `data/maps/grid-lines-red-controls/map.jpeg`, T076's own finding was that all 13 controls
+    detect at multiplier 2.0, not the base scale -- a real fixture for exactly the gap this task
+    closes. Regression guard: the read rate must not regress relative to sizing the crop from the
+    base scale unconditionally (simulated below by stripping `radius_px` back to `None`, which is
+    exactly today's pre-T077 fallback path in `_ocr_crop`).
+    """
+
+    @pytest.mark.skipif(
+        not _REAL_SCAN_PATH.is_file(),
+        reason="data/maps/grid-lines-red-controls/map.jpeg absent (ADR-010: gitignored real scan)",
+    )
+    def test_radius_aware_crop_does_not_regress_the_base_scale_read_rate(self) -> None:
+        with (_REAL_SCAN_DIR / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        dpi = float(meta["dpi"])
+        cfg = default_config()
+
+        image = np.array(Image.open(_REAL_SCAN_PATH).convert("RGB"))
+        detections = detect_controls(image, dpi, cfg)
+        circles = [c for c in detections if not c.is_hub]
+        assert len(circles) == 13, f"expected 13 detected circles, got {len(circles)}"
+
+        r_min, r_max = cfg.detector.circle_radius_px(dpi)
+        for c in circles:
+            assert c.radius_px is not None, f"control {c.id} has no radius_px"
+            # T076's own measurement: every control on this file matches multiplier 2.0 -- a
+            # generous window around that, not a tight re-assertion of T076's own scale-selection
+            # test.
+            assert r_min * 2.0 * 0.5 <= c.radius_px <= r_max * 2.0 * 1.5, (
+                f"control {c.id} radius_px={c.radius_px:.2f} not near multiplier 2.0's window "
+                f"[{r_min * 2.0:.2f}, {r_max * 2.0:.2f}]"
+            )
+
+        updated, _flags = read_control_numbers(image, detections, dpi, cfg)
+        n_read_scale_aware = sum(1 for c in updated if not c.is_hub and c.number is not None)
+
+        # Simulate pre-T077 behaviour: a Control with no radius_px falls back to
+        # `circle_radius_px(dpi)`'s base-scale mid-value, exactly as every control did before this
+        # task (`_ocr_crop`'s own docstring/module docstring).
+        base_scale_detections = [c.model_copy(update={"radius_px": None}) for c in detections]
+        updated_base, _flags_base = read_control_numbers(image, base_scale_detections, dpi, cfg)
+        n_read_base_scale = sum(1 for c in updated_base if not c.is_hub and c.number is not None)
+
+        report = (
+            f"scale-aware crop read {n_read_scale_aware}/13 numbers, "
+            f"base-scale-only crop read {n_read_base_scale}/13"
+        )
+        assert n_read_scale_aware >= n_read_base_scale, report

@@ -59,6 +59,20 @@ class TestControl:
         with pytest.raises(ValidationError):
             Control(id=1, x=-1.0, y=0.0)
 
+    def test_radius_px_defaults_to_none(self) -> None:
+        # ADR-020: a Control built any way other than a detected circle (the hub, a CSV
+        # round-trip, a hand-built fixture) carries no radius.
+        c = Control(id=1, x=0.0, y=0.0)
+        assert c.radius_px is None
+
+    def test_radius_px_round_trips(self) -> None:
+        c = Control(id=3, x=10.5, y=20.25, radius_px=42.5)
+        assert Control.model_validate_json(c.model_dump_json()) == c
+
+    def test_rejects_negative_radius_px(self) -> None:
+        with pytest.raises(ValidationError):
+            Control(id=1, x=0.0, y=0.0, radius_px=-1.0)
+
 
 class TestRoute:
     def test_valid_loop_round_trips(self) -> None:

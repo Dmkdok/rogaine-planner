@@ -38,10 +38,17 @@ circle radii" -- a size, not a direction. The synthetic fixture happens to place
 upper-right of its circle (`tests/fixtures/synth_map.py`'s `_place_controls`), but nothing in ISOM
 704 fixes that placement on a real map, so `_ocr_crop` below takes a square window centred on the
 control, reaching past the circle's edge by the configured radius on every side -- a generous
-superset, not a re-derivation of the fixture's one specific offset. The circle's own radius is
-never taken from the incoming `Control` (T020 does not carry it, only centre and detection
-confidence) -- it is re-derived from `dpi` via `config.detector.circle_radius_px`, the same
-fixed-on-paper convention `vision/controls.py` documents at length.
+superset, not a re-derivation of the fixture's one specific offset. The circle's own radius comes
+from `control.radius_px` when it is set (T077/ADR-020: the *nominal* mid radius for whatever scale
+`vision/controls.py`'s `circle_scale_multipliers` sweep actually matched -- not necessarily the
+base ISOM print size, and deliberately not Hough's own noisier per-candidate fit; see
+`_detect_circles`'s inline comment for the measured reason). It is re-derived from `dpi` via
+`config.detector.circle_radius_px`'s own mid-value only when `radius_px` is `None` -- the hub (a
+triangle has no radius) and any `Control` built another way (a CSV round-trip, a hand-built
+fixture, a manual edit), keeping this module's behaviour on those unchanged. A base-scale
+(multiplier 1.0) control's `radius_px` is bit-identical to that fallback value, so this change is
+strictly additive for any control matched at the base scale -- only a non-base-scale match sees a
+different (correctly larger) crop.
 
 Two things about the raw crop measurably defeat Tesseract, found by running the pipeline end to
 end against `clean_synthetic_map` and checking what actually came back (not by guessing and
@@ -108,8 +115,11 @@ def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -
     """The black-ink-on-white crop `pytesseract` reads from: a generous square around *control*,
     purple ink only, with the control's own circle ring erased (module docstring)."""
     det = cfg.detector
-    r_min, r_max = det.circle_radius_px(dpi)
-    r_mid = (r_min + r_max) / 2.0
+    if control.radius_px is not None:
+        r_mid = control.radius_px
+    else:
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_mid = (r_min + r_max) / 2.0
     half = r_mid * (1.0 + det.number_search_radius + _CROP_MARGIN_FACTOR)
 
     h_img, w_img = image.shape[:2]

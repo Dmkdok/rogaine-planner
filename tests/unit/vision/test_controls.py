@@ -22,7 +22,12 @@ from fixtures.synth_map import CIRCLE_DIAMETER_MM, RENDER_SRGB
 from rogaine.config import default_config
 from rogaine.io.raster import resolve_dpi
 from rogaine.models import Control
-from rogaine.vision.controls import _detect_circles, detect_controls, purple_mask
+from rogaine.vision.controls import (
+    _detect_circles,
+    _select_best_scale,
+    detect_controls,
+    purple_mask,
+)
 
 #: I1 (docs/iterations/I1-real-scan-vision.md): a real scan whose controls and hub are hand-marked
 #: in red, not ISOM purple. Gitignored per ADR-010 -- present only on machines the owner handed it
@@ -231,7 +236,7 @@ class TestOversizedRingsBeatABaseScaleDecoy:
             return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
 
         for cx, cy in true_centres:
-            assert any(_dist(cx, cy, x, y) <= r_true / 4.0 for x, y, _ in candidates), (
+            assert any(_dist(cx, cy, x, y) <= r_true / 4.0 for x, y, _r, _ in candidates), (
                 f"no candidate near true ring centre ({cx}, {cy}): {candidates}"
             )
 
@@ -273,12 +278,74 @@ class TestSingleScaleSelected:
             f"(which also falls inside multiplier 1.5's overlapping window), got "
             f"{len(candidates)}: {candidates}"
         )
-        x, y, _ = candidates[0]
+        x, y, _r, _ = candidates[0]
         dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
         assert dist <= r_mid / 4.0, (
             f"candidate at ({x:.1f}, {y:.1f}) is {dist:.2f}px from the true centre "
             f"({cx}, {cy}), tol={r_mid / 4.0:.2f}px"
         )
+
+
+class TestRadiusThreadedThroughDetection:
+    """T077, ADR-020: `_detect_circles` widened its candidate tuples from `(x, y, coverage)` to
+    `(x, y, r, coverage)` so `detect_controls` can carry the matched scale's nominal radius into
+    `Control.radius_px` instead of discarding it -- OCR (`vision/ocr.py::_ocr_crop`) then sizes its
+    crop from the control's own matched scale rather than always assuming the base ISOM print size.
+    `r` is that scale's nominal mid radius, not Hough's own per-candidate fit -- see
+    `_detect_circles`'s inline comment for why (raw per-candidate jitter regressed OCR on the
+    clean fixture when this was first tried).
+    """
+
+    def test_detect_circles_candidates_are_four_tuples_with_a_plausible_radius(self) -> None:
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_mid = (r_min + r_max) / 2.0
+
+        size = round(r_mid * 8)
+        cx = cy = size // 2
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        ring_width = max(1, round(r_mid * 0.15))
+        cv2.circle(image, (cx, cy), round(r_mid), RENDER_SRGB["purple_100"], ring_width)
+
+        mask = purple_mask(image, config)
+        candidates = _detect_circles(mask, dpi, config)
+
+        assert len(candidates) == 1
+        _x, _y, r, coverage = candidates[0]
+        assert r_min * 0.5 <= r <= r_max * 1.5, (
+            f"nominal radius {r:.2f}px is implausible for a true radius of {r_mid:.2f}px"
+        )
+        assert 0.0 <= coverage <= 1.0
+
+    def test_select_best_scale_passes_the_winning_scales_tuples_through_unchanged(self) -> None:
+        losing = [(1.0, 2.0, 3.0, 0.80)]
+        winning = [(10.0, 20.0, 5.0, 0.99), (11.0, 21.0, 5.5, 0.98)]
+
+        result = _select_best_scale([(1.0, losing), (2.0, winning)])
+
+        assert result == winning
+
+    def test_detect_controls_sets_radius_px_on_every_non_hub_control(self, synthetic_map) -> None:
+        sm = synthetic_map
+        detections = detect_controls(sm.image, sm.dpi, default_config())
+        circles = [d for d in detections if not d.is_hub]
+        assert circles, "expected at least one detected control circle"
+
+        r_min, r_max = default_config().detector.circle_radius_px(sm.dpi)
+        for c in circles:
+            assert c.radius_px is not None, f"control {c.id} has no radius_px"
+            assert r_min * 0.5 <= c.radius_px <= r_max * 1.5, (
+                f"control {c.id} radius_px={c.radius_px:.2f} outside plausible window "
+                f"[{r_min:.2f}, {r_max:.2f}]"
+            )
+
+    def test_hub_still_has_no_radius(self, synthetic_map) -> None:
+        sm = synthetic_map
+        detections = detect_controls(sm.image, sm.dpi, default_config())
+        hub = next(d for d in detections if d.is_hub)
+        assert hub.radius_px is None
 
 
 class TestRealScanRedInk:

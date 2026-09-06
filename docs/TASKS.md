@@ -1107,7 +1107,7 @@ the implementer's self-report.
 
   389 tests pass (386 baseline + the real-scan test converting from xfailed to a real pass + 2 new
   tests), `ruff check .` clean.
-- [ ] T077 — Scale-aware OCR crop sizing — paths: `src/rogaine/vision/ocr.py` — deps: T076 — DoD:
+- [x] T077 — Scale-aware OCR crop sizing — paths: `src/rogaine/vision/ocr.py` — deps: T076 — DoD:
   `_ocr_crop` (or its caller) sizes the number-search crop and ring-erase disk from the actual
   matched circle's fitted radius/scale, not `circle_radius_px(dpi)` at the base scale unconditionally
   — `Control` (T020's output, `models.py`, frozen per ADR-008) carries no matched-radius field
@@ -1121,6 +1121,35 @@ the implementer's self-report.
   land at multiplier 2.0 per T076, a real fixture for exactly this gap). **Pulled into Iteration
   I2/M9 below** — deps amended to `T076, T079` (shares `vision/controls.py` with T079-T081,
   serialized after them per M9's ordering note).
+
+  **Landed (ADR-020).** `Control` gains `radius_px: float | None` (`models.py`) — the matched
+  scale's nominal mid radius, `None` for the hub and any `Control` built another way.
+  `_detect_circles`/`_select_best_scale` (`vision/controls.py`) widened their candidate tuples
+  `(x, y, coverage)` → `(x, y, r, coverage)` to thread it through; `_ocr_crop`
+  (`vision/ocr.py`) uses `control.radius_px` when set, else falls back to
+  `circle_radius_px(dpi)`'s own mid-value exactly as before.
+
+  **One real finding, corrected before landing.** The first pass threaded Hough's raw
+  per-candidate fitted radius (ADR-020's literal original wording), which regressed
+  `TestReadsNumbersOnFixture` on the clean synthetic fixture 11/12 → 9/12 — measured cause: Hough's
+  per-circle radius jitters ~±10% around the scale's nominal mid-radius even at the base scale, and
+  `_ocr_crop`'s crop-margin constants (`_CROP_MARGIN_FACTOR`/`_CIRCLE_MASK_RADIUS_FACTOR`) were
+  tuned against the noiseless nominal value, not that jitter. Fixed by threading the multiplier's
+  own nominal `r_mid` instead of the raw fit (same value for every candidate at that scale) — this
+  makes a base-scale (multiplier 1.0) `radius_px` bit-identical to `_ocr_crop`'s pre-T077 fallback,
+  so the fix is strictly additive: only a control matched at a non-base multiplier gets a different
+  (correctly larger) crop. ADR-020 updated to record this as the accepted design, not the first
+  draft. Independently re-verified after the correction (not just trusted from the implementer).
+
+  New tests: `tests/unit/test_models.py::TestControl` (+3, `radius_px` default/round-trip/negative
+  rejection), `tests/unit/vision/test_controls.py::TestRadiusThreadedThroughDetection` (+4, tuple
+  shape and plausible-radius checks on the synthetic fixture), `tests/unit/vision/test_ocr.py::
+  TestScaleAwareCropOnRealScan` (+1, skipif-guarded on `grid-lines-red-controls`). 457 passed (449
+  baseline + 8 new tests), `ruff check .` clean. Re-ran `rogaine detect` on
+  `grid-lines-red-controls/map.jpeg` directly: hub found, 13 circles (all `radius_px` populated,
+  ~multiplier-2.0 window), 3/13 numbers read (up from 0/13 sizing the crop at the base scale
+  unconditionally) — a real, if modest, improvement; the remaining 10 are flagged unreadable, never
+  guessed (ADR-009).
 
 ## M9 — Real-scan detection/OCR failure on the owner's own scans (Iteration I2, `docs/iterations/I2-real-scan-detection-failure.md`)
 

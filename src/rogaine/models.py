@@ -96,6 +96,17 @@ class Control(BaseModel):
     number: int | None = Field(default=None, ge=0)
     points: int | None = Field(default=None, ge=0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    radius_px: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "nominal circle radius in pixels for the scale this control was actually matched at "
+            "(ADR-020) -- the matched scale's own mid radius, not a raw per-candidate Hough fit "
+            "(see vision/controls.py::_detect_circles); None for the hub (a triangle has no "
+            "radius) and for any Control built another way (CSV round-trip, a hand-built "
+            "fixture, a manual edit)"
+        ),
+    )
     source: ControlSource = "detected"
     is_hub: bool = Field(default=False, description="start and finish; exactly one per run")
 
