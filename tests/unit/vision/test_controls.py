@@ -20,6 +20,7 @@ from PIL import Image
 
 from fixtures.synth_map import CIRCLE_DIAMETER_MM, RENDER_SRGB
 from rogaine.config import default_config
+from rogaine.io.raster import resolve_dpi
 from rogaine.models import Control
 from rogaine.vision.controls import _detect_circles, detect_controls, purple_mask
 
@@ -406,3 +407,48 @@ class TestInkHueFalsePositiveRateOnOzeroShchuche:
         # floor, without hard-coding that file's exact, independently-tuned number here.
         assert density < baseline_density * 0.5, report
         assert density < 0.02, report
+
+
+class TestHubFoundOnOzeroShchuche:
+    """T081 regression guard. `_detect_hub_triangle` found no hub on this file even under T079's
+    clean purple mask, for two independent, measured reasons -- both fixed by T081, neither
+    touching `purple_mask`/`_select_best_scale`:
+
+    - This file's start/finish is ISOM's *combined* symbol: the 701 triangle overlapping the 706
+      finish double-circle. The circle's ink bulges one edge of the triangle's contour outward,
+      adding a vertex `cv2.approxPolyDP`'s original fixed epsilon (0.02) could not absorb --
+      `_detect_hub_triangle` never saw a 3-vertex fit at all. `_TRIANGLE_APPROX_EPS_FRACTIONS`
+      widens the search; this file's own triangle first collapses to exactly 3 vertices at
+      eps=0.03 (measured this session).
+    - Independently, `cv2.RETR_EXTERNAL` (the pre-T081 retrieval mode) only returns a contour's
+      outermost nesting level; a shape entirely inside another contour's hole is invisible to it
+      even without touching that contour. `cv2.RETR_LIST` (T081) returns every contour regardless
+      of nesting.
+
+    True hub location measured this session by visual inspection (crop of the mask around the
+    triangle+circle icon, `data/maps/ozero-shchuche/map.jpg`): centre approx (2042, 2000) at this
+    file's own probed DPI (300, read from its JFIF header -- no `meta.toml` ships with this file,
+    same as `TestInkHueFalsePositiveRateOnOzeroShchuche` above, so `resolve_dpi` falls back to the
+    probe exactly as the CLI does with no `--dpi` flag).
+    """
+
+    @pytest.mark.skipif(
+        not _OZERO_SCAN_PATH.is_file(),
+        reason="data/maps/ozero-shchuche/map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_hub_is_found_near_the_true_location(self) -> None:
+        image = np.array(Image.open(_OZERO_SCAN_PATH).convert("RGB"))
+        dpi = resolve_dpi(_OZERO_SCAN_PATH)
+        detections = detect_controls(image, dpi, default_config())
+        hub = next((d for d in detections if d.is_hub), None)
+
+        assert hub is not None, "hub not found on ozero-shchuche"
+        true_x, true_y = 2042.0, 2000.0
+        dist = ((hub.x - true_x) ** 2 + (hub.y - true_y) ** 2) ** 0.5
+        # One true ring diameter's worth of slack (measured ring radius ~53px at this file's
+        # matched scale multiplier 1.5) -- generous, this test only guards existence/rough
+        # position, not the sub-pixel accuracy `TestRealScanRedInk` already covers elsewhere.
+        assert dist <= 106.0, (
+            f"hub detected at ({hub.x:.1f}, {hub.y:.1f}), {dist:.1f}px from truth "
+            f"({true_x}, {true_y})"
+        )

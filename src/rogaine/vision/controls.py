@@ -55,11 +55,33 @@ from rogaine.models import Control
 # real, cited constant, not one pulled from nowhere.
 _TRIANGLE_SIDE_TO_RADIUS = 2.2
 
-# A genuine ISOM 701 triangle is close to equilateral (its three sides come out within ~10% of each
-# other on the fixture); a spurious 3-vertex `approxPolyDP` fit from noise ink routinely collapses
-# one side to near zero (two vertices almost coincide). Rejecting anything more lopsided than this
-# catches that failure mode without needing a size match to already have ruled it out.
-_TRIANGLE_MIN_SIDE_RATIO = 0.5
+# A genuine ISOM 701 triangle is close to equilateral. Originally 0.5 (T020's fixture-only floor);
+# T081 tightened it to 0.85 once the epsilon sweep below could widen far enough to make an
+# unrelated blob's `approxPolyDP` fit collapse to 3 vertices too. Measured real ISOM 701 triangles
+# (the equilateral spec shape, printed not hand-drawn) hold side ratio >=0.97 even through a
+# scan/JPEG pass: 0.980 (`data/maps/grid-lines-red-controls`, already-passing case, untouched by
+# this change since its fit is found at the original eps=0.02), 0.970 (`ozero-shchuche`), 0.977
+# (`kkm-toksovo`). The false-positive this guards against, measured on the same scan: a course
+# logo's overlapping running-figure glyphs on `data/maps/ozero-shchuche/map.jpg` also eventually
+# collapses to 3 vertices under the widened sweep, but only at ratio 0.604-0.634 -- 0.85 sits with
+# wide margin on both sides of that gap.
+_TRIANGLE_MIN_SIDE_RATIO = 0.85
+
+# T081: ISOM's combined start/finish overlaps the 701 triangle with the 706 finish double-circle,
+# and that circle ink bulges one edge of the triangle's contour outward, adding an extra vertex --
+# a single fixed `approxPolyDP` epsilon (this project shipped 0.02 before T081) reduces the fused
+# shape to 4+ vertices, never exactly 3, so the hub was silently dropped. Measured on real scans:
+# `data/maps/ozero-shchuche/map.jpg`'s hub (single ring overlap) first collapses to exactly 3
+# vertices at eps=0.03; `data/maps/kkm-toksovo/map.jpg`'s (a full double-ring overlap, bulging more)
+# needs eps=0.08. Trying eps=0.02 first keeps the already-passing `grid-lines-red-controls` and
+# synthetic-fixture triangles (both fit at eps=0.02, an isolated triangle with no circle to fuse
+# with) matching at the exact same epsilon as before -- this list is a strict superset of the old
+# single-value behaviour, not a replacement of it. A plain, isolated control ring never reaches
+# exactly 3 vertices anywhere in this range on any real scan measured (it plateaus at 4 by
+# eps=0.05-0.06 and stays there through eps=0.10), so widening the search this far does not risk
+# mistaking a circle for a triangle -- `_TRIANGLE_MIN_SIDE_RATIO` above guards the remaining risk
+# (an unrelated blob that does eventually reach 3 vertices, but lopsided).
+_TRIANGLE_APPROX_EPS_FRACTIONS = (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10)
 
 # Radial tolerance band (as a fraction of the mid circle radius) `_ring_coverage` searches around a
 # Hough-fitted radius -- absorbs Hough's own radius-estimation slop without weakening the shape
@@ -264,13 +286,30 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
     """The ISOM 701 start/finish triangle -- the hub, and the only non-circle symbol this project's
     one-hub convention needs recognised.
 
-    `cv2.HoughCircles` cannot find a triangle; this instead looks at the purple mask's
-    connected-component outlines directly and keeps the ones `cv2.approxPolyDP` reduces to three
-    vertices at roughly the expected size (see `_TRIANGLE_SIDE_TO_RADIUS`). The fixture's triangle
-    places its three vertices symmetrically around the hub, so their centroid *is* the hub position
-    exactly, by construction -- using the mean of the three `approxPolyDP` vertices as the returned
-    centre is therefore not an approximation of convenience, it is the same point the fixture itself
-    used to place the triangle.
+    `cv2.HoughCircles` cannot find a triangle; this instead looks at the purple mask's contour
+    outlines directly and keeps the ones `cv2.approxPolyDP` reduces to three vertices at roughly
+    the expected size (see `_TRIANGLE_SIDE_TO_RADIUS`). The fixture's triangle places its three
+    vertices symmetrically around the hub, so their centroid *is* the hub position exactly, by
+    construction -- using the mean of the three `approxPolyDP` vertices as the returned centre is
+    therefore not an approximation of convenience, it is the same point the fixture itself used to
+    place the triangle.
+
+    Two contour-extraction choices were tightened by T081, both measured against real scans that
+    the original (fixture-only-tuned) version silently returned no hub for:
+
+    - `cv2.RETR_LIST`, not `cv2.RETR_EXTERNAL`: on a real scan whose terrain-contour ink forms a
+      dense mesh of closed loops across most of the page, the hub commonly ends up geometrically
+      *inside* one of those loops without ever touching it. `RETR_EXTERNAL` only returns the
+      outermost contour of each nesting chain, so the enclosing loop wins and the triangle nested
+      inside it is silently discarded. Measured on `data/maps/kkm-toksovo/map.jpg`:
+      `RETR_EXTERNAL` finds exactly one contour system-wide (the terrain mesh swallows everything
+      else); `RETR_LIST` recovers 64,366, among which the real hub is the sole match once the
+      approximation and side-ratio checks below are applied.
+    - A widened, ordered `approxPolyDP` epsilon sweep (`_TRIANGLE_APPROX_EPS_FRACTIONS`): ISOM's
+      combined start/finish overlaps the 701 triangle with the 706 finish double-circle, whose ink
+      bulges one edge of the triangle's contour outward, adding an extra vertex that a single fixed
+      epsilon (this project's original 0.02) cannot always absorb. See that constant's own comment
+      for the measurements.
 
     Sweeps `config.detector.circle_scale_multipliers` the same way `_detect_circles` scales its
     radius window (T076, ADR-015), since a hand-drawn triangle at a hub scales with whatever size
@@ -287,15 +326,20 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
     tol = det.circle_diameter_tolerance
 
     mask_u8 = mask.astype(np.uint8) * 255
-    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     triangles: list[tuple[np.ndarray, float]] = []  # (centre, mean side length)
     for contour in contours:
         perimeter = cv2.arcLength(contour, True)
         if perimeter <= 0:
             continue
-        approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-        if len(approx) != 3:
+        approx = None
+        for eps_frac in _TRIANGLE_APPROX_EPS_FRACTIONS:
+            candidate = cv2.approxPolyDP(contour, eps_frac * perimeter, True)
+            if len(candidate) == 3:
+                approx = candidate
+                break
+        if approx is None:
             continue
 
         pts = approx.reshape(-1, 2).astype(np.float64)

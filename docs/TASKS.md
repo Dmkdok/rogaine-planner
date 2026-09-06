@@ -1191,12 +1191,49 @@ the implementer's self-report.
   treugolnoe, history-race-2024-michurinskoe found; ozero-shchuche, kkm-3-2020, kkm-5-2020,
   kkm-toksovo, lembolovo-kkm, novo-kavgolovsky-lesopark, toksovo-1, history-race-primorsk not
   found — same not-found set as pre-T079, none flipped).
-- [ ] **T081** — Hub triangle not found on real scans — paths:
+- [x] **T081** — Hub triangle not found on real scans — paths:
   `src/rogaine/vision/controls.py::_detect_hub_triangle`, `tests/unit/vision/test_controls.py` —
   deps: T079 — DoD: hub found on `ozero-shchuche` (confirmed to still fail even under a mask
   restricted to the pure purple band — a separate cause from T079/T080) and on every owner scan in
   the reproduction table that actually shows a start triangle in the source map, without changing
   `TestHubTriangleDetection`'s (synthetic fixture) existing assertion.
+
+  **Landed.** Two independent, measured causes, neither touching `purple_mask`/`_select_best_scale`:
+  (1) ISOM's combined start/finish overlaps the 701 triangle with the 706 finish double-circle —
+  the circle ink bulges one edge of the triangle's contour outward, adding a vertex the original
+  fixed `approxPolyDP` epsilon (0.02) could never absorb, so no 3-vertex fit was ever produced.
+  Measured: `ozero-shchuche`'s hub first collapses to exactly 3 vertices at eps=0.03,
+  `kkm-toksovo`'s (fuller double-ring overlap) at eps=0.08. (2) `cv2.RETR_EXTERNAL` only returns a
+  contour's outermost nesting level; on a scan whose terrain-contour ink forms a dense mesh of
+  closed loops, the hub commonly sits geometrically inside one of those loops without ever touching
+  it, so it was invisible regardless of vertex count. Measured on `kkm-toksovo`: `RETR_EXTERNAL`
+  finds exactly 1 contour system-wide; `RETR_LIST` recovers 64,366, among which the real hub is the
+  sole match once the epsilon sweep and side-ratio checks apply.
+
+  Fix: `_detect_hub_triangle` switched to `cv2.RETR_LIST`; the single fixed `approxPolyDP` epsilon
+  replaced by an ordered sweep, new constant `_TRIANGLE_APPROX_EPS_FRACTIONS = (0.02, 0.03, 0.04,
+  0.05, 0.06, 0.08, 0.10)`, taking the first epsilon that yields exactly 3 vertices (0.02 tried
+  first, so already-passing fixture/`grid-lines-red-controls` triangles match at the same epsilon
+  as before). Widening the sweep let an unrelated blob (a course logo's overlapping running-figure
+  glyphs on `ozero-shchuche`) also reach 3 vertices at a wider epsilon, so `_TRIANGLE_MIN_SIDE_RATIO`
+  was tightened 0.5→0.85 — measured real ISOM 701 triangles hold side ratio 0.970-0.980 across three
+  real files, the logo's false fit measured 0.604-0.634, so 0.85 sits with wide margin on both sides.
+
+  Hub-found count: 5/13 → 10/13 owner maps (9/12 unique files — kkm-3-2020 duplicates
+  ozero-shchuche byte-for-byte). Remaining 3 measured, not forced: `lembolovo-kkm` and
+  `novo-kavgolovsky-lesopark` — hub ink is fused into a page-spanning terrain/border mesh, no
+  contour-extraction approach recovers a clean triangle without touching border/mask handling
+  (out of this task's scope); `history-race-primorsk` — a genuine, well-formed triangle contour *is*
+  found (side ratio 0.975) but its size falls just below the smallest configured scale multiplier's
+  tolerance window, a `_TRIANGLE_SIDE_TO_RADIUS`/tolerance calibration mismatch for this one file,
+  not a vertex or visibility bug — fixing it means retuning shared scale config, explicitly out of
+  this task's "don't touch `_select_best_scale`" boundary.
+
+  New test `TestHubFoundOnOzeroShchuche` (skipif-guarded on the real scan) added as a permanent
+  regression guard; `TestHubTriangleDetection`'s synthetic-fixture assertions unchanged. 449 passed
+  (448 baseline + 1 new test), `ruff check .` clean (both independently re-run, not just trusted
+  from the implementer). Re-ran `rogaine detect --map data/maps/ozero-shchuche/map.jpg` directly:
+  `hub: found`, 21 circles (matches T080's post-T079 count, unchanged). See commit (pending).
 - [ ] **T082** — Owner spot-check across the real-scan corpus (ADR-019) — paths: none (validation
   only; a throwaway script under `data/maps/` if useful, gitignored like its siblings) — deps:
   T077, T079, T080, T081 — DoD: re-run `rogaine detect` (and/or the viewer) on 2-3 of the owner's
