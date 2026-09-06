@@ -1233,7 +1233,7 @@ the implementer's self-report.
   regression guard; `TestHubTriangleDetection`'s synthetic-fixture assertions unchanged. 449 passed
   (448 baseline + 1 new test), `ruff check .` clean (both independently re-run, not just trusted
   from the implementer). Re-ran `rogaine detect --map data/maps/ozero-shchuche/map.jpg` directly:
-  `hub: found`, 21 circles (matches T080's post-T079 count, unchanged). See commit (pending).
+  `hub: found`, 21 circles (matches T080's post-T079 count, unchanged). See commit 00b1b97.
 - [ ] **T082** — Owner spot-check across the real-scan corpus (ADR-019) — paths: none (validation
   only; a throwaway script under `data/maps/` if useful, gitignored like its siblings) — deps:
   T077, T079, T080, T081 — DoD: re-run `rogaine detect` (and/or the viewer) on 2-3 of the owner's
