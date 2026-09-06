@@ -20,6 +20,9 @@
 | 015 | Control-circle/hub detection sweeps multiple size scales, not a fixed ISOM print size | accepted |
 | 016 | Per-map auto-calibration from the printed scale bar, not embedded scan DPI | proposed |
 | 017 | Upper bounds on `RunConfig`'s numeric fields (S-001) | accepted |
+| 018 | Ink-hue false-positive rate is tightened by measurement; the red band is narrowed, not removed | accepted |
+| 019 | The owner's real-scan corpus stays spot-checked, not a full labelled ground-truth set, this iteration | accepted |
+| 020 | `Control` carries the fitted circle radius, so OCR can size its crop from the matched scale | accepted |
 
 ---
 
@@ -492,3 +495,35 @@
   map and getting a wrong answer. `docs/TASKS.md`'s M7 gate ("owner runs their own map through both
   CLI and viewer and accepts the route") is exactly this same open Launch-checklist item — this
   iteration is a direct attempt to clear it, not a separate track.
+
+## ADR-020 — `Control` carries the fitted circle radius, so OCR can size its crop from the matched scale
+- Date: 2026-09-06
+- Status: accepted
+- Context: T076/ADR-015 made control-circle detection scale-aware (`circle_scale_multipliers`), so a
+  real, hand-drawn control can now be found at a size several times the ISOM base print size.
+  `vision/ocr.py::_ocr_crop` still sizes its number-search crop and ring-erase disk from
+  `circle_radius_px(dpi)` alone — the *base* scale, unconditionally — because `Control` (T020's
+  output, `models.py`, frozen per ADR-008) carries no matched-radius field to size from instead.
+  On a control actually found at a larger multiplier, the crop is too small for the digits it's
+  meant to isolate; today this fails safe (`min_ocr_confidence` gates a bad read to `number=None`
+  plus a flag, never a silent wrong guess, per ADR-009/F8) but is untested and unfixed at non-base
+  scale — filed as T077 during the T076 review, pulled into this iteration (M9) because it shares
+  `vision/controls.py` with T079-T081.
+- Decision: Add one field to `Control`: `radius_px: float | None = Field(default=None, ge=0.0)` —
+  the fitted Hough radius in pixels for a detected circle, `None` for the hub (a triangle has no
+  radius) and for any control this project's own model creates other ways (e.g. a future manual
+  edit). `_detect_circles` (`vision/controls.py`) already computes this radius per Hough candidate
+  and discards it after `_ring_coverage` filtering; it is threaded through `_select_best_scale`
+  (widening its candidate tuples from `(x, y, coverage)` to `(x, y, r, coverage)`) and into
+  `detect_controls`'s `Control(...)` construction instead of being dropped. `_ocr_crop` (T077, not
+  this ADR) uses `control.radius_px` when present, falling back to `circle_radius_px(dpi)`'s own
+  mid-value for a `Control` where it's `None` — so a caller that never sets it keeps today's exact
+  behaviour, this is additive, not a breaking change to the frozen contract's existing fields.
+- Consequences: `Control`'s JSON shape gains one optional key; every existing constructor call
+  (fixtures, CLI, tests, the web layer) that doesn't pass `radius_px` keeps working unchanged
+  (pydantic default `None`, `extra="forbid"` only rejects *unknown* keys, not missing optional
+  ones). `web/app.py`'s `model_dump()` calls pick it up automatically. `io/controls_csv.py`'s
+  `FIELDNAMES` is SPEC F9's own fixed, hand-editable column list (`id,x,y,number,points,
+  confidence,source,is_hub`) and does not gain `radius_px` — it never needs to survive a CSV round
+  trip, since `detect_controls` and `read_control_numbers` (T077) run back to back on the same
+  in-memory list, before `write_controls` is ever called (`cli.py`'s `detect_cmd`/`route_cmd`).
