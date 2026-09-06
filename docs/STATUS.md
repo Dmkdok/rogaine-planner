@@ -20,7 +20,10 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   background workers' `except` widened to bare `except Exception` so no failure can wedge a job at
   `status: "running"` forever. `docker compose run --rm tests` — 447 passed, exit 0 (439 baseline +
   8 new); `ruff check .` clean. **Iteration I2 (real-scan detection/OCR failure) approved
-  2026-09-05** (`утверждаю`) — M9 filed in `docs/TASKS.md`, in progress, not yet implemented.
+  2026-09-05** (`утверждаю`) — M9 filed in `docs/TASKS.md`. **T079, T080, T081, T077 all landed
+  2026-09-06** (commits `fade5fd`, `e6e730a`/`8a70639` docs, `00b1b97`, `7676556` docs, `e7e2017`
+  ADR-020 docs, `a29d752`) — see Resume here for the measured detail on each. Only **T082** (owner
+  spot-check, manual, ADR-019) remains open in M9.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -30,33 +33,51 @@ session's edit, doesn't touch the `tests` service, left alone; owner has not sai
 commit or revert it).
 
 ## Resume here
-`master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`.
-**Iteration I2 approved 2026-09-05, M9 in progress, nothing implemented yet.** Full intake + impact
-map: `docs/iterations/I2-real-scan-detection-failure.md`. New ADRs: ADR-018 (tighten `purple_mask`'s
-red ink band by measurement, don't remove it), ADR-019 (acceptance is the owner spot-checking 2-3
-real scans, not a full ground-truth corpus).
+`master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
+merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
+landed 2026-09-06. Only T082 (owner spot-check, manual, cannot be automated) is left open.** Full
+intake + impact map: `docs/iterations/I2-real-scan-detection-failure.md`. New ADRs: ADR-018 (tighten
+`purple_mask`'s red ink band by measurement), ADR-019 (acceptance is the owner spot-checking 2-3
+real scans), ADR-020 (`Control.radius_px`, added for T077).
 
-**Why:** owner reported the app doesn't read control numbers at all and misdetects controls on most
-maps. Reproduced this session on all 13 of the owner's own scans under `data/maps/` (not the
-harvested o-gps-center.ru corpus): 2x-10x over-detection, ~0% OCR read rate on 10/13, hub not found
-on 8/13. Root cause measured on `ozero-shchuche/map.jpg`: `purple_mask` flags 6.82% of the image
-(3.5x `grid-lines-red-controls`' 1.93%) — 88% of the matched pixels are brown contour-line ink
-caught by `ink_hue_ranges`' red band (ADR-011), not control ink. Restricting to the pure purple band
-drops that file's detections from 71 to 21, but hub is still not found even under that clean mask —
-a second, separate cause.
+**Why (original bug, for context):** owner reported the app doesn't read control numbers at all and
+misdetects controls on most maps. Reproduced on all 13 of the owner's own scans under `data/maps/`:
+2x-10x over-detection, ~0% OCR read rate on 10/13, hub not found on 8/13.
 
-**Next: implement M9's four tasks, in this order (shared file, serial — see the iteration doc):**
-1. **T079** — tighten the red band's discriminating power in `purple_mask`
-   (`vision/controls.py`, `config/default.toml`) without regressing
-   `TestRealScanRedInk`'s two tests or the synthetic-fixture floors. No dependencies, do this first.
-2. **T080** — re-measure `_select_best_scale`'s known tie-break limitation (ADR-015) against the
-   13-map reproduction table after T079; fix only if still broken, else close as measured-no-change.
-3. **T081** — why `_detect_hub_triangle` still misses the hub on `ozero-shchuche` even under a
-   clean purple-only mask.
-4. **T077** (filed earlier, M8, pulled into this iteration, deps now `T076, T079`) — OCR crop
-   sizing from the actual matched scale, not the base scale; needs a `Control`/`models.py` schema
-   addition, which needs its own ADR (`models.py` is frozen, ADR-008).
-5. **T082** — after 1-4, have the owner spot-check 2-3 of their own maps and confirm the result.
+**What actually landed, in order:**
+1. **T079** (`fade5fd`) — `purple_mask`'s red band split off into its own `red_hue_ranges` config
+   surface with a measured floor (61/151) plus a `red_min_channel_gap=60` discriminator, fixing
+   brown contour-line ink (88% of `ozero-shchuche`'s false matches) passing the old shared red
+   floor. Ink density on that file dropped 6.82%→1.34%. 448 passed, `ruff check .` clean.
+2. **T080** (`e6e730a`) — re-measured `_select_best_scale`'s tie-break (ADR-015) against all 13
+   real maps post-T079: no map met the DoD's "gross over-detection *and* tie-break-caused" trigger
+   (one mild 5-candidate case on `kkm-toksovo`, not gross). **Closed with no code change** —
+   measured, not speculative. 448 passed, unchanged.
+3. **T081** (`00b1b97`) — `_detect_hub_triangle` still missed the hub on 8/13 maps even under
+   T079's clean mask. Two independent, measured causes, both now fixed: ISOM's combined
+   start/finish (701 triangle overlapping the 706 finish double-circle — the owner's own hint,
+   confirmed by measurement) adds a vertex a single fixed `approxPolyDP` epsilon couldn't absorb,
+   fixed by a widened epsilon sweep (`_TRIANGLE_APPROX_EPS_FRACTIONS`); `cv2.RETR_EXTERNAL` hid a
+   hub nested inside a terrain-mesh contour's hole, fixed by switching to `cv2.RETR_LIST`.
+   `_TRIANGLE_MIN_SIDE_RATIO` tightened 0.5→0.85 (measured real triangles vs. a false-positive logo
+   blob the wider sweep newly exposed). Hub found on 10/13 maps (was 5/13); the 3 remaining are
+   measured, out of scope (2 have hub ink fused into a page-spanning border/mesh, 1 is a
+   scale-tolerance mismatch needing `_select_best_scale` retuning, explicitly not touched). 449
+   passed, `ruff check .` clean.
+4. **T077** (`a29d752`, schema in `e7e2017`/ADR-020) — `Control.radius_px` (new optional field)
+   carries the matched scale's nominal mid radius; `_ocr_crop` sizes its crop from it instead of
+   always assuming the base ISOM print scale. **One real finding, corrected before landing:** the
+   first design threaded Hough's raw per-candidate fitted radius, which regressed the clean
+   synthetic fixture's OCR read rate 11/12→9/12 (Hough's per-circle fit jitters ~±10% around the
+   nominal radius even at the base scale, and the crop-margin constants were tuned against the
+   noiseless nominal value). Fixed by threading the matched multiplier's own nominal radius instead
+   — bit-identical to the old base-scale behaviour for any base-scale control, so strictly
+   additive. `grid-lines-red-controls` read rate 0/13→3/13. 457 passed, `ruff check .` clean.
+
+**Only remaining M9 task:**
+5. **T082** — owner spot-checks 2-3 of their own real maps (`rogaine detect`/`plan` output and/or
+   the viewer) post-fix and confirms circle positions, hub, and numbers look right (ADR-019 — no
+   automated floor, this is the acceptance gate). Not something a session can do unsupervised.
 
 Fresh session: `/clear`, then «продолжай по docs/STATUS.md».
 
