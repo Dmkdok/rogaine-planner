@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from rogaine import __version__
-from rogaine.config import default_config, load_config
+from rogaine.config import AppConfig, default_config, load_config
 from rogaine.cost.field import compute_cost_field
 from rogaine.cost.graph import build_grid_graph
 from rogaine.cost.travel import build_travel_matrix
@@ -38,6 +38,7 @@ from rogaine.render.preview import write_preview
 from rogaine.solve.alternatives import solve_alternatives
 from rogaine.solve.exact import solve_exact
 from rogaine.solve.heuristic import solve_heuristic
+from rogaine.vision.calibrate import calibrate_map
 from rogaine.vision.controls import detect_controls
 from rogaine.vision.ocr import read_control_numbers
 from rogaine.vision.segment import save_terrain_map
@@ -195,17 +196,42 @@ def _parse_calibration(text: str) -> Calibration:
     return Calibration(x1, y1, x2, y2, meters)
 
 
-def _resolve_mpp(dpi: float, scale: float | None, calibrate: str | None) -> float:
-    """Meters-per-pixel from either `--scale` (+ dpi) or `--calibrate` -- never both, never
-    neither. Shared by `segment` and `plan` (`detect` never needs mpp, only dpi).
+def _resolve_mpp(
+    dpi: float,
+    scale: float | None,
+    calibrate: str | None,
+    auto_scale: bool,
+    image: np.ndarray,
+    config: AppConfig,
+) -> tuple[float, float, str | None]:
+    """Meters-per-pixel from exactly one of `--scale` (+ dpi), `--calibrate`, or `--auto-scale` --
+    never zero, never more than one (ADR-022 extends the original --scale/--calibrate contract
+    with a third, opt-in option). Returns `(mpp, dpi, tier)`: *dpi* passes through unchanged for
+    the two manual paths, or becomes the detector's own measured/implied dpi when `--auto-scale`
+    fires (mirrors `calibrate_corpus`'s use of `CalibrationResult.dpi`, ADR-016) so downstream
+    mm-to-px conversions (segmentation, detection) use the detected value, not a stale probe;
+    *tier* is `None` for the two manual paths, else whichever tier fired (`scale_bar`/`grid`/
+    `circle`, F21). Shared by `segment` and `plan` (`detect` never needs mpp, only dpi).
     """
     if scale is not None and calibrate is not None:
         raise ValueError("pass either --scale or --calibrate, not both")
+    if auto_scale and (scale is not None or calibrate is not None):
+        raise ValueError("pass --auto-scale on its own, not together with --scale or --calibrate")
     if scale is not None:
-        return mpp_from_dpi(dpi, scale)
+        return mpp_from_dpi(dpi, scale), dpi, None
     if calibrate is not None:
-        return _parse_calibration(calibrate).meters_per_pixel
-    raise ValueError("pass --scale (with --dpi) or --calibrate to resolve meters-per-pixel")
+        return _parse_calibration(calibrate).meters_per_pixel, dpi, None
+    if auto_scale:
+        result, _ = calibrate_map(image, config)
+        if result is None:
+            raise ValueError(
+                "auto-scale: no calibration signal found on this map -- pass --scale or "
+                "--calibrate instead"
+            )
+        return mpp_from_dpi(result.dpi, result.scale_denominator), result.dpi, result.source
+    raise ValueError(
+        "pass --scale (with --dpi), --calibrate, or --auto-scale to resolve meters-per-pixel"
+    )
 
 
 @app.command("segment")
@@ -222,6 +248,14 @@ def segment_cmd(
         "--calibrate",
         help="Two-point calibration 'x1,y1,x2,y2,meters' in place of --scale (SPEC F3).",
     ),
+    auto_scale: bool = typer.Option(
+        False,
+        "--auto-scale",
+        help=(
+            "Best-effort automatic scale detection (SPEC F21, ADR-022) in place of --scale/"
+            "--calibrate; reports which tier fired or fails with a clear message."
+        ),
+    ),
     page: int = typer.Option(0, "--page", help="PDF page, 0-based; ignored for other formats."),
     out_dir: Path = typer.Option(
         Path("."), "--out-dir", help="Directory for terrain.npz and terrain_preview.png."
@@ -236,8 +270,14 @@ def segment_cmd(
     try:
         cfg = load_config(config)
         dpi_resolved = resolve_dpi(map_path, user_dpi=dpi)
-        mpp = _resolve_mpp(dpi_resolved, scale, calibrate)
         image = load_raster(map_path, page=page, dpi=dpi_resolved)
+        mpp, dpi_resolved, tier = _resolve_mpp(
+            dpi_resolved, scale, calibrate, auto_scale, image, cfg
+        )
+        if tier is not None:
+            console.print(
+                f"[green]auto-scale:[/] {tier} tier -> {mpp:.4f} m/px, {dpi_resolved:.0f} dpi"
+            )
         terrain_map = run_segmentation(image, dpi_resolved, mpp, cfg)
     except (ValueError, OSError) as exc:
         console.print(f"[red]{exc}[/]")
@@ -321,6 +361,14 @@ def plan_cmd(
         "--calibrate",
         help="Two-point calibration 'x1,y1,x2,y2,meters' in place of --scale (SPEC F3).",
     ),
+    auto_scale: bool = typer.Option(
+        False,
+        "--auto-scale",
+        help=(
+            "Best-effort automatic scale detection (SPEC F21, ADR-022) in place of --scale/"
+            "--calibrate; reports which tier fired or fails with a clear message."
+        ),
+    ),
     controls_path: Path | None = typer.Option(
         None,
         "--controls",
@@ -359,8 +407,14 @@ def plan_cmd(
     try:
         cfg = load_config(config)
         dpi_resolved = resolve_dpi(map_path, user_dpi=dpi)
-        mpp = _resolve_mpp(dpi_resolved, scale, calibrate)
         image = load_raster(map_path, dpi=dpi_resolved)
+        mpp, dpi_resolved, tier = _resolve_mpp(
+            dpi_resolved, scale, calibrate, auto_scale, image, cfg
+        )
+        if tier is not None:
+            console.print(
+                f"[green]auto-scale:[/] {tier} tier -> {mpp:.4f} m/px, {dpi_resolved:.0f} dpi"
+            )
 
         if controls_path is not None:
             controls = read_controls(controls_path)

@@ -16,6 +16,7 @@ from rogaine.cli import app
 from rogaine.config import default_config
 from rogaine.io.controls_csv import write_controls
 from rogaine.models import Control
+from rogaine.vision.calibrate import CalibrationResult
 
 runner = CliRunner()
 
@@ -153,6 +154,60 @@ class TestSegment:
         assert result.exit_code != 0
         assert "--scale" in result.stdout
 
+    def test_auto_scale_reports_the_tier_and_resulting_dpi(self, tmp_path, monkeypatch) -> None:
+        sm = make_synthetic_map(seed=1)
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+        out_dir = tmp_path / "out"
+
+        stub = CalibrationResult(source="circle", scale_denominator=25000.0, dpi=250.0)
+        monkeypatch.setattr(
+            "rogaine.cli.calibrate_map", lambda image, config: (stub, 25000.0)
+        )
+
+        result = runner.invoke(
+            app,
+            ["segment", "--map", str(map_path), "--auto-scale", "--out-dir", str(out_dir)],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "auto-scale" in result.stdout
+        assert "circle" in result.stdout
+        assert "250" in result.stdout
+        assert (out_dir / "terrain.npz").is_file()
+
+    def test_auto_scale_failure_points_at_the_manual_options(self, tmp_path, monkeypatch) -> None:
+        sm = make_synthetic_map(seed=1)
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        monkeypatch.setattr("rogaine.cli.calibrate_map", lambda image, config: (None, None))
+
+        result = runner.invoke(app, ["segment", "--map", str(map_path), "--auto-scale"])
+        assert result.exit_code != 0
+        assert "--scale" in result.stdout
+        assert "--calibrate" in result.stdout
+
+    def test_rejects_auto_scale_together_with_scale(self, tmp_path) -> None:
+        sm = make_synthetic_map(seed=1)
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        result = runner.invoke(
+            app,
+            [
+                "segment",
+                "--map",
+                str(map_path),
+                "--dpi",
+                str(sm.dpi),
+                "--scale",
+                str(sm.scale_denominator),
+                "--auto-scale",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--auto-scale" in result.stdout
+
 
 class TestDetect:
     def test_detects_hub_and_writes_a_controls_csv(self, tmp_path) -> None:
@@ -267,6 +322,56 @@ class TestPlan:
         )
         assert result.exit_code != 0
         assert "not both" in result.stdout
+
+    def test_auto_scale_reports_the_tier_and_completes_the_route(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        sm = make_synthetic_map(seed=3, n_controls=6)
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+        out_dir = tmp_path / "out"
+
+        stub = CalibrationResult(
+            source="circle", scale_denominator=sm.scale_denominator, dpi=sm.dpi
+        )
+        monkeypatch.setattr(
+            "rogaine.cli.calibrate_map",
+            lambda image, config: (stub, sm.scale_denominator),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--map",
+                str(map_path),
+                "--auto-scale",
+                "--heuristic-time-budget",
+                "0.5",
+                "--alternatives",
+                "2",
+                "--out-dir",
+                str(out_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "auto-scale" in result.stdout
+        assert "circle" in result.stdout
+        assert "score" in result.stdout
+        assert (out_dir / "route.json").is_file()
+        assert (out_dir / "route.png").is_file()
+
+    def test_auto_scale_failure_points_at_the_manual_options(self, tmp_path, monkeypatch) -> None:
+        sm = make_synthetic_map(seed=3, n_controls=1)
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        monkeypatch.setattr("rogaine.cli.calibrate_map", lambda image, config: (None, None))
+
+        result = runner.invoke(app, ["plan", "--map", str(map_path), "--auto-scale"])
+        assert result.exit_code != 0
+        assert "--scale" in result.stdout
+        assert "--calibrate" in result.stdout
 
     def test_strategy_exact_above_the_cap_exits_nonzero(self, tmp_path) -> None:
         sm = make_synthetic_map(seed=4, n_controls=1)
