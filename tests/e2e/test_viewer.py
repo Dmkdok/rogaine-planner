@@ -41,6 +41,7 @@ heuristic, so this test carries no seed-flakiness risk of its own.
 
 from __future__ import annotations
 
+import re
 import socket
 import threading
 import time
@@ -227,3 +228,68 @@ class TestFullViewerFlow:
         assert len(route_json["legs"]) == len(route_json["order"]) - 1
         assert route_json["total_seconds"] > 0
         assert route_json["total_meters"] > 0
+
+
+class TestViewerLayout:
+    """T085 (F17, ADR-021): the map viewport and the controls panel are both inside the browser
+    viewport at once -- nothing has to be scrolled out of view to reach the other -- and
+    selecting a marker/table row cross-highlights the other. New behaviour, no prior coverage;
+    reuses `TestFullViewerFlow`'s own upload/calibrate/detect setup rather than duplicating the
+    slow segmentation+detect pipeline in a second test.
+    """
+
+    def test_map_and_controls_visible_together_with_highlight_sync(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        # ADR-021's own bug report scenario: a standard desktop viewport.
+        page.set_viewport_size({"width": 1366, "height": 768})
+        page.goto(_live_server + "/")
+
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+
+        # --- Select the first row: bring the *whole table* into view (not just the one row --
+        # scrolling only the row can leave the table's later rows, and so its full bounding box,
+        # below the fold) and click it -----------------------------------------------------------
+        rows = page.locator("#controls-tbody tr")
+        first_row = rows.first
+        page.locator("#controls-table").scroll_into_view_if_needed()
+        first_row.locator("td").first.click()
+
+        first_id = (first_row.get_attribute("id") or "").removeprefix("control-row-")
+        assert first_id
+
+        # --- Both the map and the (now-visible) controls table fit the browser viewport at
+        # once, with no scroll of either needed to reach the other -- F17/ADR-021's core bar. ---
+        expect(page.locator("#map-viewport")).to_be_in_viewport(ratio=1)
+        expect(page.locator("#controls-table")).to_be_in_viewport(ratio=1)
+
+        # --- Selecting a row highlights its marker (new behaviour, T085) -----------------------
+        expect(first_row).to_have_class(re.compile(r"\brow-selected\b"))
+        first_marker = page.locator(f"#marker-{first_id}")
+        expect(first_marker).to_have_class(re.compile(r"\bmarker--selected\b"))
+
+        # --- ...and vice versa: clicking a different marker moves the highlight to its row -----
+        second_row = rows.nth(1)
+        second_id = (second_row.get_attribute("id") or "").removeprefix("control-row-")
+        assert second_id and second_id != first_id
+        second_marker = page.locator(f"#marker-{second_id}")
+        second_marker.click()
+
+        expect(second_marker).to_have_class(re.compile(r"\bmarker--selected\b"))
+        expect(second_row).to_have_class(re.compile(r"\brow-selected\b"))
+        expect(first_marker).not_to_have_class(re.compile(r"\bmarker--selected\b"))
+        expect(first_row).not_to_have_class(re.compile(r"\brow-selected\b"))

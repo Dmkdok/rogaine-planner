@@ -18,6 +18,7 @@
   --marker-fill: #ffb703;
   --marker-border: #1a1a17;
   --marker-hub-fill: #0b5fff;
+  --row-selected-bg: #dce8ff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,6 +40,7 @@
     --marker-fill: #ffb703;
     --marker-border: #15171b;
     --marker-hub-fill: #7aa8ff;
+    --row-selected-bg: #24344f;
   }
 }
 
@@ -54,6 +56,24 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
   line-height: 1.4;
+}
+
+/* ADR-021: body is a flex column with a *definite* height pinned to the viewport, so `.layout`
+   (the only flex-grow item) is forced to exactly fill whatever's left after the header/status/
+   error rows -- shrinking below its own content's natural height when six stacked panels want
+   more room than that. A `min-height` here instead of `height` would only ever let content grow
+   past the viewport, never shrink it, which defeats the point (the side column would just push
+   past the fold instead of scrolling internally). Below the 900px breakpoint this is neutralised
+   (see that media query) and the page goes back to flowing/scrolling normally. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.app-header,
+.status-message,
+.error-message {
+  flex-shrink: 0;
 }
 
 .skip-link {
@@ -116,14 +136,35 @@ body {
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: 1rem;
   padding: 0 1rem 1rem;
-  align-items: start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 @media (max-width: 900px) {
+  /* Neutralise the pinned/scroll-region split above 900px reverts to below: body's height goes
+     back to a growable minimum, single column, ordinary document flow, whole-page scroll --
+     same as before this task. */
+  body {
+    height: auto;
+    min-height: 100vh;
+  }
   .layout {
     grid-template-columns: 1fr;
   }
+  .map-viewport {
+    flex: none;
+    height: min(70vh, 640px);
+  }
+  .side-column {
+    overflow-y: visible;
+  }
 }
 
+.map-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .map-column h2 {
   font-size: 1rem;
   margin: 0.5rem 0;
@@ -161,7 +202,7 @@ button[aria-pressed="true"] {
 .map-viewport {
   position: relative;
   width: 100%;
-  height: min(70vh, 640px);
+  flex: 1 1 auto;
   min-height: 320px;
   background: var(--canvas-bg);
   border: 1px solid var(--border);
@@ -230,6 +271,12 @@ button[aria-pressed="true"] {
   border-radius: 4px;
   transform: rotate(45deg);
 }
+.marker--selected {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 0 0 4px var(--accent);
+  z-index: 3;
+}
 .marker--hub .marker-label {
   transform: rotate(-45deg);
   display: block;
@@ -267,6 +314,10 @@ button[aria-pressed="true"] {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  min-height: 0;
+  overflow-y: auto;
+  /* ADR-021: this is the panel's own scroll region -- it can grow tall (six stacked panels)
+     without ever pushing `.map-column` down out of the browser viewport. */
 }
 
 .panel {
@@ -360,6 +411,9 @@ td input[type="number"] {
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0.15rem 0.3rem;
+}
+tr.row-selected td {
+  background: var(--row-selected-bg);
 }
 
 .route-summary {

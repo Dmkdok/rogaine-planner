@@ -86,6 +86,7 @@ const state = {
   route: null, // Route once plan succeeds
   visitOrder: new Map(), // control id -> 1-based visiting order, derived from `route`
   mode: "idle", // "idle" | "add" | "calibrate" -- what a canvas click currently does
+  selectedControlId: null, // id of the control whose marker/row are cross-highlighted, or null
   calibration: [], // up to two {x, y} map-pixel points for the calibration line
   mapImage: null, // HTMLImageElement | null -- the raw uploaded map, for canvas background
   detectAttempted: false, // gates the "no hub" warning until a detect result actually exists
@@ -363,8 +364,39 @@ function describeControlForA11y(control) {
   return parts.join(", ");
 }
 
+/** ADR-021: cross-highlight sync -- selecting a marker highlights its table row and vice versa.
+ * Both directions call this same `selectControl`, which only ever toggles a class/ARIA attribute
+ * on the (at most two) affected elements -- no table/marker rebuild, so it's safe to call from
+ * hot paths like pointerdown/focus without disturbing drag state or input focus. */
+function updateSelectionHighlight(prevId, nextId) {
+  for (const id of [prevId, nextId]) {
+    if (id == null) continue;
+    const isSelected = id === nextId;
+    const marker = getMarkerEl(id);
+    if (marker) {
+      marker.classList.toggle("marker--selected", isSelected);
+      if (isSelected) marker.setAttribute("aria-current", "true");
+      else marker.removeAttribute("aria-current");
+    }
+    const row = document.getElementById(`control-row-${id}`);
+    if (row) {
+      row.classList.toggle("row-selected", isSelected);
+      if (isSelected) row.setAttribute("aria-selected", "true");
+      else row.removeAttribute("aria-selected");
+    }
+  }
+}
+
+function selectControl(id) {
+  if (state.selectedControlId === id) return;
+  const prev = state.selectedControlId;
+  state.selectedControlId = id;
+  updateSelectionHighlight(prev, id);
+}
+
 function onMarkerPointerDown(e, controlId) {
   if (e.button !== 0) return;
+  selectControl(controlId);
   e.preventDefault();
   const btn = e.currentTarget;
   btn.setPointerCapture(e.pointerId);
@@ -447,9 +479,14 @@ function createMarkerElement(control) {
   const description = describeControlForA11y(control);
   btn.title = description;
   btn.setAttribute("aria-label", description);
+  if (control.id === state.selectedControlId) {
+    btn.classList.add("marker--selected");
+    btn.setAttribute("aria-current", "true");
+  }
   positionMarkerElement(btn, control);
   btn.addEventListener("pointerdown", (e) => onMarkerPointerDown(e, control.id));
   btn.addEventListener("keydown", (e) => onMarkerKeyDown(e, control.id));
+  btn.addEventListener("focus", () => selectControl(control.id));
   return btn;
 }
 
@@ -497,6 +534,7 @@ function numberInputCell(id, value, { step = 1, min, allowNull = false } = {}, o
 }
 
 function deleteControl(id) {
+  if (state.selectedControlId === id) state.selectedControlId = null;
   state.controls = state.controls.filter((c) => c.id !== id);
   refreshControlsUI();
   saveControlsNow();
@@ -505,6 +543,17 @@ function deleteControl(id) {
 function createControlRow(control) {
   const tr = document.createElement("tr");
   tr.id = `control-row-${control.id}`;
+  if (control.id === state.selectedControlId) {
+    tr.classList.add("row-selected");
+    tr.setAttribute("aria-selected", "true");
+  }
+  // Selecting a row highlights its marker (ADR-021, vice versa of onMarkerPointerDown). Ignore
+  // clicks on the delete button -- the row is about to be removed, not selected.
+  tr.addEventListener("click", (e) => {
+    if (e.target.closest(`#control-${control.id}-delete`)) return;
+    selectControl(control.id);
+  });
+  tr.addEventListener("focusin", () => selectControl(control.id));
 
   const idTd = document.createElement("td");
   idTd.textContent = String(control.id);
