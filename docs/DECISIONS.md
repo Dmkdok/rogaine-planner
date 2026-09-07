@@ -25,6 +25,7 @@
 | 020 | `Control` carries the matched scale's nominal circle radius, so OCR can size its crop from it | accepted |
 | 021 | Viewer layout becomes a fixed split view — map pinned, controls list independently scrollable | accepted |
 | 022 | Auto-calibration is exposed as an opt-in path in the CLI and viewer, not only the M7 corpus tool | accepted |
+| 023 | Real-scan OCR failure is dominated by leftover non-digit ink and ring-erasure undershoot, not crop framing | accepted |
 
 ---
 
@@ -597,3 +598,118 @@
   claim or require a higher one, only that the existing detector becomes reachable and honest about
   its own success or failure. CLI and viewer must report identically (a `Contract`-class change, per
   the iteration's impact map) so the two interfaces don't silently drift.
+
+## ADR-023 — Real-scan OCR failure is dominated by leftover non-digit ink and ring-erasure undershoot, not crop framing
+- Date: 2026-09-07
+- Status: accepted
+- Context: T083 (I3). T077 raised `grid-lines-red-controls` from 0/13 to 3/13 by sizing `_ocr_crop`
+  from `Control.radius_px` instead of the base ISOM scale, but every other real scan stayed
+  unmeasured. Measured `_ocr_crop`/`_read_digits` end to end (via `detect_controls` +
+  `read_control_numbers`, the real pipeline call path, no re-implementation) against all 14
+  raster-bearing directories under `data/maps/` that are the owner's own corpus (ADR-010), excluding
+  `rfar2016-for-stroganov` (`.ocd` only, no raster) and the `ogps-*` o-gps-center.ru scrape
+  (ADR-014, a separate supplementary set, not owner-supplied). `kkm-3-2020/map.jpg` and
+  `ozero-shchuche/map.jpg` are byte-identical (matching sha256
+  `d34e486b3fdcb8090f0028b2b065340cad70eff824a01462a2a64ca3712e44c9`, confirmed), so this is 13
+  unique scans, matching the number already used informally — 416 detected non-hub circles total
+  (395 across the 13 unique files).
+
+  Per-map read rate (controls whose OCR met the shipped `min_ocr_confidence=0.6` floor, same
+  criterion `read_control_number` uses):
+
+  | Map | Read rate |
+  |---|---|
+  | toksovo-1 | 17/21 (81%) |
+  | toksovo-zubry | 11/31 (35%) |
+  | history-race-primorsk | 14/49 (29%) |
+  | treugolnoe | 17/58 (29%) |
+  | michurinskoe | 9/37 (24%) |
+  | grid-lines-red-controls | 3/13 (23%, matches T077's own recorded baseline exactly) |
+  | lembolovo-kkm | 3/20 (15%) |
+  | kkm-3-2020 / ozero-shchuche (duplicate file) | 2/21 (10%) each |
+  | history-race-2024-michurinskoe | 2/37 (5%) |
+  | kkm-5-2020, kkm-toksovo, novo-kavgolovsky-lesopark, pervomayskoe | 0/21, 0/25, 0/21, 0/41 (0%) |
+
+  Corpus-wide: 80/416 read (19%) — measurably above the "effectively 0%" impression the iteration
+  doc opened with, but nowhere near acceptable, and four maps really are 0%. Of the 336 failures,
+  280 (83%) are Tesseract finding **no text at all** (`digits == ""`), not a misread; the remaining
+  56 (17%) recognised something but were rejected — 11 of those are 1-2 clean digits at confidence
+  0.40-0.59, just under the 0.6 floor (e.g. `grid-lines-red-controls` control 11 reads `"60"` at
+  confidence 0.43, matching the large `"60"` visibly printed on that control's own label in the raw
+  crop); the other 45 are lower-confidence, mostly single-digit (27/45) reads consistent with
+  partial/garbled recognition.
+
+  Inspecting actual crops, masks and a drawn overlay of the erasure disk `_ocr_crop` uses
+  (`r_mid * _CIRCLE_MASK_RADIUS_FACTOR`, throwaway script, not committed) against the true printed
+  ring identifies three distinct causes behind the 280 empty reads, plus the 11-strong near-miss
+  cluster as a fourth, smaller effect:
+
+  1. **Leftover non-digit ink defeats `psm 7`'s single-line assumption, even when the crop is
+     correctly framed and the ring is correctly erased.** `novo-kavgolovsky-lesopark` control 1: the
+     ring-erased crop shows a clean, isolated "91" with no visible contamination near it, yet
+     `_read_digits` returns `("", 0.0)` — a squiggly ink trail (a nearby shoreline/contour boundary
+     whose anti-aliased edge pixels pass the configured hue/saturation/value floor) elsewhere in the
+     482x482 crop is enough to break psm 7's "this whole image is one text line" segmentation.
+     `kkm-toksovo` controls 1/5 show the same pattern quantitatively: ring erasure geometry matches
+     the drawn ring almost exactly (overlay-confirmed), digits ("52"/"51") are legible by eye, but
+     `ink_px_in_crop` is 8002 and 4120 against a ~1500-1700px baseline on maps that do read (contour
+     line ink bleeding into the mask on this densely-contoured terrain). This is the single largest
+     contributor by control count — nearly every plain `digits==""` result across every
+     under-50%-reading map fits this shape (circle detected at high confidence, ring erasure
+     geometrically correct, still nothing recognised).
+  2. **The ring-erasure disk undershoots the real printed ring on some scans.** `pervomayskoe`
+     control 5 and `kkm-5-2020` control 1: the overlay shows the true drawn circle extending visibly
+     past the green `r_mid * 1.25` erasure disk — a full, unerased ring outline survives in the crop
+     next to the digits (confirmed in both the raw ink mask and `_ocr_crop`'s own output, not just
+     the overlay). Both maps read 0% across the board. `1.25` was tuned against the synthetic
+     fixture's crisp vector rendering (T021); real JPEG scans widen a printed line's effective stroke
+     via scan blur/compression, and/or `_select_best_scale`'s multiplier ladder
+     (`[1.0, 1.5, 2.0, 2.5, 3.0]`) under-fits these particular scans' true print scale — T083 did not
+     isolate which of the two dominates and flags this open for T084.
+  3. **Circle false positives** (not an OCR bug — `vision/controls.py`'s domain, out of `ocr.py`'s
+     files, noted for completeness): `kkm-toksovo` control 2's "circle" is the round Cyrillic letter
+     "О" inside a map label ("К КОРОБКЕ"), confirmed by the raw crop showing only label text, no
+     digit anywhere in reach; `pervomayskoe` control 32 centres on a "T"-shaped trail-junction
+     symbol. `_read_digits` correctly returns nothing for these (ADR-009's contract holds — no false
+     `points`), but they consume denominator slots that no OCR fix can ever raise.
+  4. **`min_ocr_confidence=0.6` rejects some genuinely-correct reads on real scans.** 11 of 416
+     controls (2.6%) recognised a clean 1-2 digit string at confidence 0.40-0.59 — e.g.
+     `history-race-primorsk` control 37 reads `"58"` at 0.52, and `michurinskoe` alone has three such
+     near-misses (`"38"` at 0.52, `"37"` at 0.49, `"47"` at 0.53) sitting alongside other controls on
+     the same map that read the same-length numbers at 0.9+ — real-scan JPEG noise measurably
+     depresses Tesseract's own confidence estimate below what the synthetic-fixture-tuned floor
+     expects, even for what is very likely a correct read (no ground truth exists to confirm, per
+     ADR-010/ADR-019).
+
+- Decision: T084 should attack mode 1 first — it is the dominant cause (accounts for the bulk of the
+  280 empty reads across every under-performing map) and is squarely `ocr.py`'s own code, unlike mode
+  3. Concrete knobs, in priority order:
+  1. Strip thin, low-area ink before handing the crop to Tesseract — a morphological opening (or a
+     connected-component area/stroke-width filter) on the post-ring-erasure mask, sized so a 4mm-tall
+     digit stroke survives but a hairline contour/boundary trace does not. This is the direct fix for
+     mode 1 and does not touch crop geometry at all.
+  2. Re-measure `_CIRCLE_MASK_RADIUS_FACTOR` against a real scan exhibiting mode 2 (`pervomayskoe`,
+     `kkm-5-2020`), not just the synthetic fixture, and/or widen it conditionally when a full closed
+     ring contour is still detectable in the post-erasure mask (a cheap contour-count check) — this
+     targets mode 2 without letting the fixture's own already-tuned 11/12 regress.
+  3. Once mode 1 is addressed, re-measure whether `min_ocr_confidence` still needs to sit at 0.6 or
+     can drop slightly (e.g. 0.5) to recover mode 4's 11 near-misses — only after mode 1's fix,
+     since a cleaner crop should itself raise confidence on genuine reads, and lowering the floor
+     first (before cleanup) risks admitting more of the 45 low-confidence/garbage reads instead.
+  4. Mode 3 (false-positive circles) is out of `ocr.py`'s scope for T084 (`vision/controls.py`
+     territory) — record it as a known ceiling on any real-scan read-rate number T084 reports (a
+     map with false-positive circles cannot reach 100% no matter how good OCR gets) but do not fold
+     a detection-side fix into T084's DoD.
+- Consequences: T084's fix must not regress the synthetic fixture's existing 11/12 floor
+  (`test_at_least_eleven_of_twelve_controls_read_correctly`) — the fixture has none of mode 1's
+  contour-line contamination or mode 2's oversized rings, so an ink-area filter or a widened erasure
+  factor should be neutral there, but T084 must verify this rather than assume it. OCR stays
+  explicitly non-load-bearing (ADR-009): an unreadable number still emits `points: null` plus a flag,
+  never a guess, regardless of which of these fixes lands. T084's own before/after counts should be
+  reported per-map in the same shape as this ADR's table, not just a single aggregate number, since
+  the corpus is not uniform — a fix effective against mode 1 may leave the 0%-reading mode-2 maps
+  unchanged, and that should be visible, not averaged away. This diagnosis rests on inspecting
+  individual crops and one throwaway overlay script (not committed, gitignored under `data/maps/`)
+  rather than a large labelled sample, so treat the three-mode split as directional — if T084's
+  measured before/after does not follow the shape this ADR predicts (mode-1 fix moving the
+  under-50% maps furthest), that is new information, not a contradiction to paper over.
