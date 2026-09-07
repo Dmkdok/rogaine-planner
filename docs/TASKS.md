@@ -1269,3 +1269,65 @@ the implementer's self-report.
   own maps post-fix; owner reviews the output and confirms circle positions, hub, and numbers look
   right. Recorded in `docs/STATUS.md`, not a new automated floor (ADR-019 — no ground truth exists
   for these files).
+
+## M10 — Viewer UX, scale auto-detection exposure, control-number OCR (Iteration I3, `docs/iterations/I3-viewer-ux-and-detection.md`)
+
+> Three independent workstreams, each internally serial, freely parallel with each other: OCR
+> (T083 -> T084), UI (T085 -> T086, `T085` is the shared-primitive layout row and must land first),
+> and the CLI half of scale-auto (T087, no shared files with the other two). `T088` (the web half of
+> scale-auto) waits on both `T086` (shares `web/static/*`) and `T087` (mirrors its contract) — see
+> the iteration doc's impact map for the full five-question breakdown per item.
+
+- [ ] **T083** — Diagnose control-number OCR failure on the owner's real scans — paths: none
+  (diagnosis only; a throwaway measurement script under `data/maps/`, gitignored like its siblings)
+  — deps: T077 — DoD: measure `_ocr_crop`/`_read_digits`'s actual behaviour against every owner real
+  scan under `data/maps/` that has numbered controls (not just `grid-lines-red-controls`), recording
+  a per-map read rate and the concrete, numbers-backed failure mode for each unread control (crop
+  still misframed, wrong ink surviving the mask, resolution too low for Tesseract's assumptions,
+  digit glyphs occluded by ring/hatching remnants, wrong `psm`/whitelist, etc.) — measured, not
+  guessed, matching this project's own established practice (T079-T081). Findings and the resulting
+  fix design get a new ADR in `DECISIONS.md` and feed T084 directly; no product-code changes in this
+  task.
+- [ ] **T084** — Fix control-number OCR per T083's findings — paths: `src/rogaine/vision/ocr.py`,
+  `config/default.toml` (only if a tunable is implicated), `tests/unit/vision/test_ocr.py` — deps:
+  T083 — DoD: real-scan read rate measurably improves beyond T083's own measured baseline, with the
+  exact before/after counts recorded (same style as T079-T081's entries); the synthetic fixture's
+  existing 11/12 floor (`test_at_least_eleven_of_twelve_controls_read_correctly`) does not regress;
+  OCR stays explicitly non-load-bearing (ADR-009) — an unreadable number still emits `points: null`
+  plus a flag, never a guess.
+- [ ] **T085** — Viewer layout: map and controls list simultaneously visible (F17, ADR-021) — paths:
+  `src/rogaine/web/static/index.html`, `style.css`, `app.js`, `tests/e2e/test_viewer.py` — deps:
+  none — DoD: on a standard viewport (e.g. 1366x768) with a map loaded, the map viewport and the
+  controls table are both visible without scrolling the map out of view to reach a control's number
+  field; a new Playwright assertion (extending `test_viewer.py`) confirms both elements' bounding
+  boxes are within the browser viewport at once after selecting/adding a control; selecting a table
+  row highlights its marker on the map and vice versa (new behaviour, new test — none exists today);
+  the existing A11y non-functional requirement (keyboard-operable, focus visible, labelled, legible
+  light/dark) is re-verified, not just assumed; existing `test_viewer.py` assertions keep passing
+  unmodified.
+- [ ] **T086** — Viewer visual redesign (typography, spacing, colour, table legibility) — paths:
+  `src/rogaine/web/static/style.css`, `index.html` — deps: T085 (same owned files, serialized after
+  the structural fix) — DoD: `tests/e2e/test_viewer.py` stays green with its assertions unmodified;
+  both light and dark palettes stay legible via the file's existing `prefers-color-scheme` token
+  pattern; no columns/fields are clipped or require horizontal scroll to read at the panel's working
+  width; owner reviews a live instance and confirms it reads as more concise/modern than the
+  previous six-stacked-accordion layout — a manual sign-off, no automated "looks modern" floor
+  (same precedent as ADR-019/T082).
+- [ ] **T087** — Wire auto-scale detection into the CLI (F21, ADR-022) — paths: `src/rogaine/cli.py`,
+  `src/rogaine/vision/calibrate.py` (only if a thin single-image wrapper around `calibrate_map` is
+  needed) — deps: none (T078 already landed) — DoD: `segment`/`plan` gain `--auto-scale`, mutually
+  exclusive with `--scale` and `--calibrate` (extends `_resolve_mpp`'s existing "exactly one of the
+  three, never zero, never more than one" contract); on success, prints which tier fired
+  (`scale_bar`/`grid`/`circle`) and the resulting mpp/dpi; on failure, exits with a clear message
+  pointing at `--scale`/`--calibrate`, never a silently guessed default. New test(s) cover both
+  outcomes without needing a real scale-bar map (stub `calibrate_map` or use a detectable synthetic
+  fixture).
+- [ ] **T088** — Wire the same auto-scale option into the web viewer (F21, ADR-022) — paths:
+  `src/rogaine/web/app.py`, `src/rogaine/web/static/index.html`, `app.js`, `api.js` — deps: T086
+  (shares the redesigned Scale panel's markup/styling), T087 (mirrors its outcome semantics/wording
+  so CLI and viewer report auto-scale identically, per ADR-022's Contract classification) — DoD: the
+  "2. Масштаб" panel gains a third, explicit action ("Определить автоматически") alongside the
+  existing ratio/calibrate radios; success populates the existing fields with the detected values
+  and states which tier produced them; failure uses the existing `error-message`/`status-message`
+  pattern with a clear next step (switch to manual entry); a new Playwright case covers both a
+  stubbed success and a stubbed failure; F2/F3's existing tests and flows stay unchanged.

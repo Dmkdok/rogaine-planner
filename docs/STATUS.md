@@ -96,6 +96,40 @@ hard block — but if a future session sees the same error, know that subagent t
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
 
+## Iteration I3: viewer UX, scale auto-detection exposure, control-number OCR (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
+
+Owner request, 2026-09-07, surfaced while attempting T082 (M9/I2's owner spot-check): control
+numbers read on none of the owner's real scans; the viewer's map scrolls out of view while editing a
+control's number, with no way to see which marker belongs to which list row; the parameters/controls
+column is too narrow to read; the owner never found where scale auto-detection is supposed to
+happen. Two real findings while preparing this iteration's intake, both load-bearing for the delta:
+`vision/calibrate.py::calibrate_map` (T078) already implements a 3-tier auto-calibration detector,
+but it is called from exactly one place (`calibrate_corpus`, the M7 training-corpus tool) — neither
+`cli.py` nor `web/app.py` ever calls it, by ADR-016's own explicit scope and SPEC's `## Non-goals`
+line, not a bug; the viewer's `.layout` grid stacks six `<details>` panels in a fixed 380px column
+with no sticky/independent-scroll map region, confirmed structurally as the mechanism of the
+reported layout bug. Full intake + impact map: `docs/iterations/I3-viewer-ux-and-detection.md`. New
+ADRs: ADR-021 (viewer split-view layout), ADR-022 (auto-calibration exposed as opt-in in CLI +
+viewer, narrows ADR-016). New SPEC: F21 (auto-scale), F17's acceptance extended, the scale-bar
+Non-goals line marked withdrawn (not deleted).
+
+I3 continues directly on `iteration/I2-vision-recognition-fix` rather than a fresh branch off
+`master` — see the iteration doc's own "Resume here (branching note)" for why (I2 not yet merged,
+T084/T087/T088 depend on I2's own T077/T078).
+
+Progress (M10 in `docs/TASKS.md`, T083-T088):
+- [x] 0 baseline recorded — `docker compose run --rm tests` 457 passed, exit 0; `ruff check .`
+  clean; 2026-09-07, tree clean apart from the pre-existing unrelated `docker-compose.yml` change
+  (see Baseline I2 below)
+- [x] 1 delta intake agreed (in / out / deferred) — `docs/iterations/I3-viewer-ux-and-detection.md`
+- [x] 2 impact map written — same file
+- [x] 3 docs amended (SPEC F17/F21/Non-goals, DECISIONS ADR-021/022, TASKS M10 T083-T088)
+- [x] GATE — approved by the owner 2026-09-07 («Утверждаю, продолжай»)
+- [ ] 4 implementation
+- [ ] 5 verification green, baseline suites still green
+- [ ] 6 review clean or waived
+- [ ] 7 closed
+
 ## Iteration I1: real-scan vision robustness (in progress, branch `iteration/I1-real-scan-vision`)
 
 Owner found two real defects while manually trying the app on a real scan — separate from the three

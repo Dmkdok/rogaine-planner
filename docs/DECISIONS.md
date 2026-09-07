@@ -23,6 +23,8 @@
 | 018 | Ink-hue false-positive rate is tightened by measurement; the red band is narrowed, not removed | accepted |
 | 019 | The owner's real-scan corpus stays spot-checked, not a full labelled ground-truth set, this iteration | accepted |
 | 020 | `Control` carries the matched scale's nominal circle radius, so OCR can size its crop from it | accepted |
+| 021 | Viewer layout becomes a fixed split view — map pinned, controls list independently scrollable | accepted |
+| 022 | Auto-calibration is exposed as an opt-in path in the CLI and viewer, not only the M7 corpus tool | accepted |
 
 ---
 
@@ -538,3 +540,60 @@
   in-memory list, before `write_controls` is ever called (`cli.py`'s `detect_cmd`/`route_cmd`).
   A `Control.radius_px` reader elsewhere in future should not assume it is the literal fitted
   circle edge — it is that scale's nominal size, deliberately smoothed of per-candidate fit noise.
+
+## ADR-021 — Viewer layout becomes a fixed split view — map pinned, controls list independently scrollable
+- Date: 2026-09-07
+- Status: accepted
+- Context: Iteration I3. Owner reported that assigning a control's number requires scrolling the
+  page down, at which point the map (static, not pinned) scrolls out of view — no way to see which
+  marker on the map corresponds to which row being edited. Confirmed structurally, not just by
+  report: `.layout` (`style.css`) is a two-column grid whose right column stacks six `<details>`
+  panels (map upload, scale, controls, run parameters, results, export) vertically inside a fixed
+  380px column, with no `position: sticky`/independent scroll region anywhere; the controls table
+  inside that same 380px carries seven `white-space: nowrap` columns, forcing an inner horizontal
+  scroll that hides most of a row's values at once. Both are the direct mechanism of the reported
+  bug, not a cosmetic complaint.
+- Decision: Restructure `index.html`/`style.css` so the map viewport and the controls-list panel are
+  both always in view without vertically scrolling either out of frame — the map column becomes
+  independently positioned/sized against the viewport height rather than flowing with the rest of
+  the page, and the controls panel gets its own scroll region sized to fit alongside it. Add a
+  marker <-> table-row highlight/selection sync (new behaviour; none exists today) so it is visually
+  unambiguous which point belongs to which list entry. `tests/e2e/test_viewer.py` gains an assertion
+  that both regions' bounding boxes are inside the viewport at once.
+- Consequences: A real (if scoped) structural change to markup and CSS that a later visual redesign
+  (same iteration, different task, serialized after this one since both own the same files) builds
+  on rather than reverts. The existing A11y non-functional requirement (keyboard-operable, focus
+  visible, labelled, legible light/dark) is a hard constraint on the new structure, not something
+  this ADR trades away. `ADR-005` (vanilla JS + Canvas, no build tooling) is unaffected — this is a
+  layout/CSS change, no new dependency.
+
+## ADR-022 — Auto-calibration is exposed as an opt-in path in the CLI and viewer, not only the M7 corpus tool
+- Date: 2026-09-07
+- Status: accepted
+- Context: Iteration I3. The owner could not find anywhere in the product where scale
+  auto-detection happens, despite `vision/calibrate.py::calibrate_map` (T078) already implementing a
+  three-tier best-effort detector (scale bar -> grid -> circle diameter). Confirmed by reference
+  search: `calibrate_map` is called from exactly one place, `calibrate_corpus`, itself only reachable
+  from the M7 training-corpus tooling — neither `cli.py` nor `web/app.py` ever calls it. This is not
+  a bug; it is ADR-016's explicit, owner-approved scope ("a real end user's own map is still
+  calibrated manually... unaffected by this task") and SPEC's own `## Non-goals` line ("Automatic
+  detection of the map's scale bar"). Re-asked directly this iteration: the owner wants the existing
+  detector reachable from their own real-map workflow, understanding (from ADR-016's own corpus
+  survey) that it will only fire on roughly a quarter to a third of real maps.
+- Decision: Wire `calibrate_map` into both `cli.py` (a new `--auto-scale` flag, mutually exclusive
+  with `--scale`/`--calibrate`, same three-way contract as today's two) and `web/app.py` plus the
+  viewer's Scale panel (a third, explicit action alongside the existing ratio/calibrate options).
+  Both report which tier fired (`scale_bar`/`grid`/`circle`) and the resulting mpp/dpi on success; on
+  failure both give a clear "auto-detection unavailable, enter manually" outcome and let the existing
+  manual paths complete normally — never a crash, never a silently guessed value, and auto-detection
+  never runs or overrides anything without an explicit user action. `calibrate_map` itself is reused
+  unmodified (or behind a thin single-image wrapper, if one is needed) — no new detection logic.
+  SPEC gains F21 for this; the withdrawn Non-goals line is marked, not deleted, per this project's
+  own documentation convention.
+- Consequences: This narrows, but does not reverse, ADR-016 — the M7 corpus path (`calibrate_corpus`)
+  is untouched, and manual entry (F2/F3) stays the default and the only load-bearing path (ADR-009's
+  same non-load-bearing principle now applies to calibration as it already does to OCR). The
+  real-world hit rate stays whatever ADR-016's corpus survey measured (~20-30%) — this ADR does not
+  claim or require a higher one, only that the existing detector becomes reachable and honest about
+  its own success or failure. CLI and viewer must report identically (a `Contract`-class change, per
+  the iteration's impact map) so the two interfaces don't silently drift.

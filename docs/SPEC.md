@@ -22,6 +22,8 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 1. **CLI, one shot**
    `plan --map map.png --scale 10000 --dpi 300 --limit 4h --speed 2.0 --hub 1240,890`
    produces `out/route.json`, `out/route.png`, and a terminal summary (points, time, penalty, legs).
+   `--auto-scale` (I3, F21) replaces `--scale`/`--calibrate` with a best-effort automatic attempt;
+   on failure it reports why and asks for one of the other two, rather than guessing.
 
 2. **CLI, staged (review between steps)**
    `segment` produces `terrain.npz` + `terrain_preview.png`;
@@ -29,11 +31,12 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
    `plan --controls controls.csv` produces the route artefacts.
 
 3. **Web viewer**
-   Open `http://localhost:8000`, drop a map file, set scale (enter 1:N + DPI, **or** drag a
-   calibration line and type its length in metres). The map renders with detected controls as
-   markers; the user fixes them (drag / add / delete / edit number and points), sets time limit,
-   speed and penalty, presses Run, and gets the route drawn over the map with a leg table plus
-   JSON/PNG/CSV export.
+   Open `http://localhost:8000`, drop a map file, set scale (enter 1:N + DPI, drag a calibration
+   line and type its length in metres, **or** try automatic detection — I3, F21, best-effort, falls
+   back to the two manual options on failure). The map and the controls list stay simultaneously
+   visible (I3, F17) as the user fixes markers (drag / add / delete / edit number and points), sets
+   time limit, speed and penalty, presses Run, and gets the route drawn over the map with a leg
+   table plus JSON/PNG/CSV export.
 
 4. **Solver honesty check**
    `bench --controls controls.csv --limit 2h` runs both solvers on a reduced instance and prints the
@@ -59,10 +62,11 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 | F14 | Objective `score = sum(points) - penalty_per_min * max(0, T - limit)`, route starts and ends at the hub | A very large `penalty_per_min` produces a route strictly inside the limit; zero lets the solver overrun |
 | F15 | Route artefacts: JSON (order, per-leg time and distance, cumulative time, points, penalty, polylines) and PNG (route over the map, numbered) | JSON validates against the documented schema; PNG legs match the JSON polylines |
 | F16 | Alternative routes: top-K structurally distinct solutions with their scores | K configurable; alternatives differ by at least one visited control; doubles as the map's "interestingness" measure |
-| F17 | Local web viewer: upload, calibrate, edit controls, run, inspect, export | A Playwright script completes the full flow on the fixture map with no manual steps |
+| F17 | Local web viewer: upload, calibrate, edit controls, run, inspect, export | A Playwright script completes the full flow on the fixture map with no manual steps; the map and the controls list are both visible at once on a standard viewport (I3) — assigning a control's number never requires scrolling the map out of view |
 | F18 | Every tunable (terrain coefficients, slope factor, circle radius range, solver budgets, penalty) lives in one config file, overridable per run | Changing a coefficient in the config changes the route with no code edit |
 | F19 | Deterministic runs | Same inputs and same seed produce byte-identical JSON |
 | F20 | Non-terrain map ink (grid lines, magnetic-north lines) is never misread as a real terrain feature | On a real scan with full-height grid lines (I1, `data/maps/grid-lines-red-controls/`): the grid columns classify as `unknown`, not `water_uncrossable`; a real water body in the same fixture family still classifies as water |
+| F21 | Best-effort automatic scale detection (reuses `vision/calibrate.py::calibrate_map`'s scale-bar / grid / circle-diameter tiers), offered as an explicit opt-in action in both the CLI and the web viewer, alongside the existing manual paths (F2/F3) (I3, ADR-022) | On a map where a tier fires: CLI/viewer report which tier (`scale_bar`/`grid`/`circle`) and the resulting mpp/dpi. On a map where none fires: a clear "auto-detection unavailable, enter manually" outcome, never a crash or a silently guessed value. Auto-detection only runs on explicit user action and never overrides an explicit `--scale`/`--calibrate` (CLI) or `scale`/`calibrate` (viewer) value |
 
 ## Non-functional
 - Performance on a 4000x3000 map at 1:10000, CPU only: segmentation at most 30 s, all-pairs travel
@@ -89,7 +93,8 @@ None. No external APIs, no VLM, no telemetry.
 - GPS georeferencing, GPX export, GeoTIFF, world files.
 - VLM-based control detection (the article's Yandex Cloud Qwen path).
 - Fatigue or time-varying speed.
-- Automatic detection of the map's scale bar.
+- ~~Automatic detection of the map's scale bar.~~ Withdrawn 2026-09-07 by ADR-022 (I3) — now F21,
+  opt-in only, manual entry stays the default.
 - Hosting, accounts, multi-user, persistence beyond local run directories.
 - Parsing OCAD `.ocd` vector geometry (rasters rendered from OCAD are in scope; the binary format is
   not).
