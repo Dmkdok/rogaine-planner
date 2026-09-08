@@ -968,6 +968,11 @@ function initScaleForm() {
       els.scaleModeRatio.checked = true;
       updateScalePanels();
       setStatus(`Масштаб определён автоматически (${source}): 1:${scale}, ${dpi} DPI.`);
+      // Give the browser a chance to actually paint the line above -- runSegment() below
+      // overwrites #status-message with its own text as its very first (synchronous) statement,
+      // so without this pause the tier message never has a rendered frame to appear in (found
+      // during T088's own review; see docs/TASKS.md's T088 entry).
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       body.scale = scale;
       body.dpi = dpi;
     } else {

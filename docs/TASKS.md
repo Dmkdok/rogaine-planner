@@ -1571,3 +1571,15 @@ the implementer's self-report.
   23 passed in `tests/unit/web/test_app.py` + `tests/e2e/test_viewer.py` together (up from 16 + 2
   = 18 pre-T088, net +5: 3 unit, 2 e2e); 470 passed for the full suite (up from 465), `ruff check
   .` clean.
+
+  **Follow-up fix, same session, independent verification** (commit TBD at write time — see the
+  commit immediately after `5957120`): the deviation above was real and worth closing, not just
+  noting — DoD says success "states which tier produced them," and a message with no rendered
+  frame does not do that for an actual person. Fixed with the minimal change that doesn't touch
+  `runSegment` (still shared by all three branches, still untouched otherwise): a 1200ms
+  `await new Promise((resolve) => setTimeout(resolve, 1200))` between setting the tier status text
+  and falling through to `runSegment(body)`, giving the browser a real frame to paint it in before
+  it's overwritten. Verified: full suite still 470 passed (the new Playwright test already asserted
+  the tier from the job's network response and the durable field values, not the transient DOM
+  text, so it was insensitive to this timing either way and needed no change); `ruff check .`
+  doesn't apply (`.js`, not `.py`).
