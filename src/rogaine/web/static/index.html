@@ -58,7 +58,7 @@
     <h2 id="setup-heading" class="visually-hidden">Настройка запуска</h2>
 
     <details open class="panel">
-      <summary>1. Карта</summary>
+      <summary><span class="panel-badge">1</span><span class="panel-title">Карта</span></summary>
       <form id="upload-form">
         <label for="map-file-input">Файл карты (PNG, JPEG, BMP, TIFF или PDF)</label>
         <input
@@ -68,12 +68,12 @@
           accept=".png,.jpg,.jpeg,.bmp,.tif,.tiff,.pdf,image/png,image/jpeg,image/bmp,image/tiff,application/pdf"
           required
         />
-        <button type="submit" id="upload-btn">Загрузить карту</button>
+        <button type="submit" id="upload-btn" class="btn-primary">Загрузить карту</button>
       </form>
     </details>
 
     <details open class="panel">
-      <summary>2. Масштаб</summary>
+      <summary><span class="panel-badge">2</span><span class="panel-title">Масштаб</span></summary>
       <form id="scale-form">
         <fieldset id="scale-fieldset" disabled>
           <legend class="visually-hidden">Способ задания масштаба</legend>
@@ -125,13 +125,13 @@
           <label for="scale-page">Страница PDF (если применимо)</label>
           <input type="number" id="scale-page" min="0" step="1" value="0" />
 
-          <button type="submit" id="apply-scale-btn">Применить масштаб</button>
+          <button type="submit" id="apply-scale-btn" class="btn-primary">Применить масштаб</button>
         </fieldset>
       </form>
     </details>
 
     <details open class="panel">
-      <summary>3. Контроли</summary>
+      <summary><span class="panel-badge">3</span><span class="panel-title">Контроли</span></summary>
       <button type="button" id="add-control-btn" disabled>Добавить контроль</button>
       <div class="table-scroll">
         <table id="controls-table">
@@ -153,7 +153,7 @@
     </details>
 
     <details open class="panel">
-      <summary>4. Параметры и запуск</summary>
+      <summary><span class="panel-badge">4</span><span class="panel-title">Параметры и запуск</span></summary>
       <form id="run-form">
         <label for="param-speed-kmh">Скорость по дороге, км/ч</label>
         <input type="number" id="param-speed-kmh" min="0.1" step="0.1" value="5" required />
@@ -172,12 +172,12 @@
         <label for="param-penalty">Штраф за минуту опоздания, очков</label>
         <input type="number" id="param-penalty" min="0" step="0.1" value="1" />
 
-        <button type="submit" id="run-btn" disabled>Построить маршрут</button>
+        <button type="submit" id="run-btn" class="btn-primary" disabled>Построить маршрут</button>
       </form>
     </details>
 
     <details open class="panel" id="route-results" hidden>
-      <summary>5. Результат</summary>
+      <summary><span class="panel-badge">5</span><span class="panel-title">Результат</span></summary>
       <dl class="route-summary">
         <dt>Время</dt>
         <dd id="route-total-time"></dd>
@@ -212,7 +212,7 @@
     </details>
 
     <details open class="panel">
-      <summary>6. Экспорт</summary>
+      <summary><span class="panel-badge">6</span><span class="panel-title">Экспорт</span></summary>
       <div id="export-section" class="export-links">
         <a id="export-json-link" aria-disabled="true" tabindex="-1">Маршрут (JSON)</a>
         <a id="export-png-link" aria-disabled="true" tabindex="-1">Карта с маршрутом (PNG)</a>

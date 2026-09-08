@@ -48,6 +48,18 @@
   box-sizing: border-box;
 }
 
+/* T086: bug found while screenshotting for this task, fixed here since it lives in this owned
+   file -- `.scale-panel { display: flex }` (pre-existing, below) has the same specificity as the
+   UA stylesheet's `[hidden] { display: none }`, and author-origin rules beat user-agent-origin
+   rules at equal specificity, so `#scale-calibrate-panel[hidden]` was rendering anyway: both scale
+   panels showed at once regardless of which radio was checked. `!important` here is the standard
+   fix (e.g. Bootstrap ships the same rule) and is safe: it only applies while `hidden` is actually
+   present, so every existing `el.hidden = false` toggle in app.js (hub-warning, route-results,
+   run-id-display, map-preview-note) is unaffected once the attribute is removed. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -131,9 +143,13 @@ body {
   font-weight: 600;
 }
 
+/* T086: widened from 380px -- the fixed width itself was the owner's "too narrow to read"
+   complaint (ADR-021's intake). 460px gives the controls table room for its 7 columns without
+   horizontal scroll at the 1366px width TestViewerLayout checks; re-verify that test after
+   touching this number, since it also has to leave `#map-viewport` fully in the same viewport. */
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 460px;
   gap: 1rem;
   padding: 0 1rem 1rem;
   align-items: stretch;
@@ -196,6 +212,20 @@ button:disabled {
 button[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+/* T086: a visual "primary action" tier for the three buttons that carry the user forward through
+   the setup flow (upload -> calibrate -> run) -- previously every button looked identical
+   regardless of importance. `filter: brightness()` is used instead of a second accent shade so
+   the hover state needs no new token and stays correct in both palettes. */
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
   border-color: var(--accent);
 }
 
@@ -313,7 +343,7 @@ button[aria-pressed="true"] {
 .side-column {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.75rem;
   min-height: 0;
   overflow-y: auto;
   /* ADR-021: this is the panel's own scroll region -- it can grow tall (six stacked panels)
@@ -323,13 +353,59 @@ button[aria-pressed="true"] {
 .panel {
   background: var(--panel-bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0.5rem 0.75rem 0.75rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  /* T086: the shadow is a plain low-alpha black overlay, same convention the pre-existing
+     `.marker` box-shadow already uses -- it does not need a light/dark token because it reads as
+     a soft edge on `--panel-bg` in both palettes rather than a colour that needs to invert. */
 }
+/* T086: all six panels ship `open` and nothing ever collapses them programmatically (`app.js`
+   only toggles `#route-results`' `hidden`, never any `<details>`'s `open`) -- but the native
+   <details>/<summary> disclosure still works with zero JS, so this keeps it and turns it into a
+   real affordance (the owner can collapse a panel once it is done, e.g. Карта/Масштаб after
+   calibrating) instead of dead decoration. Default state on load is unchanged: still all open. */
 .panel summary {
   cursor: pointer;
   font-weight: 600;
-  padding: 0.25rem 0;
+  padding: 0.3rem 0;
+  margin-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  list-style: none; /* Firefox: drop the native triangle, replaced by ::after below */
+}
+.panel summary::-webkit-details-marker {
+  display: none; /* Safari/Chromium: drop the native triangle */
+}
+.panel summary::after {
+  content: "";
+  margin-left: auto;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg); /* closed: chevron points right */
+  flex-shrink: 0;
+}
+.panel[open] > summary::after {
+  transform: rotate(45deg); /* open: chevron points down */
+}
+.panel-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.75rem;
+}
+.panel-title {
+  font-size: 0.95rem;
 }
 .panel form {
   display: flex;
@@ -390,21 +466,42 @@ button[aria-pressed="true"] {
 .table-scroll {
   overflow-x: auto;
   margin-top: 0.4rem;
+  /* T086: kept as a defensive fallback (per DoD) -- at the widened 440px side column plus the
+     column-width/font tightening below, #controls-table's natural content width fits without
+     triggering this scroll at the panel's working width. */
 }
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
 }
 th,
 td {
   border: 1px solid var(--border);
-  padding: 0.25rem 0.35rem;
+  padding: 0.3rem 0.4rem;
   text-align: left;
   white-space: nowrap;
 }
+/* T086: per-column widths (ID / Hub / actions by cell, X-Y / Number-Points by their input) --
+   previously every numeric input shared one 5.5em width regardless of column, which is what
+   forced the table past 380px and into horizontal scroll. Column order is fixed by
+   `createControlRow` in app.js (ID, X, Y, Number, Points, Hub, actions); these are positional
+   on purpose since the row markup has no per-column class hooks to target instead. */
+#controls-table th:nth-child(1),
+#controls-table td:nth-child(1) {
+  width: 2.2em;
+}
+#controls-table th:nth-child(6),
+#controls-table td:nth-child(6) {
+  width: 2.4em;
+  text-align: center;
+}
+#controls-table th:nth-child(7),
+#controls-table td:nth-child(7) {
+  width: 4.2em;
+}
 td input[type="number"] {
-  width: 5.5em;
+  width: 3.6em;
   font: inherit;
   background: var(--bg);
   color: var(--text);
@@ -412,8 +509,48 @@ td input[type="number"] {
   border-radius: 3px;
   padding: 0.15rem 0.3rem;
 }
+#controls-table td:nth-child(2) input[type="number"],
+#controls-table td:nth-child(3) input[type="number"] {
+  width: 5em; /* X/Y carry a decimal pixel coordinate, wider than Number/Points */
+}
+/* T086: found while measuring actual rendered widths (a value like "599.3" was clipped by 4px)
+   -- Chromium reserves horizontal room for the native up/down spinner buttons inside the input's
+   own box, on top of its padding/border, so the *text* area was narrower than the width above
+   assumed. Dropping the spinner on this specific dense table (typing/pasting a value, or the
+   marker's own keyboard-nudge, still work exactly as before -- nothing here removes input
+   functionality) reclaims that room instead of widening every column further. */
+#controls-table input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+#controls-table input[type="number"]::-webkit-outer-spin-button,
+#controls-table input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+/* T086: subtle zebra striping for row-scanning legibility on a 7-column table; reuses the
+   page-background token (already distinct from --panel-bg) rather than a new one. Declared
+   before .row-selected below so selection still wins on the (rare) even-row case. */
+#controls-tbody tr:nth-child(even) td {
+  background: var(--bg);
+}
 tr.row-selected td {
   background: var(--row-selected-bg);
+}
+/* T086: the delete action reads as a plain button among identical siblings today; danger colour
+   (existing tokens, already used by .error-message) plus a smaller footprint frees up horizontal
+   room in the actions column and signals the action's effect at a glance. Its "Удалить" label is
+   fixed text from app.js (not ours to shorten), so this is the column most likely to set the
+   table's real minimum width -- font-size/padding here are deliberately tight. */
+#controls-table td:nth-child(7) button {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.78rem;
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+#controls-table td:nth-child(7) button:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger);
 }
 
 .route-summary {

@@ -1407,7 +1407,7 @@ the implementer's self-report.
   pair) both directions. All pre-existing `test_viewer.py` assertions unmodified. 465 passed
   (this session's own count, includes T085+T087+T084 together), `ruff check .` clean — not verified
   isolated to just this commit's own delta.
-- [ ] **T086** — Viewer visual redesign (typography, spacing, colour, table legibility) — paths:
+- [x] **T086** — Viewer visual redesign (typography, spacing, colour, table legibility) — paths:
   `src/rogaine/web/static/style.css`, `index.html` — deps: T085 (same owned files, serialized after
   the structural fix) — DoD: `tests/e2e/test_viewer.py` stays green with its assertions unmodified;
   both light and dark palettes stay legible via the file's existing `prefers-color-scheme` token
@@ -1415,6 +1415,77 @@ the implementer's self-report.
   width; owner reviews a live instance and confirms it reads as more concise/modern than the
   previous six-stacked-accordion layout — a manual sign-off, no automated "looks modern" floor
   (same precedent as ADR-019/T082).
+
+  **Landed (pending owner sign-off).** `.layout`'s fixed side-column track went `380px` -> `460px`
+  (`minmax(0, 1fr) 460px`) -- the fixed width itself was the named cause of "too narrow to read";
+  at 1366px viewport width (`TestViewerLayout`'s own number) the map column goes from 941px to
+  861px, still comfortably usable. `#controls-table`'s 7 columns (ID, X, Y, Номер, Очки, Хаб,
+  actions) were all sharing one `td input[type="number"] { width: 5.5em }` plus global
+  `white-space: nowrap`, which is what forced the old `.table-scroll` into permanent horizontal
+  scroll -- replaced with positional per-column widths (`#controls-table td:nth-child(n)`, pinned
+  to `createControlRow`'s fixed column order in app.js since the row markup has no per-column class
+  hooks): ID 2.2em, X/Y inputs 5em, Number/Points inputs 3.6em, Хаб 2.4em centred, actions 4.2em
+  hint (the delete button's own fixed "Удалить" text ends up the real driver of that column's
+  width, not the hint). Table font 0.82rem -> 0.85rem, cell padding 0.25rem/0.35rem ->
+  0.3rem/0.4rem. Verified concretely, not just eyeballed: a throwaway Playwright script (this
+  session only, not committed) drove the real upload/calibrate/detect flow against the standard
+  synthetic fixture (13 rows) and measured every `#controls-table input[type="number"]`'s
+  `scrollWidth` vs `clientWidth` plus the table's own `scrollWidth` vs its `.table-scroll`
+  container's `clientWidth` -- zero overflow, including a stress pass forcing 4-digit Number/Points
+  values. One real defect surfaced by that same measurement pass: Chromium reserves width for the
+  native number-input spin buttons inside the input's own box, so the 5em X/Y inputs were clipping
+  by ~4px on any 5-character value (e.g. `599.3` rendered as `599.:`) -- fixed by dropping the
+  spinner UI on this table specifically (`appearance: textfield` + the `-webkit-*-spin-button`
+  reset), which does not remove any input functionality (typing/pasting and the marker's own
+  keyboard nudge are untouched).
+
+  Second, separate bug found while screenshotting (not part of the DoD, fixed anyway since it's in
+  an owned file and directly undercuts "legible"/"concise"): `.scale-panel { display: flex }`
+  (pre-existing, untouched by this task otherwise) has the same specificity as the UA stylesheet's
+  `[hidden] { display: none }`, and author-origin beats user-agent-origin at equal specificity, so
+  `#scale-calibrate-panel[hidden]` was rendering regardless -- both scale-mode panels showed at
+  once on every page load, no matter which radio was checked. Added a top-level
+  `[hidden] { display: none !important; }` rule (the standard fix for this exact class of bug).
+  Confirmed via a script driving `page.check()` on both radios that exactly one panel shows in all
+  three states now (default/ratio, calibrate, back to ratio); confirmed the `!important` doesn't
+  regress any of the app's other `el.hidden` toggles (`hub-warning`, `route-results`,
+  `run-id-display`, `map-preview-note`) since none of their classes set a competing `display`.
+
+  Typography/spacing/colour, the DoD's other three named dimensions: all six `<details>` panels
+  keep `open` (nothing in app.js or the tests ever toggles `open`, confirmed by grep, so first-paint
+  state is unchanged) but the native disclosure triangle is replaced with a numbered accent-filled
+  badge + title + a custom chevron that now genuinely works (the owner can collapse a panel with
+  zero JS involved, e.g. Карта/Масштаб after calibrating -- previously the marker was there but the
+  panels never needed collapsing since nothing else used it either way). Added a `.btn-primary`
+  tier (solid accent fill) for the three buttons that carry the user forward through the setup flow
+  (Загрузить карту / Применить масштаб / Построить маршрут) -- previously every button looked
+  identical regardless of importance. `#controls-table`'s delete button recoloured to the existing
+  danger tokens (already used by `.error-message`) and shrunk, both freeing width and giving the
+  destructive action a distinct signal. Added zebra striping to `#controls-tbody` reusing `--bg`
+  (already the token `.panel input[type=number]` sits on, so this is the same "recessed surface"
+  look already established, not a new visual language). `.panel` gained a subtle box-shadow and an
+  8px (was 6px) radius; `.side-column`'s inter-panel gap went 0.6rem -> 0.75rem. No new CSS custom
+  properties were added -- every new rule reuses an existing token pair; grepped the full stylesheet
+  for hex/rgba afterward and the only new literal colour is `rgba(0, 0, 0, 0.05)` on `.panel`'s
+  shadow, decorative-only, same convention the pre-existing marker box-shadow already uses.
+
+  Verified: `docker compose run --rm tests` -- 465 passed (same count as pre-T086), including
+  `tests/e2e/test_viewer.py`'s 2 tests both green, assertions unmodified, run again in isolation
+  (`pytest tests/e2e/test_viewer.py -v`) to confirm explicitly. `ruff check .` clean (no `.py`
+  touched). Screenshotted the live app in both `color-scheme: light` and `color-scheme: dark` at
+  1366x768 (upload -> calibrate -> detect -> select a row, plus a completed run, plus the <900px
+  single-column fallback at 800px) -- both palettes read as legible, the numbered badges/chevrons/
+  primary buttons/danger delete/zebra rows all render as intended in both, single-column fallback
+  unaffected. All `id`s in the hard-constraint list preserved unchanged (verified by grep against
+  `app.js` and `test_viewer.py` after editing, not just before); no ids removed; the only ids/
+  classes added are non-conflicting new ones (`panel-badge`, `panel-title`, `btn-primary`) plus two
+  `<span>` wrapper elements per summary.
+
+  What this session cannot close: the DoD's own "owner reviews a live instance and confirms it
+  reads as more concise/modern" line is a manual sign-off, explicitly called out in the DoD itself
+  as unautomatable (same precedent as ADR-019/T082) -- screenshots above are this session's own
+  best-effort substitute for that judgment, not a stand-in for it. That line stays open until the
+  owner actually looks.
 - [x] **T087** — Wire auto-scale detection into the CLI (F21, ADR-022) — paths: `src/rogaine/cli.py`,
   `src/rogaine/vision/calibrate.py` (only if a thin single-image wrapper around `calibrate_map` is
   needed) — deps: none (T078 already landed) — DoD: `segment`/`plan` gain `--auto-scale`, mutually
