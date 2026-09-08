@@ -1288,13 +1288,100 @@ the implementer's self-report.
   guessed, matching this project's own established practice (T079-T081). Findings and the resulting
   fix design get a new ADR in `DECISIONS.md` and feed T084 directly; no product-code changes in this
   task.
-- [ ] **T084** — Fix control-number OCR per T083's findings — paths: `src/rogaine/vision/ocr.py`,
+- [x] **T084** — Fix control-number OCR per T083's findings — paths: `src/rogaine/vision/ocr.py`,
   `config/default.toml` (only if a tunable is implicated), `tests/unit/vision/test_ocr.py` — deps:
   T083 — DoD: real-scan read rate measurably improves beyond T083's own measured baseline, with the
   exact before/after counts recorded (same style as T079-T081's entries); the synthetic fixture's
   existing 11/12 floor (`test_at_least_eleven_of_twelve_controls_read_correctly`) does not regress;
   OCR stays explicitly non-load-bearing (ADR-009) — an unreadable number still emits `points: null`
   plus a flag, never a guess.
+
+  **Landed.** Two measured causes fixed, in T083's own priority order; a third
+  (`min_ocr_confidence`) measured and rejected. `config/default.toml` untouched — both fixes are
+  file-local `ocr.py` constants, the same pattern `_CIRCLE_MASK_RADIUS_FACTOR`/`_CROP_MARGIN_FACTOR`
+  already used, not new config tunables.
+
+  **Mode 1 (`_strip_thin_ink`, priority 1).** T083's dominant cause: leftover non-digit ink
+  (contour-line edges, shoreline squiggles) clears `purple_mask`'s hue/saturation/value floor and
+  defeats Tesseract's psm 7 single-line assumption even inside a correctly-framed, correctly-ring-
+  erased crop. A morphological opening (kernel sized from `number_font_height_mm` converted to px
+  via `dpi`, the same convention every other size in this module already uses) was tried first and
+  rejected: even its smallest non-trivial kernel (radius 1, a 3x3 ellipse) shaved corners off the
+  synthetic fixture's own thin Hershey-font digit strokes, dropping its floor from 11/12 to 10/12 at
+  every kernel size that measurably helped the real corpus (throwaway sweep, `_t084_sweep.py`:
+  factor 0.03 → 10/12 synthetic / 149/416 real; factor 0.05 → 10/12 / 98/416; factor ≥0.08 →
+  collapse toward 0/416 on both). Replaced with a connected-component area filter (`_strip_thin_ink`):
+  drops any connected ink component under a minimum area — swept 0.0-0.40 in 0.02 steps as a
+  fraction of the *squared* digit height (`_t084_sweep2.py`) — without ever touching a surviving
+  component's own pixels, so it stayed gentle on the fixture's thin-but-full-height strokes (11/12
+  held everywhere from 0.0 to 0.30) while the real corpus total climbed from 80/416 to a 169-179/416
+  plateau across factor 0.16-0.24. Landed: `_MIN_INK_AREA_FACTOR = 0.20` (176/416), mid-plateau
+  rather than the single noisiest point (0.21's 179/416).
+
+  **Mode 2 (conditional ring-erase widen, priority 2).** `pervomayskoe` stayed at 0/41 after mode 1
+  alone, unchanged from baseline. Radial ink-density profiling around the detected centre
+  (`_t084_ring_radius.py`) confirmed T083's diagnosis directly: `pervomayskoe`'s true printed ring
+  band sits at ~1.3-1.5x `r_mid`, past the existing `_CIRCLE_MASK_RADIUS_FACTOR` (1.25) erase disk's
+  edge; `kkm-5-2020` control 1's own case turned out to be a different, out-of-scope cause (`r_mid`
+  itself under-fit relative to that control's true ring — a `vision/controls.py` scale-selection
+  question, not an erase-radius one). A **global** widen of `_CIRCLE_MASK_RADIUS_FACTOR` (swept
+  1.25-1.70, `_t084_sweep3.py`) was tried and rejected: it helped `pervomayskoe` (0/41 → 19/41 at
+  1.50+) but measurably hurt already-correctly-erased maps as the disk grew into nearby digit ink
+  (`toksovo-1` 19/21 → 13/21 at a global 1.50, `kkm-5-2020` 11/21 → 6/21). Replaced with a
+  **conditional** widen: `_annulus_ink_density` measures ink coverage in a thin annulus just past
+  the base disk (`[1.25, 1.25×1.2] × r_mid`); only when that density exceeds a threshold (evidence
+  of a still-closed ring, not scattered digit/noise ink) does `_ocr_crop` use a wider erase factor.
+  Swept threshold×widened-factor combinations in {0.3, 0.4, 0.5}×{1.50, 1.55, 1.60}
+  (`_t084_sweep4.py`): every combination left every already-correct map's count unchanged while
+  `pervomayskoe` jumped to 19/41 and `history-race-2024-michurinskoe` — an undershoot case T083 did
+  not separately flag — climbed from 2/37 to 5-14/37. Landed: `_RING_DENSITY_WIDEN_THRESHOLD = 0.4`,
+  `_WIDENED_CIRCLE_MASK_RADIUS_FACTOR = 1.55` (205/416 total), mid-range rather than the single best
+  point (0.4/1.60's 206/416).
+
+  **Priority 3 (`min_ocr_confidence`) measured and rejected.** With modes 1+2 landed, sweeping the
+  confidence floor down (`_t084_sweep5.py`) still gained monotonically with no synthetic regression:
+  0.60→205/416, 0.55→208, 0.50→212, 0.45→214, 0.40→217, 0.35→220, 0.30→223 (synthetic held 11/12
+  throughout). Inspected the 12 controls this would newly admit at 0.40-0.59: some are plausible
+  clean reads (`history-race-primorsk` c37 "58"@0.52, `kkm-5-2020` c19 "92"@0.49) but others are
+  single ambiguous digits (`history-race-primorsk` c48 "8"@0.41, `lembolovo-kkm` c17 "7"@0.45)
+  indistinguishable from a truncated misread without ground truth (no ground-truth number CSV
+  exists for any owner scan — ADR-010/ADR-019). Given the gain is modest next to modes 1+2 (+7
+  controls at 0.50, +3.4pp) and admitting one wrong-but-confident-looking number would violate
+  ADR-009's "never a guess" harder than leaving it flagged, `min_ocr_confidence` stays at 0.6 —
+  measured, not adopted.
+
+  **Final per-map table** (T083 baseline → T084, modes 1+2 landed, `min_ocr_confidence` unchanged):
+
+  | Map | Before (T083) | After (T084) |
+  |---|---|---|
+  | toksovo-1 | 17/21 (81%) | 19/21 (90%) |
+  | toksovo-zubry | 11/31 (35%) | 24/31 (77%) |
+  | history-race-primorsk | 14/49 (29%) | 17/49 (35%) |
+  | treugolnoe | 17/58 (29%) | 21/58 (36%) |
+  | michurinskoe | 9/37 (24%) | 23/37 (62%) |
+  | grid-lines-red-controls | 3/13 (23%) | 10/13 (77%) |
+  | lembolovo-kkm | 3/20 (15%) | 7/20 (35%) |
+  | kkm-3-2020 | 2/21 (10%) | 17/21 (81%) |
+  | ozero-shchuche | 2/21 (10%) | 17/21 (81%) |
+  | history-race-2024-michurinskoe | 2/37 (5%) | 13/37 (35%) |
+  | kkm-5-2020 | 0/21 (0%) | 11/21 (52%) |
+  | kkm-toksovo | 0/25 (0%) | 1/25 (4%) |
+  | novo-kavgolovsky-lesopark | 0/21 (0%) | 6/21 (29%) |
+  | pervomayskoe | 0/41 (0%) | 19/41 (46%) |
+  | **Total** | **80/416 (19%)** | **205/416 (49%)** |
+
+  `kkm-toksovo`'s 0→1 (not mode-1-alone's 2) is the one net per-control cost among individual maps:
+  one control's conditional-widen check fired on an already-correctly-erased ring (a false positive
+  of the density heuristic), costing a read mode 1 alone had recovered — a 1-control cost against a
+  125-control corpus-wide gain, not chased further. Two new permanent regression tests added,
+  `TestRealScanReadRateFloor` (`tests/unit/vision/test_ocr.py`): `test_pervomayskoe_read_rate_floor`
+  (floor ≥15/41, isolates mode 2 — mode 1 alone still measured 0/41 here) and
+  `test_novo_kavgolovsky_lesopark_read_rate_floor` (floor ≥5/21, isolates mode 1 — mode 2 never
+  triggers on this map's already-correctly-erased rings), both skipif-guarded on the gitignored real
+  file's presence (ADR-010). The synthetic fixture's `test_at_least_eleven_of_twelve_controls_read_
+  correctly` floor held unchanged (11/12) through every step. 465 passed (463 baseline + 2 new
+  tests), `ruff check .` clean (both independently re-run, not just trusted from the implementer).
+  See commit d40047f.
 - [ ] **T085** — Viewer layout: map and controls list simultaneously visible (F17, ADR-021) — paths:
   `src/rogaine/web/static/index.html`, `style.css`, `app.js`, `tests/e2e/test_viewer.py` — deps:
   none — DoD: on a standard viewport (e.g. 1366x768) with a map loaded, the map viewport and the
