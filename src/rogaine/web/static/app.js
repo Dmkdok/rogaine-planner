@@ -24,6 +24,7 @@ const els = {
   scaleFieldset: document.getElementById("scale-fieldset"),
   scaleModeRatio: document.getElementById("scale-mode-ratio"),
   scaleModeCalibrate: document.getElementById("scale-mode-calibrate"),
+  scaleModeAuto: document.getElementById("scale-mode-auto"),
   scaleRatioPanel: document.getElementById("scale-ratio-panel"),
   scaleCalibratePanel: document.getElementById("scale-calibrate-panel"),
   scaleDenominator: document.getElementById("scale-denominator"),
@@ -900,12 +901,14 @@ function initUploadForm() {
 function initScaleForm() {
   function updateScalePanels() {
     const calibrate = els.scaleModeCalibrate.checked;
-    els.scaleRatioPanel.hidden = calibrate;
+    const auto = els.scaleModeAuto.checked;
+    els.scaleRatioPanel.hidden = calibrate || auto;
     els.scaleCalibratePanel.hidden = !calibrate;
     setMode(calibrate && state.mode === "calibrate" ? "calibrate" : "idle");
   }
   els.scaleModeRatio.addEventListener("change", updateScalePanels);
   els.scaleModeCalibrate.addEventListener("change", updateScalePanels);
+  els.scaleModeAuto.addEventListener("change", updateScalePanels);
   updateScalePanels();
 
   els.calibStartBtn.addEventListener("click", () => {
@@ -936,6 +939,35 @@ function initScaleForm() {
         setError("Укажите положительные значения масштаба (1:N) и DPI.");
         return;
       }
+      body.scale = scale;
+      body.dpi = dpi;
+    } else if (els.scaleModeAuto.checked) {
+      setStatus("Автоматическое определение масштаба…");
+      clearError();
+      els.applyScaleBtn.disabled = true;
+      let job;
+      try {
+        const { job_id } = await api.startAutoScale(state.runId);
+        job = await api.waitForJob(job_id, {
+          onTick: (j) =>
+            setStatus(`Автоматическое определение масштаба: ${jobStatusLabel(j.status)}…`),
+        });
+      } catch (err) {
+        setError(describeError(err, "Не удалось запустить автоматическое определение масштаба"));
+        els.applyScaleBtn.disabled = false;
+        return;
+      }
+      els.applyScaleBtn.disabled = false;
+      if (job.status === "error") {
+        setError(job.error || "Автоматическое определение масштаба завершилось ошибкой");
+        return;
+      }
+      const { source, scale_denominator: scale, dpi } = job.result;
+      els.scaleDenominator.value = scale;
+      els.scaleDpi.value = dpi;
+      els.scaleModeRatio.checked = true;
+      updateScalePanels();
+      setStatus(`Масштаб определён автоматически (${source}): 1:${scale}, ${dpi} DPI.`);
       body.scale = scale;
       body.dpi = dpi;
     } else {

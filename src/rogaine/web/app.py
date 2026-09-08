@@ -54,6 +54,7 @@ from rogaine.render.overlay import write_overlay
 from rogaine.solve.alternatives import solve_alternatives
 from rogaine.solve.exact import solve_exact
 from rogaine.solve.heuristic import solve_heuristic
+from rogaine.vision.calibrate import calibrate_map
 from rogaine.vision.controls import detect_controls
 from rogaine.vision.ocr import read_control_numbers
 from rogaine.vision.segment import load_terrain_map, save_terrain_map
@@ -123,7 +124,7 @@ class JobStatusOut(BaseModel):
 
     job_id: str
     run_id: str
-    kind: Literal["segment", "detect", "plan"]
+    kind: Literal["segment", "detect", "plan", "auto_scale"]
     status: Literal["queued", "running", "done", "error"]
     result: Any = None
     error: str | None = None
@@ -139,7 +140,7 @@ class JobStatusOut(BaseModel):
 class _JobRecord:
     job_id: str
     run_id: str
-    kind: Literal["segment", "detect", "plan"]
+    kind: Literal["segment", "detect", "plan", "auto_scale"]
     status: Literal["queued", "running", "done", "error"] = "queued"
     result: Any = None
     error: str | None = None
@@ -149,7 +150,7 @@ _jobs: dict[str, _JobRecord] = {}
 _jobs_lock = threading.Lock()
 
 
-def _create_job(run_id: str, kind: Literal["segment", "detect", "plan"]) -> str:
+def _create_job(run_id: str, kind: Literal["segment", "detect", "plan", "auto_scale"]) -> str:
     job_id = uuid.uuid4().hex
     with _jobs_lock:
         _jobs[job_id] = _JobRecord(job_id=job_id, run_id=run_id, kind=kind)
@@ -277,6 +278,44 @@ def _detect_worker(job_id: str, run_dir: Path, map_path: Path, dpi: float) -> No
         "hub_found": any(c.is_hub for c in controls),
     }
     _update_job(job_id, status="done", result=result)
+
+
+def _auto_scale_worker(job_id: str, run_dir: Path, map_path: Path) -> None:
+    """ADR-022/F21: detect scale/dpi via `calibrate_map` (scale_bar -> grid -> circle, first hit
+    wins, unmodified from `vision/calibrate.py`) without touching `terrain.npz` -- this job's
+    result only fills in `SegmentRequest.scale`/`.dpi` client-side; the client then calls the
+    existing, unchanged `/segment` endpoint itself (mirrors `cli.py`'s T087 `_resolve_mpp`, whose
+    `auto_scale` branch also just resolves mpp/dpi, never runs segmentation on its own).
+    """
+    _update_job(job_id, status="running")
+    try:
+        cfg = load_config()
+        dpi = resolve_dpi(map_path, user_dpi=None)
+        image = load_raster(map_path, dpi=dpi)
+        result, _ = calibrate_map(image, cfg)
+    # Broad on purpose (ADR-017, S-001) -- see _segment_worker.
+    except Exception as exc:
+        _update_job(job_id, status="error", error=str(exc))
+        return
+    if result is None:
+        _update_job(
+            job_id,
+            status="error",
+            error=(
+                "auto-scale: no calibration signal found on this map -- enter scale or "
+                "calibration manually"
+            ),
+        )
+        return
+    _update_job(
+        job_id,
+        status="done",
+        result={
+            "source": result.source,
+            "scale_denominator": result.scale_denominator,
+            "dpi": result.dpi,
+        },
+    )
 
 
 def _plan_worker(
@@ -407,6 +446,16 @@ def start_segment(
 
     job_id = _create_job(run_id, "segment")
     background_tasks.add_task(_segment_worker, job_id, run_dir, map_path, dpi, mpp, body.page)
+    return {"job_id": job_id}
+
+
+@app.post("/api/runs/{run_id}/auto-scale", status_code=status.HTTP_202_ACCEPTED)
+def start_auto_scale(run_id: str, background_tasks: BackgroundTasks) -> dict[str, str]:
+    run_dir = _require_run(run_id)
+    map_path = _map_path(run_dir)
+
+    job_id = _create_job(run_id, "auto_scale")
+    background_tasks.add_task(_auto_scale_worker, job_id, run_dir, map_path)
     return {"job_id": job_id}
 
 

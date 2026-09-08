@@ -56,6 +56,7 @@ import uvicorn
 from playwright.sync_api import Page, expect
 
 import rogaine.web.app as web_app
+from rogaine.vision.calibrate import CalibrationResult
 
 pytestmark = pytest.mark.e2e
 
@@ -293,3 +294,105 @@ class TestViewerLayout:
         expect(second_row).to_have_class(re.compile(r"\brow-selected\b"))
         expect(first_marker).not_to_have_class(re.compile(r"\bmarker--selected\b"))
         expect(first_row).not_to_have_class(re.compile(r"\brow-selected\b"))
+
+
+class TestAutoScale:
+    """T088 (F21, ADR-022): the Scale panel's third action, "Определить автоматически".
+
+    `_live_server` runs `web_app.app` in-process via a background *thread*, not a subprocess (see
+    its own docstring) -- so `monkeypatch.setattr(web_app, "calibrate_map", ...)` here reaches the
+    exact same module attribute `_auto_scale_worker` calls, giving both tests below a
+    deterministic outcome without needing a real scale-bar/grid/circle signal on the fixture map
+    (same stubbing approach as `tests/unit/test_cli.py`'s T087 tests and this task's own
+    `tests/unit/web/test_app.py::TestAutoScale`).
+
+    The success case asserts the detected tier from the `/auto-scale` job's own network response
+    rather than from transient `#status-message` text: `app.js`'s scale-form submit handler sets
+    that tier status and then calls the unchanged `runSegment()` in the same synchronous stretch
+    of the handler (no `await` in between) -- `runSegment` immediately overwrites
+    `#status-message` with its own "Сегментация карты…" text before the browser ever paints the
+    tier text, so polling the DOM for it would be a timing race, not a real assertion. The
+    detected values landing in the ratio-mode fields are asserted from the DOM instead, since
+    nothing downstream of the auto-scale job ever touches those fields again.
+    """
+
+    def test_auto_scale_success_populates_ratio_fields_and_reports_tier(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path, monkeypatch
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        stub = CalibrationResult(
+            source="circle", scale_denominator=sm.scale_denominator, dpi=sm.dpi
+        )
+        monkeypatch.setattr(
+            web_app, "calibrate_map", lambda image, config: (stub, sm.scale_denominator)
+        )
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.check("#scale-mode-auto")
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.endswith("/auto-scale")
+        ) as post_info:
+            page.click("#apply-scale-btn")
+        job_id = post_info.value.json()["job_id"]
+
+        deadline = time.monotonic() + 10.0
+        job = None
+        while time.monotonic() < deadline:
+            job = page.request.get(f"{_live_server}/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "error"):
+                break
+            time.sleep(0.05)
+        assert job is not None and job["status"] == "done", job
+        assert job["result"] == {
+            "source": "circle",
+            "scale_denominator": sm.scale_denominator,
+            "dpi": sm.dpi,
+        }
+
+        # The client-supplied stub matches the fixture's own real scale/dpi, so the flow proceeds
+        # through the exact same, unchanged /segment endpoint the manual ratio path already uses
+        # -- segmentation and auto-detect land the controls table exactly as that path does.
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+        expect(page.locator("#scale-mode-ratio")).to_be_checked()
+        assert float(page.input_value("#scale-denominator")) == sm.scale_denominator
+        assert float(page.input_value("#scale-dpi")) == sm.dpi
+
+    def test_auto_scale_failure_shows_error_and_leaves_manual_entry_available(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path, monkeypatch
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        monkeypatch.setattr(web_app, "calibrate_map", lambda image, config: (None, None))
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.check("#scale-mode-auto")
+        page.click("#apply-scale-btn")
+
+        expect(page.locator("#error-message")).to_be_visible()
+        expect(page.locator("#error-message")).to_contain_text("manually")
+
+        # Manual entry is still available: switching back to ratio mode and applying it goes
+        # through the ordinary, unaffected /segment flow (the stubbed `calibrate_map` failure
+        # only ever fires on the /auto-scale path).
+        page.check("#scale-mode-ratio")
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )

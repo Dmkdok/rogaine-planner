@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import rogaine.web.app as web_app
+from rogaine.vision.calibrate import CalibrationResult
 
 client = TestClient(web_app.app)
 
@@ -140,6 +141,43 @@ class TestEditedControls:
         job = _wait_for_job(resp.json()["job_id"])
         assert job["status"] == "done", job
         assert set(job["result"]["route"]["order"]) <= {hub.id, a.id, b.id}
+
+
+class TestAutoScale:
+    """T088 (F21, ADR-022): `POST /auto-scale` wraps `calibrate_map` in its own job kind, mirroring
+    `cli.py`'s T087 `--auto-scale` outcome semantics -- stubbing `calibrate_map` here matches how
+    `tests/unit/test_cli.py`'s own T087 tests stub `rogaine.cli.calibrate_map`.
+    """
+
+    def test_auto_scale_reports_the_tier_and_populates_the_result(
+        self, synthetic_map, monkeypatch
+    ) -> None:
+        sm = synthetic_map
+        run_id = _upload(sm.image)
+
+        stub = CalibrationResult(source="circle", scale_denominator=25000.0, dpi=250.0)
+        monkeypatch.setattr(web_app, "calibrate_map", lambda image, config: (stub, 25000.0))
+
+        resp = client.post(f"/api/runs/{run_id}/auto-scale")
+        assert resp.status_code == 202, resp.text
+        job = _wait_for_job(resp.json()["job_id"])
+        assert job["status"] == "done", job
+        assert job["result"] == {"source": "circle", "scale_denominator": 25000.0, "dpi": 250.0}
+
+    def test_auto_scale_failure_names_manual_entry(self, synthetic_map, monkeypatch) -> None:
+        sm = synthetic_map
+        run_id = _upload(sm.image)
+
+        monkeypatch.setattr(web_app, "calibrate_map", lambda image, config: (None, None))
+
+        resp = client.post(f"/api/runs/{run_id}/auto-scale")
+        assert resp.status_code == 202, resp.text
+        job = _wait_for_job(resp.json()["job_id"])
+        assert job["status"] == "error", job
+        assert "manually" in job["error"]
+
+    def test_auto_scale_unknown_run_id_is_404(self) -> None:
+        assert client.post("/api/runs/does-not-exist/auto-scale").status_code == 404
 
 
 class TestSecurity:

@@ -1513,7 +1513,7 @@ the implementer's self-report.
   only), a gap worth closing if this code changes again. 465 passed (this session's own count,
   includes T085+T087+T084 together), `ruff check .` clean — not verified isolated to just this
   commit's own delta.
-- [ ] **T088** — Wire the same auto-scale option into the web viewer (F21, ADR-022) — paths:
+- [x] **T088** — Wire the same auto-scale option into the web viewer (F21, ADR-022) — paths:
   `src/rogaine/web/app.py`, `src/rogaine/web/static/index.html`, `app.js`, `api.js` — deps: T086
   (shares the redesigned Scale panel's markup/styling), T087 (mirrors its outcome semantics/wording
   so CLI and viewer report auto-scale identically, per ADR-022's Contract classification) — DoD: the
@@ -1522,3 +1522,52 @@ the implementer's self-report.
   and states which tier produced them; failure uses the existing `error-message`/`status-message`
   pattern with a clear next step (switch to manual entry); a new Playwright case covers both a
   stubbed success and a stubbed failure; F2/F3's existing tests and flows stay unchanged.
+
+  **Landed** (commit TBD) — followed the recommended design as-is: auto-scale is its own job kind,
+  never a new segmentation path. `_JobRecord.kind`/`JobStatusOut.kind` gained `"auto_scale"`
+  (these are `web/app.py`'s own local models, freely extensible per the module's docstring, not
+  `models.py`'s frozen ADR-008 contract). New `_auto_scale_worker(job_id, run_dir, map_path)`
+  mirrors `_detect_worker`'s shape: `resolve_dpi(map_path, user_dpi=None)` -> `load_raster` ->
+  `calibrate_map(image, load_config())` (unmodified, same import already used by `cli.py`). On
+  `result is None` the job errors with `"auto-scale: no calibration signal found on this map --
+  enter scale or calibration manually"` (mirrors T087's CLI wording); on success `result` is
+  `{"source", "scale_denominator", "dpi"}` -- detection only, no segmentation of its own. New
+  `POST /api/runs/{run_id}/auto-scale` (202, no body) mirrors `start_detect`'s shape exactly.
+  `api.js` gained `startAutoScale(runId)`, a one-line mirror of `startDetect`. `index.html`'s
+  `#scale-fieldset` gained a third radio (`#scale-mode-auto`, same `name="scale-mode"` group,
+  label "Определить автоматически"); no new sub-panel. `app.js`: `els.scaleModeAuto` added;
+  `initScaleForm`'s `updateScalePanels()` now hides `scaleRatioPanel` when *either* calibrate or
+  auto is checked; the submit handler gained a third branch that calls `api.startAutoScale` +
+  `api.waitForJob`, on error calls `setError(job.error, ...)` and returns (existing
+  error-message/status-message pattern), on success writes the detected values into
+  `#scale-denominator`/`#scale-dpi`, flips the checked radio back to `scaleModeRatio`, calls
+  `updateScalePanels()` (so the ratio sub-panel becomes visible showing the filled-in numbers),
+  `setStatus`'s the tier in Russian-register prose, then falls through to the same
+  `await runSegment(body)` call the ratio branch already makes -- one click does
+  detect-then-segment, `/segment`/`_segment_worker`/`_resolve_mpp` themselves untouched.
+
+  Deviation found and reported, not silently worked around: `app.js`'s scale-form submit handler
+  has no `await` between the tier `setStatus(...)` call and `await runSegment(body)`, and
+  `runSegment`'s own first statement synchronously overwrites `#status-message` with its
+  segmentation text before the handler's async prefix ever yields to the browser -- so the tier
+  text is never actually painted in a live browser, only ever present in the DOM for one
+  unobservable JS tick. Implemented per the brief as specified regardless (no scope to change
+  `runSegment`, shared by all three branches); the new Playwright success case asserts the tier
+  from the `/auto-scale` job's own network response instead of the transient DOM text, and asserts
+  the *durable* effect (`#scale-denominator`/`#scale-dpi`/`#scale-mode-ratio` after the job
+  settles) as the DoD's "populates the existing fields" proof.
+
+  Tests: 3 new in `tests/unit/web/test_app.py::TestAutoScale` (stubbing
+  `rogaine.web.app.calibrate_map`, same pattern as `tests/unit/test_cli.py`'s T087 tests) -- done
+  with `source`/`scale_denominator`/`dpi` in `result` on a stubbed success, error naming manual
+  entry on a stubbed `(None, None)`, unknown run id 404s. 2 new in
+  `tests/e2e/test_viewer.py::TestAutoScale`: success (stub matches the fixture's own real
+  scale/dpi so the chained `/segment` call actually succeeds, landing the controls table) and
+  failure (error message visible naming manual entry, then ratio-mode manual entry completes the
+  same flow). `_live_server` runs `web_app.app` in-process via a background thread, not a
+  subprocess, so `monkeypatch.setattr(web_app, "calibrate_map", ...)` reaches the live worker
+  directly -- no test-only hook or env var was needed, contrary to what the brief flagged as a
+  possible gap. `TestFullViewerFlow`/`TestViewerLayout` (F2/F3/T085) untouched, all still pass.
+  23 passed in `tests/unit/web/test_app.py` + `tests/e2e/test_viewer.py` together (up from 16 + 2
+  = 18 pre-T088, net +5: 3 unit, 2 e2e); 470 passed for the full suite (up from 465), `ruff check
+  .` clean.
