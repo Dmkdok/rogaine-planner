@@ -1382,7 +1382,7 @@ the implementer's self-report.
   correctly` floor held unchanged (11/12) through every step. 465 passed (463 baseline + 2 new
   tests), `ruff check .` clean (both independently re-run, not just trusted from the implementer).
   See commit d40047f.
-- [ ] **T085** — Viewer layout: map and controls list simultaneously visible (F17, ADR-021) — paths:
+- [x] **T085** — Viewer layout: map and controls list simultaneously visible (F17, ADR-021) — paths:
   `src/rogaine/web/static/index.html`, `style.css`, `app.js`, `tests/e2e/test_viewer.py` — deps:
   none — DoD: on a standard viewport (e.g. 1366x768) with a map loaded, the map viewport and the
   controls table are both visible without scrolling the map out of view to reach a control's number
@@ -1392,6 +1392,21 @@ the implementer's self-report.
   the existing A11y non-functional requirement (keyboard-operable, focus visible, labelled, legible
   light/dark) is re-verified, not just assumed; existing `test_viewer.py` assertions keep passing
   unmodified.
+
+  **Landed** (commit `fec2e7c`) — **backfilled into this file during the T084 session**: the commit
+  existed in the tree with no `TASKS.md`/`STATUS.md` record at all (checkbox found stale, corrected
+  per this project's own "trust the tree" rule); the note below is reconstructed from the commit
+  diff and a passing test run, not from first-hand knowledge of the session that built it, so it
+  omits any rejected-alternative narrative that session may have had. `style.css`/`app.js` only —
+  `index.html` untouched, because its `#map-viewport`/`#controls-table`/`#controls-tbody` ids
+  already existed for the new CSS/JS to hook into. New `TestViewerLayout` class
+  (`tests/e2e/test_viewer.py`, one new Playwright test) sets a 1366x768 viewport, runs the existing
+  upload/calibrate/detect flow, then asserts `#map-viewport` and `#controls-table` are each fully
+  `to_be_in_viewport(ratio=1)` at once, and that clicking a table row toggles `row-selected`/
+  `marker--selected` classes on it and its marker (and clears them from the previously-selected
+  pair) both directions. All pre-existing `test_viewer.py` assertions unmodified. 465 passed
+  (this session's own count, includes T085+T087+T084 together), `ruff check .` clean — not verified
+  isolated to just this commit's own delta.
 - [ ] **T086** — Viewer visual redesign (typography, spacing, colour, table legibility) — paths:
   `src/rogaine/web/static/style.css`, `index.html` — deps: T085 (same owned files, serialized after
   the structural fix) — DoD: `tests/e2e/test_viewer.py` stays green with its assertions unmodified;
@@ -1400,7 +1415,7 @@ the implementer's self-report.
   width; owner reviews a live instance and confirms it reads as more concise/modern than the
   previous six-stacked-accordion layout — a manual sign-off, no automated "looks modern" floor
   (same precedent as ADR-019/T082).
-- [ ] **T087** — Wire auto-scale detection into the CLI (F21, ADR-022) — paths: `src/rogaine/cli.py`,
+- [x] **T087** — Wire auto-scale detection into the CLI (F21, ADR-022) — paths: `src/rogaine/cli.py`,
   `src/rogaine/vision/calibrate.py` (only if a thin single-image wrapper around `calibrate_map` is
   needed) — deps: none (T078 already landed) — DoD: `segment`/`plan` gain `--auto-scale`, mutually
   exclusive with `--scale` and `--calibrate` (extends `_resolve_mpp`'s existing "exactly one of the
@@ -1409,6 +1424,24 @@ the implementer's self-report.
   pointing at `--scale`/`--calibrate`, never a silently guessed default. New test(s) cover both
   outcomes without needing a real scale-bar map (stub `calibrate_map` or use a detectable synthetic
   fixture).
+
+  **Landed** (commit `cc03275`) — **backfilled into this file during the T084 session**, same
+  stale-checkbox situation and same caveat as T085's note above. `_resolve_mpp` gained an `auto_scale`
+  parameter plus `image`/`config` (needed to call `calibrate_map`) and now returns `(mpp, dpi, tier)`
+  instead of a bare `mpp`; `--auto-scale` rejects being combined with `--scale`/`--calibrate` with a
+  named-flag error message, and a bare failed `calibrate_map` (returns `None`) raises pointing at
+  both manual flags by name. On success, `dpi` downstream of `_resolve_mpp` becomes the detector's
+  own measured value (mirroring `calibrate_corpus`'s existing use of `CalibrationResult.dpi`,
+  ADR-016) rather than the pre-detection probe, and both `segment`/`plan` print the firing tier plus
+  the resulting mpp/dpi. `vision/calibrate.py` untouched — `calibrate_map` needed no wrapper.
+  `config.py` untouched too. 5 new tests in `tests/unit/test_cli.py`: `TestSegment` gains tier+dpi
+  reported and `terrain.npz` written on a stubbed success, failure message names both manual flags,
+  and `--auto-scale` rejected together with `--scale`; `TestPlan` gains a full run to
+  `route.json`/`route.png` on a stubbed success plus its own failure-message test — no dedicated
+  `--auto-scale`+`--calibrate` combo test exists (only the `--scale` combo is covered, on `segment`
+  only), a gap worth closing if this code changes again. 465 passed (this session's own count,
+  includes T085+T087+T084 together), `ruff check .` clean — not verified isolated to just this
+  commit's own delta.
 - [ ] **T088** — Wire the same auto-scale option into the web viewer (F21, ADR-022) — paths:
   `src/rogaine/web/app.py`, `src/rogaine/web/static/index.html`, `app.js`, `api.js` — deps: T086
   (shares the redesigned Scale panel's markup/styling), T087 (mirrors its outcome semantics/wording

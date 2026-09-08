@@ -23,7 +23,13 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   2026-09-05** (`утверждаю`) — M9 filed in `docs/TASKS.md`. **T079, T080, T081, T077 all landed
   2026-09-06** (commits `fade5fd`, `e6e730a`/`8a70639` docs, `00b1b97`, `7676556` docs, `e7e2017`
   ADR-020 docs, `a29d752`) — see Resume here for the measured detail on each. Only **T082** (owner
-  spot-check, manual, ADR-019) remains open in M9.
+  spot-check, manual, ADR-019) remains open in M9 — but see immediately below, M9 has been
+  overtaken by a second, larger iteration on the same branch. **Iteration I3 (viewer UX, scale
+  auto-detect exposure, OCR fix) approved 2026-09-07** — M10 filed (T083-T088). **T083, T085, T087,
+  T084 landed 2026-09-07/08** (commits `be8eccb`/ADR-023, `fec2e7c`, `cc03275`, `d40047f`+`0631783`)
+  — real-scan OCR read rate 19%→49% corpus-wide (T084/ADR-023). **T086 (viewer visual redesign) and
+  T088 (web auto-scale) remain open** — see "Iteration I3" below for the full per-task detail and
+  progress checklist.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -33,6 +39,11 @@ session's edit, doesn't touch the `tests` service, left alone; owner has not sai
 commit or revert it).
 
 ## Resume here
+**This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check.
+Active work is Iteration I3 (M10, T083-T088), 4/6 tasks landed as of 2026-09-08 — jump to the
+"Iteration I3" section below for its own Resume-here-equivalent progress checklist and next task
+(T086) before reading the rest of this section.**
+
 `master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
 merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
 landed 2026-09-06. Only T082 (owner spot-check, manual, cannot be automated) is left open.** Full
@@ -125,8 +136,14 @@ Progress (M10 in `docs/TASKS.md`, T083-T088):
 - [x] 2 impact map written — same file
 - [x] 3 docs amended (SPEC F17/F21/Non-goals, DECISIONS ADR-021/022, TASKS M10 T083-T088)
 - [x] GATE — approved by the owner 2026-09-07 («Утверждаю, продолжай»)
-- [ ] 4 implementation
-- [ ] 5 verification green, baseline suites still green
+- [ ] 4 implementation — **T083, T085, T087, T084 landed** (commits `be8eccb`/ADR-023, `fec2e7c`,
+  `cc03275`, `d40047f`+`0631783`); T085/T087 landed with no `TASKS.md`/`STATUS.md` record at all
+  (found stale during the T084 session, backfilled into `TASKS.md` from their commit diffs — see
+  those two tasks' own entries for the "backfilled, not first-hand" caveat). **T086, T088 remain
+  open** — T086 (viewer visual redesign) now unblocked (dep T085 satisfied); T088 (web auto-scale)
+  still blocked on T086.
+- [ ] 5 verification green, baseline suites still green — 465 passed, exit 0, `ruff check .` clean
+  (2026-09-08, this session's own run, after T084)
 - [ ] 6 review clean or waived
 - [ ] 7 closed
 
