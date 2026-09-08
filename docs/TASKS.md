@@ -1523,7 +1523,7 @@ the implementer's self-report.
   pattern with a clear next step (switch to manual entry); a new Playwright case covers both a
   stubbed success and a stubbed failure; F2/F3's existing tests and flows stay unchanged.
 
-  **Landed** (commit TBD) — followed the recommended design as-is: auto-scale is its own job kind,
+  **Landed** (commit `5957120`) — followed the recommended design as-is: auto-scale is its own job kind,
   never a new segmentation path. `_JobRecord.kind`/`JobStatusOut.kind` gained `"auto_scale"`
   (these are `web/app.py`'s own local models, freely extensible per the module's docstring, not
   `models.py`'s frozen ADR-008 contract). New `_auto_scale_worker(job_id, run_dir, map_path)`
