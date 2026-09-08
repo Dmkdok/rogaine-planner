@@ -110,16 +110,89 @@ _TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789"
 _CIRCLE_MASK_RADIUS_FACTOR = 1.25
 _CROP_MARGIN_FACTOR = 0.6
 
+# T084/ADR-023 mode 1: minimum connected-component area to survive `_strip_thin_ink`, as a fraction
+# of the *squared* expected digit height (`number_font_height_mm` converted to px) -- squared
+# because area, not a linear kernel size, is what a connected-component filter tests against a
+# stroke that is thin in one dimension but spans nearly the full digit height in the other. Swept
+# in 0.02 steps from 0.0 to 0.40 against both the synthetic fixture and the full real corpus (a
+# throwaway script under data/maps/, same pattern as T083's): the synthetic fixture's 11/12 floor
+# held everywhere from 0.0 to 0.30 (only breaking down at 0.40+, where the filter starts eating
+# genuine digit strokes on some real maps too), while the real corpus total climbed from the
+# unfiltered 80/416 to a broad plateau of 169-179/416 across 0.16-0.24 -- 0.20 sits mid-plateau
+# (176/416) rather than chasing the single noisiest point (0.21's 179/416).
+_MIN_INK_AREA_FACTOR = 0.20
+
+# T084/ADR-023 mode 2: on some real scans the ring-erase disk above (r_mid *
+# _CIRCLE_MASK_RADIUS_FACTOR) undershoots the real printed ring -- measured directly on
+# `pervomayskoe` (radial ink-density profile around the detected centre): the true ring band sits
+# at ~1.3-1.5x r_mid, well past the disk's 1.25x edge. A *global* widen was tried and rejected: it
+# helps the undershoot maps but measurably hurts maps whose ring was already correctly erased at
+# 1.25x (e.g. `toksovo-1` 19/21 -> 13/21 at a global 1.50x -- the wider disk starts eating into
+# nearby digit ink instead). Widening only when a residual ring is actually still detectable past
+# the base disk avoids that: swept against the full real corpus, every threshold/widened-factor
+# combination in {0.3, 0.4, 0.5} x {1.50, 1.55, 1.60} left every already-correct map's count
+# unchanged while `pervomayskoe` (0/41 at every mode-1-only factor) jumped to 19/41 and
+# `history-race-2024-michurinskoe` (an undershoot case T083 did not separately flag) climbed from
+# 2/37 to 5-14/37. 0.4/1.55 sits mid-range rather than the single best point.
+_RING_CHECK_OUTER_RATIO = 1.2
+_RING_DENSITY_WIDEN_THRESHOLD = 0.4
+_WIDENED_CIRCLE_MASK_RADIUS_FACTOR = 1.55
+
+
+def _strip_thin_ink(ink: np.ndarray, min_area: float) -> np.ndarray:
+    """Drop every connected component of *ink* whose pixel area is under *min_area*.
+
+    T084/ADR-023 mode 1: real scans leave behind ink `purple_mask`/the ring erasure above do not
+    catch -- a squiggly shoreline or contour-line edge that happens to clear the hue/saturation/
+    value floor, or contour ink bleeding in on densely-contoured terrain. Left in, it defeats
+    Tesseract's psm 7 single-line assumption even when the crop is otherwise correctly framed and
+    the ring correctly erased (measured: `novo-kavgolovsky-lesopark` control 1, `kkm-toksovo`
+    controls 1/5). A morphological opening was tried first and rejected: even its smallest
+    non-trivial kernel shaved corners off the *surviving* ink and cost the synthetic fixture's
+    11/12 floor at every kernel size that helped the real corpus. A connected-component area
+    filter never touches a surviving component's own pixels -- it only removes components too
+    small in total area to be a digit stroke, which stays gentle on the synthetic fixture's own
+    (thin but full-height) Hershey strokes while still dropping small isolated real-scan noise
+    blobs.
+    """
+    if min_area <= 0:
+        return ink
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        ink.astype(np.uint8), connectivity=8
+    )
+    keep = np.zeros_like(ink)
+    for label in range(1, n_labels):  # label 0 is the background
+        if stats[label, cv2.CC_STAT_AREA] >= min_area:
+            keep |= labels == label
+    return keep
+
+
+def _annulus_ink_density(
+    mask: np.ndarray, cx: float, cy: float, r_inner: float, r_outer: float
+) -> float:
+    """Fraction of the annulus `[r_inner, r_outer)` around `(cx, cy)` that *mask* covers.
+
+    Close to 1 for a mostly-closed printed ring surviving in that band, much lower for scattered
+    digit or noise ink -- the residual-ring signal `_ocr_crop` uses to decide whether to widen its
+    erase disk (T084/ADR-023 mode 2)."""
+    h, w = mask.shape
+    yy, xx = np.ogrid[:h, :w]
+    r2 = (xx - cx) ** 2 + (yy - cy) ** 2
+    annulus = (r2 >= r_inner**2) & (r2 < r_outer**2)
+    total = annulus.sum()
+    if total == 0:
+        return 0.0
+    return float(mask[annulus].sum()) / float(total)
+
 
 def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -> np.ndarray:
     """The black-ink-on-white crop `pytesseract` reads from: a generous square around *control*,
-    purple ink only, with the control's own circle ring erased (module docstring)."""
+    purple ink only, with the control's own circle ring erased and any remaining ink too small to
+    be a digit stroke stripped out too (module docstring, T084/ADR-023)."""
     det = cfg.detector
-    if control.radius_px is not None:
-        r_mid = control.radius_px
-    else:
-        r_min, r_max = det.circle_radius_px(dpi)
-        r_mid = (r_min + r_max) / 2.0
+    r_min, r_max = det.circle_radius_px(dpi)
+    base_r_mid = (r_min + r_max) / 2.0
+    r_mid = control.radius_px if control.radius_px is not None else base_r_mid
     half = r_mid * (1.0 + det.number_search_radius + _CROP_MARGIN_FACTOR)
 
     h_img, w_img = image.shape[:2]
@@ -132,9 +205,32 @@ def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -
     mask = purple_mask(crop, cfg)
     h, w = mask.shape
     cx, cy = control.x - x0, control.y - y0
+
+    # T084/ADR-023 mode 2: widen the ring-erase disk only when a residual ring survives just past
+    # the base disk's edge (see the constants' own comment for the measured reasoning).
+    density = _annulus_ink_density(
+        mask,
+        cx,
+        cy,
+        r_mid * _CIRCLE_MASK_RADIUS_FACTOR,
+        r_mid * _CIRCLE_MASK_RADIUS_FACTOR * _RING_CHECK_OUTER_RATIO,
+    )
+    erase_factor = (
+        _WIDENED_CIRCLE_MASK_RADIUS_FACTOR
+        if density > _RING_DENSITY_WIDEN_THRESHOLD
+        else _CIRCLE_MASK_RADIUS_FACTOR
+    )
     yy, xx = np.ogrid[:h, :w]
-    ring = (xx - cx) ** 2 + (yy - cy) ** 2 <= (r_mid * _CIRCLE_MASK_RADIUS_FACTOR) ** 2
+    ring = (xx - cx) ** 2 + (yy - cy) ** 2 <= (r_mid * erase_factor) ** 2
     ink = mask & ~ring
+
+    # T084/ADR-023 mode 1: a control matched at a non-base circle_scale_multiplier (T077/ADR-020)
+    # was printed bigger by the same ratio its circle was, so the expected digit size scales with
+    # r_mid the same way the ring-erase disk above already does.
+    scale = r_mid / base_r_mid if base_r_mid > 0 else 1.0
+    digit_height_px = det.number_font_height_mm * (dpi / 25.4) * scale
+    ink = _strip_thin_ink(ink, (digit_height_px * _MIN_INK_AREA_FACTOR) ** 2)
+
     return np.where(ink, 0, 255).astype(np.uint8)
 
 

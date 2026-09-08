@@ -22,6 +22,7 @@ import pytest
 from PIL import Image
 
 from rogaine.config import AppConfig, default_config
+from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.models import Control
 from rogaine.vision.controls import detect_controls
 from rogaine.vision.ocr import read_control_number, read_control_numbers
@@ -35,6 +36,16 @@ _UNREADABLE_CONTROL_TRUTH_NUMBER = 83
 #: `tests/unit/vision/test_controls.py`'s own `_REAL_SCAN_PATH`.
 _REAL_SCAN_DIR = Path(__file__).resolve().parents[3] / "data" / "maps" / "grid-lines-red-controls"
 _REAL_SCAN_PATH = _REAL_SCAN_DIR / "map.jpeg"
+
+#: T084/ADR-023's own regression fixtures -- both gitignored real owner scans (ADR-010), neither
+#: with a meta.toml, so their dpi comes from `resolve_dpi`'s own auto-probe/fallback, the same way
+#: the throwaway measurement script that produced these numbers resolved it.
+_PERVOMAYSKOE_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "maps" / "pervomayskoe" / "map.jpeg"
+)
+_NOVO_KAVGOLOVSKY_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "maps" / "novo-kavgolovsky-lesopark" / "map.jpg"
+)
 
 
 def _with_detector(cfg: AppConfig, **overrides: object) -> AppConfig:
@@ -294,3 +305,58 @@ class TestScaleAwareCropOnRealScan:
             f"base-scale-only crop read {n_read_base_scale}/13"
         )
         assert n_read_scale_aware >= n_read_base_scale, report
+
+
+class TestRealScanReadRateFloor:
+    """T084/ADR-023: a permanent regression floor for the real-scan read-rate fix, against T083's
+    own measured baseline (ADR-023's per-map table). Two maps, each isolating one of the two fix
+    modes landed in `_ocr_crop`:
+
+    - `pervomayskoe` isolates mode 2 (the conditional ring-erase widen): T083's baseline was 0/41
+      (the true printed ring extends to ~1.3-1.5x `r_mid`, past the base 1.25x erase disk, leaving
+      an unerased ring outline next to the digits) and mode 1 alone (the ink-area filter) still
+      measured 0/41 -- only the conditional widen moved this map.
+    - `novo-kavgolovsky-lesopark` isolates mode 1 (`_strip_thin_ink`): T083's baseline was 0/21
+      (contour-line ink bleeding into the mask on densely-contoured terrain defeats Tesseract's
+      psm 7 single-line assumption even with a correctly-erased ring) -- mode 2's conditional widen
+      does not trigger on this map (its rings are already correctly erased at the base factor).
+
+    Floors sit a small margin below the measured counts (T084: 19/41 and 6/21 respectively) to
+    tolerate incidental jitter without masking an actual regression.
+    """
+
+    @pytest.mark.skipif(
+        not _PERVOMAYSKOE_PATH.is_file(),
+        reason="data/maps/pervomayskoe/map.jpeg absent (ADR-010: gitignored real scan)",
+    )
+    def test_pervomayskoe_read_rate_floor(self) -> None:
+        cfg = default_config()
+        dpi = resolve_dpi(_PERVOMAYSKOE_PATH, user_dpi=None)
+        image = load_raster(_PERVOMAYSKOE_PATH)
+        detections = detect_controls(image, dpi, cfg)
+        circles = [c for c in detections if not c.is_hub]
+        assert len(circles) == 41, f"expected 41 detected circles, got {len(circles)}"
+
+        updated, _flags = read_control_numbers(image, detections, dpi, cfg)
+        n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
+
+        # T083 baseline (ADR-023): 0/41. T084 measured: 19/41.
+        assert n_read >= 15, f"pervomayskoe read {n_read}/41 numbers, expected >= 15"
+
+    @pytest.mark.skipif(
+        not _NOVO_KAVGOLOVSKY_PATH.is_file(),
+        reason="data/maps/novo-kavgolovsky-lesopark/map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_novo_kavgolovsky_lesopark_read_rate_floor(self) -> None:
+        cfg = default_config()
+        dpi = resolve_dpi(_NOVO_KAVGOLOVSKY_PATH, user_dpi=None)
+        image = load_raster(_NOVO_KAVGOLOVSKY_PATH)
+        detections = detect_controls(image, dpi, cfg)
+        circles = [c for c in detections if not c.is_hub]
+        assert len(circles) == 21, f"expected 21 detected circles, got {len(circles)}"
+
+        updated, _flags = read_control_numbers(image, detections, dpi, cfg)
+        n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
+
+        # T083 baseline (ADR-023): 0/21. T084 measured: 6/21.
+        assert n_read >= 5, f"novo-kavgolovsky-lesopark read {n_read}/21 numbers, expected >= 5"
