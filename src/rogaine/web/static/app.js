@@ -382,8 +382,6 @@ function updateSelectionHighlight(prevId, nextId) {
     const row = document.getElementById(`control-row-${id}`);
     if (row) {
       row.classList.toggle("row-selected", isSelected);
-      if (isSelected) row.setAttribute("aria-selected", "true");
-      else row.removeAttribute("aria-selected");
     }
   }
 }
@@ -546,7 +544,6 @@ function createControlRow(control) {
   tr.id = `control-row-${control.id}`;
   if (control.id === state.selectedControlId) {
     tr.classList.add("row-selected");
-    tr.setAttribute("aria-selected", "true");
   }
   // Selecting a row highlights its marker (ADR-021, vice versa of onMarkerPointerDown). Ignore
   // clicks on the delete button -- the row is about to be removed, not selected.
@@ -947,7 +944,7 @@ function initScaleForm() {
       els.applyScaleBtn.disabled = true;
       let job;
       try {
-        const { job_id } = await api.startAutoScale(state.runId);
+        const { job_id } = await api.startAutoScale(state.runId, { page });
         job = await api.waitForJob(job_id, {
           onTick: (j) =>
             setStatus(`Автоматическое определение масштаба: ${jobStatusLabel(j.status)}…`),
@@ -963,8 +960,8 @@ function initScaleForm() {
         return;
       }
       const { source, scale_denominator: scale, dpi } = job.result;
-      els.scaleDenominator.value = scale;
-      els.scaleDpi.value = dpi;
+      els.scaleDenominator.value = Math.round(scale);
+      els.scaleDpi.value = Math.round(dpi * 10) / 10;
       els.scaleModeRatio.checked = true;
       updateScalePanels();
       setStatus(`Масштаб определён автоматически (${source}): 1:${scale}, ${dpi} DPI.`);

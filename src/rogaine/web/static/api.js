@@ -63,9 +63,9 @@ export function startDetect(runId) {
   return _requestJson("POST", `/api/runs/${encodeURIComponent(runId)}/detect`, {});
 }
 
-/** `POST /api/runs/{runId}/auto-scale`, no body. Returns `{job_id}`. */
-export function startAutoScale(runId) {
-  return _requestJson("POST", `/api/runs/${encodeURIComponent(runId)}/auto-scale`, {});
+/** `POST /api/runs/{runId}/auto-scale`. `body` is `{page?}`. Returns `{job_id}`. */
+export function startAutoScale(runId, body = {}) {
+  return _requestJson("POST", `/api/runs/${encodeURIComponent(runId)}/auto-scale`, body);
 }
 
 /** `GET /api/runs/{runId}/controls` -> `Control[]`. */

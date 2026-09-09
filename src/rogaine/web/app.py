@@ -119,6 +119,12 @@ class SegmentRequest(BaseModel):
     page: int = Field(default=0, ge=0)
 
 
+class AutoScaleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(default=0, ge=0)
+
+
 class JobStatusOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -280,7 +286,7 @@ def _detect_worker(job_id: str, run_dir: Path, map_path: Path, dpi: float) -> No
     _update_job(job_id, status="done", result=result)
 
 
-def _auto_scale_worker(job_id: str, run_dir: Path, map_path: Path) -> None:
+def _auto_scale_worker(job_id: str, run_dir: Path, map_path: Path, page: int) -> None:
     """ADR-022/F21: detect scale/dpi via `calibrate_map` (scale_bar -> grid -> circle, first hit
     wins, unmodified from `vision/calibrate.py`) without touching `terrain.npz` -- this job's
     result only fills in `SegmentRequest.scale`/`.dpi` client-side; the client then calls the
@@ -291,7 +297,7 @@ def _auto_scale_worker(job_id: str, run_dir: Path, map_path: Path) -> None:
     try:
         cfg = load_config()
         dpi = resolve_dpi(map_path, user_dpi=None)
-        image = load_raster(map_path, dpi=dpi)
+        image = load_raster(map_path, page=page, dpi=dpi)
         result, _ = calibrate_map(image, cfg)
     # Broad on purpose (ADR-017, S-001) -- see _segment_worker.
     except Exception as exc:
@@ -302,8 +308,8 @@ def _auto_scale_worker(job_id: str, run_dir: Path, map_path: Path) -> None:
             job_id,
             status="error",
             error=(
-                "auto-scale: no calibration signal found on this map -- enter scale or "
-                "calibration manually"
+                "Автоматическое определение масштаба: не найден признак калибровки на этой "
+                "карте -- укажите масштаб или калибровку вручную"
             ),
         )
         return
@@ -450,12 +456,15 @@ def start_segment(
 
 
 @app.post("/api/runs/{run_id}/auto-scale", status_code=status.HTTP_202_ACCEPTED)
-def start_auto_scale(run_id: str, background_tasks: BackgroundTasks) -> dict[str, str]:
+def start_auto_scale(
+    run_id: str, background_tasks: BackgroundTasks, body: AutoScaleRequest | None = None
+) -> dict[str, str]:
     run_dir = _require_run(run_id)
     map_path = _map_path(run_dir)
+    page = body.page if body is not None else 0
 
     job_id = _create_job(run_id, "auto_scale")
-    background_tasks.add_task(_auto_scale_worker, job_id, run_dir, map_path)
+    background_tasks.add_task(_auto_scale_worker, job_id, run_dir, map_path, page)
     return {"job_id": job_id}
 
 

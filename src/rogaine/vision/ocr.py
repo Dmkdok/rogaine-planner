@@ -110,9 +110,10 @@ _TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789"
 _CIRCLE_MASK_RADIUS_FACTOR = 1.25
 _CROP_MARGIN_FACTOR = 0.6
 
-# T084/ADR-023 mode 1: minimum connected-component area to survive `_strip_thin_ink`, as a fraction
-# of the *squared* expected digit height (`number_font_height_mm` converted to px) -- squared
-# because area, not a linear kernel size, is what a connected-component filter tests against a
+# T084/ADR-023 mode 1: minimum connected-component area to survive `_strip_thin_ink`, computed as
+# this fraction of the expected digit height (`number_font_height_mm` converted to px), squared:
+# `(digit_height_px * _MIN_INK_AREA_FACTOR) ** 2` -- squared because area, not a linear kernel
+# size, is what a connected-component filter tests against a
 # stroke that is thin in one dimension but spans nearly the full digit height in the other. Swept
 # in 0.02 steps from 0.0 to 0.40 against both the synthetic fixture and the full real corpus (a
 # throwaway script under data/maps/, same pattern as T083's): the synthetic fixture's 11/12 floor

@@ -164,6 +164,33 @@ class TestAutoScale:
         assert job["status"] == "done", job
         assert job["result"] == {"source": "circle", "scale_denominator": 25000.0, "dpi": 250.0}
 
+    def test_auto_scale_passes_the_page_argument_to_load_raster(
+        self, synthetic_map, monkeypatch
+    ) -> None:
+        """H1 (ADR-022 contract drift): `/auto-scale` must honour the selected PDF page, mirroring
+        `cli.py`'s `segment_cmd` -- `calibrate_map` never sees the page number itself, `load_raster`
+        does, so this asserts on the `load_raster` call rather than on `calibrate_map`'s input.
+        """
+        sm = synthetic_map
+        run_id = _upload(sm.image)
+
+        stub = CalibrationResult(source="circle", scale_denominator=25000.0, dpi=250.0)
+        monkeypatch.setattr(web_app, "calibrate_map", lambda image, config: (stub, 25000.0))
+
+        calls: list[dict] = []
+
+        def _stub_load_raster(path, **kwargs):
+            calls.append(kwargs)
+            return sm.image
+
+        monkeypatch.setattr(web_app, "load_raster", _stub_load_raster)
+
+        resp = client.post(f"/api/runs/{run_id}/auto-scale", json={"page": 3})
+        assert resp.status_code == 202, resp.text
+        job = _wait_for_job(resp.json()["job_id"])
+        assert job["status"] == "done", job
+        assert calls and calls[0]["page"] == 3
+
     def test_auto_scale_failure_names_manual_entry(self, synthetic_map, monkeypatch) -> None:
         sm = synthetic_map
         run_id = _upload(sm.image)
@@ -174,7 +201,7 @@ class TestAutoScale:
         assert resp.status_code == 202, resp.text
         job = _wait_for_job(resp.json()["job_id"])
         assert job["status"] == "error", job
-        assert "manually" in job["error"]
+        assert "вручную" in job["error"]
 
     def test_auto_scale_unknown_run_id_is_404(self) -> None:
         assert client.post("/api/runs/does-not-exist/auto-scale").status_code == 404

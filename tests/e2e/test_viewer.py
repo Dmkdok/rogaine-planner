@@ -384,7 +384,7 @@ class TestAutoScale:
         page.click("#apply-scale-btn")
 
         expect(page.locator("#error-message")).to_be_visible()
-        expect(page.locator("#error-message")).to_contain_text("manually")
+        expect(page.locator("#error-message")).to_contain_text("вручную")
 
         # Manual entry is still available: switching back to ratio mode and applying it goes
         # through the ordinary, unaffected /segment flow (the stubbed `calibrate_map` failure
@@ -396,3 +396,72 @@ class TestAutoScale:
         page.wait_for_selector(
             "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
         )
+
+    def test_auto_scale_fractional_values_leave_a_second_submit_working(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path, monkeypatch
+    ) -> None:
+        """C1 regression: `calibrate_map`'s real dpi/scale_denominator are essentially never
+        round numbers (e.g. `296.83464566929132`) -- writing them straight into `#scale-dpi`
+        (`step="0.1"`) and `#scale-denominator` (`step="1"`) fails HTML5 `stepMismatch`
+        constraint validation on the *next* submit while `#scale-dpi` sits inside the now-
+        `[hidden]` ratio panel (calibrate mode) -- the browser can't show a validation bubble for
+        a hidden field, so `#scale-form`'s `submit` event silently never fires again for the rest
+        of the session. Guards the `Math.round(...)` fix in `app.js`'s auto-scale success
+        handler; unlike the exact-300.0 success test above, this stub is deliberately fractional.
+        """
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        fractional_dpi = 296.83464566929132
+        fractional_scale = 24999.7
+        stub = CalibrationResult(
+            source="circle", scale_denominator=fractional_scale, dpi=fractional_dpi
+        )
+        monkeypatch.setattr(
+            web_app, "calibrate_map", lambda image, config: (stub, fractional_scale)
+        )
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.check("#scale-mode-auto")
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.endswith("/auto-scale")
+        ) as post_info:
+            page.click("#apply-scale-btn")
+        job_id = post_info.value.json()["job_id"]
+
+        deadline = time.monotonic() + 10.0
+        job = None
+        while time.monotonic() < deadline:
+            job = page.request.get(f"{_live_server}/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "error"):
+                break
+            time.sleep(0.05)
+        assert job is not None and job["status"] == "done", job
+
+        # The auto-scale success handler's own runSegment() call (not a native form submit)
+        # already reached /segment once -- wait for it to land the controls table before
+        # touching the form again, so the assertion below is unambiguously about a *second*,
+        # user-initiated submit.
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+        assert float(page.input_value("#scale-dpi")) == round(fractional_dpi * 10) / 10
+        assert float(page.input_value("#scale-denominator")) == round(fractional_scale)
+
+        # Switch to calibrate mode -- this hides the ratio panel (and the fractional
+        # #scale-dpi/#scale-denominator fields it still holds), reproducing C1's exact failure
+        # mode.
+        page.check("#scale-mode-calibrate")
+        page.fill("#calib-x1", "10")
+        page.fill("#calib-y1", "10")
+        page.fill("#calib-x2", "110")
+        page.fill("#calib-y2", "10")
+        page.fill("#calib-meters", "100")
+
+        with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/segment")):
+            page.click("#apply-scale-btn")
