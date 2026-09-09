@@ -25,11 +25,15 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   ADR-020 docs, `a29d752`) — see Resume here for the measured detail on each. Only **T082** (owner
   spot-check, manual, ADR-019) remains open in M9 — but see immediately below, M9 has been
   overtaken by a second, larger iteration on the same branch. **Iteration I3 (viewer UX, scale
-  auto-detect exposure, OCR fix) approved 2026-09-07** — M10 filed (T083-T088). **T083, T085, T087,
-  T084 landed 2026-09-07/08** (commits `be8eccb`/ADR-023, `fec2e7c`, `cc03275`, `d40047f`+`0631783`)
-  — real-scan OCR read rate 19%→49% corpus-wide (T084/ADR-023). **T086 (viewer visual redesign) and
-  T088 (web auto-scale) remain open** — see "Iteration I3" below for the full per-task detail and
-  progress checklist.
+  auto-detect exposure, OCR fix) approved 2026-09-07** — M10 filed (T083-T088). **All six M10 tasks
+  now landed** (commits `be8eccb`/ADR-023, `fec2e7c`, `cc03275`, `d40047f`+`0631783`, `7b6f561`,
+  `5957120`+`14bbccb`) — real-scan OCR read rate 19%→49% corpus-wide (T084/ADR-023).
+  Implementation closed 2026-09-09; independent review (scoped `reviewer` subagent) then FAILed on
+  1 Critical + 1 High + 2 Medium in T088's scope, all fixed and independently re-verified same
+  session (472 passed, `ruff check .` clean) — full account in T088's `docs/TASKS.md` entry. **Two
+  manual owner sign-offs remain open** (T086's visual review, M9's T082 spot-check) — the only
+  thing left before this iteration closes — see "Iteration I3" below for the full per-task detail
+  and progress checklist.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -40,9 +44,11 @@ commit or revert it).
 
 ## Resume here
 **This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check.
-Active work is Iteration I3 (M10, T083-T088), 4/6 tasks landed as of 2026-09-08 — jump to the
-"Iteration I3" section below for its own Resume-here-equivalent progress checklist and next task
-(T086) before reading the rest of this section.**
+Active work is Iteration I3 (M10, T083-T088), all 6/6 tasks landed and independently reviewed
+(FAIL-then-fixed) as of 2026-09-09 — jump to the "Iteration I3" section below for its own
+Resume-here-equivalent progress checklist. Implementation and review are both closed; all that's
+left is two manual owner sign-offs (T086's visual review, M9's T082 spot-check) before reading the
+rest of this section.**
 
 `master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
 merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
@@ -136,16 +142,33 @@ Progress (M10 in `docs/TASKS.md`, T083-T088):
 - [x] 2 impact map written — same file
 - [x] 3 docs amended (SPEC F17/F21/Non-goals, DECISIONS ADR-021/022, TASKS M10 T083-T088)
 - [x] GATE — approved by the owner 2026-09-07 («Утверждаю, продолжай»)
-- [ ] 4 implementation — **T083, T085, T087, T084 landed** (commits `be8eccb`/ADR-023, `fec2e7c`,
-  `cc03275`, `d40047f`+`0631783`); T085/T087 landed with no `TASKS.md`/`STATUS.md` record at all
-  (found stale during the T084 session, backfilled into `TASKS.md` from their commit diffs — see
-  those two tasks' own entries for the "backfilled, not first-hand" caveat). **T086, T088 remain
-  open** — T086 (viewer visual redesign) now unblocked (dep T085 satisfied); T088 (web auto-scale)
-  still blocked on T086.
-- [ ] 5 verification green, baseline suites still green — 465 passed, exit 0, `ruff check .` clean
-  (2026-09-08, this session's own run, after T084)
-- [ ] 6 review clean or waived
-- [ ] 7 closed
+- [x] 4 implementation — **all six landed**: T083, T085, T087, T084 (commits `be8eccb`/ADR-023,
+  `fec2e7c`, `cc03275`, `d40047f`+`0631783`), then T086 (`7b6f561`) and T088 (`5957120` +
+  `14bbccb` follow-up fix). T083/T085/T087 landed with no `TASKS.md`/`STATUS.md` record at the
+  time (found stale in later sessions, backfilled into `TASKS.md` from their commit diffs — see
+  those tasks' own entries for the "backfilled, not first-hand" caveat; T083's checkbox itself was
+  still showing `[ ]` until this session corrected it, per this project's own "trust the tree"
+  rule). **Two manual sign-offs from the owner remain open, both explicitly unautomatable by the
+  DoD itself**: T086 ("owner reviews a live instance and confirms it reads as more concise/modern")
+  and M9's T082 (owner spot-checks 2-3 real scans) — same precedent, ADR-019.
+- [x] 5 verification green, baseline suites still green — **472 passed, exit 0, `ruff check .`
+  clean** (2026-09-09, this session's own independent run, after the review fixes below; docker
+  via a fresh Docker Desktop start — first run of the session failed with "cannot connect to the
+  Docker API", Desktop was not running; started it, polled `docker info` until ready, then ran
+  clean)
+- [x] 6 review — **FAIL, then fixed same session.** `reviewer` subagent scoped to `ead5510..HEAD`
+  (all of M10) found 1 Critical (auto-scale writing a fractional dpi/denominator permanently broke
+  the scale form's submit — reproduced live) + 1 High (`/auto-scale` ignoring the selected PDF
+  page, a CLI/viewer contract drift against ADR-022) + 2 one-line Medium (invalid `aria-selected`
+  on a plain table row; an English error string in the Russian viewer UI). `implementer` fixed all
+  four plus two review-flagged stale comments, independently re-verified in this session (own diff
+  read, own `docker compose run --rm tests` — 472 passed — own `ruff check .`, own isolated run of
+  the affected tests, own `git diff --stat` for stray files). Full account: T088's entry in
+  `docs/TASKS.md`. Three lower-priority Medium/Low items (tier report is a transient status flash
+  and omits mpp; no committed table-overflow regression guard; a couple of informational notes)
+  were left as documented, waived follow-up debt rather than blocking PASS.
+- [ ] 7 closed — blocked on two manual owner sign-offs: T086's visual review ("reads as more
+  concise/modern"), M9/T082's real-scan spot-check. Neither is automatable (ADR-019 precedent).
 
 ## Iteration I1: real-scan vision robustness (in progress, branch `iteration/I1-real-scan-vision`)
 

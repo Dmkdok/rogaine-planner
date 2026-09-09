@@ -1278,7 +1278,7 @@ the implementer's self-report.
 > scale-auto) waits on both `T086` (shares `web/static/*`) and `T087` (mirrors its contract) — see
 > the iteration doc's impact map for the full five-question breakdown per item.
 
-- [ ] **T083** — Diagnose control-number OCR failure on the owner's real scans — paths: none
+- [x] **T083** — Diagnose control-number OCR failure on the owner's real scans — paths: none
   (diagnosis only; a throwaway measurement script under `data/maps/`, gitignored like its siblings)
   — deps: T077 — DoD: measure `_ocr_crop`/`_read_digits`'s actual behaviour against every owner real
   scan under `data/maps/` that has numbered controls (not just `grid-lines-red-controls`), recording
@@ -1288,6 +1288,12 @@ the implementer's self-report.
   guessed, matching this project's own established practice (T079-T081). Findings and the resulting
   fix design get a new ADR in `DECISIONS.md` and feed T084 directly; no product-code changes in this
   task.
+
+  **Landed** (commit `be8eccb`, ADR-023) — **checkbox found stale during this session, corrected
+  per this project's own "trust the tree" rule**; no first-hand landing note exists for this task
+  specifically because its findings were written directly into ADR-023 and then folded into T084's
+  own "Mode 1"/"Mode 2" writeup above (T083 made no product-code change, per its own DoD). See
+  ADR-023 in `DECISIONS.md` for the full measured diagnosis this task produced.
 - [x] **T084** — Fix control-number OCR per T083's findings — paths: `src/rogaine/vision/ocr.py`,
   `config/default.toml` (only if a tunable is implicated), `tests/unit/vision/test_ocr.py` — deps:
   T083 — DoD: real-scan read rate measurably improves beyond T083's own measured baseline, with the
@@ -1572,14 +1578,70 @@ the implementer's self-report.
   = 18 pre-T088, net +5: 3 unit, 2 e2e); 470 passed for the full suite (up from 465), `ruff check
   .` clean.
 
-  **Follow-up fix, same session, independent verification** (commit TBD at write time — see the
-  commit immediately after `5957120`): the deviation above was real and worth closing, not just
-  noting — DoD says success "states which tier produced them," and a message with no rendered
-  frame does not do that for an actual person. Fixed with the minimal change that doesn't touch
-  `runSegment` (still shared by all three branches, still untouched otherwise): a 1200ms
-  `await new Promise((resolve) => setTimeout(resolve, 1200))` between setting the tier status text
-  and falling through to `runSegment(body)`, giving the browser a real frame to paint it in before
-  it's overwritten. Verified: full suite still 470 passed (the new Playwright test already asserted
-  the tier from the job's network response and the durable field values, not the transient DOM
-  text, so it was insensitive to this timing either way and needed no change); `ruff check .`
-  doesn't apply (`.js`, not `.py`).
+  **Follow-up fix, same session, independent verification** (commit `14bbccb`): the deviation
+  above was real and worth closing, not just noting — DoD says success "states which tier produced
+  them," and a message with no rendered frame does not do that for an actual person. Fixed with the
+  minimal change that doesn't touch `runSegment` (still shared by all three branches, still
+  untouched otherwise): a 1200ms `await new Promise((resolve) => setTimeout(resolve, 1200))`
+  between setting the tier status text and falling through to `runSegment(body)`, giving the
+  browser a real frame to paint it in before it's overwritten. Verified: full suite still 470
+  passed (the new Playwright test already asserted the tier from the job's network response and
+  the durable field values, not the transient DOM text, so it was insensitive to this timing
+  either way and needed no change); `ruff check .` doesn't apply (`.js`, not `.py`).
+
+  **Independent review, 2026-09-09 (verdict FAIL, then fixed same session)** — a `reviewer`
+  subagent scoped to the `ead5510..14bbccb` diff (all of M10) found one Critical and one High
+  defect, both in this task's own scope, plus two one-line Medium items; PASS confirmed after
+  fixing all four (commit `f756da4`):
+  - **C1 (Critical)** — the auto-scale success handler wrote `calibrate_map`'s raw
+    `dpi`/`scale_denominator` straight into `#scale-dpi` (`step="0.1"`) and `#scale-denominator`
+    (`step="1"`). Those values are essentially never round numbers (e.g.
+    `296.83464566929132`), so the write fails HTML5 `stepMismatch` constraint validation on the
+    *next* form submit — and because `#scale-dpi` sits inside whichever panel is currently
+    `[hidden]` in calibrate mode, the browser can't even show a validation bubble, so
+    `#scale-form`'s `submit` event silently stops firing for the rest of the session, in *both*
+    scale modes. Reproduced live via Playwright before the fix (`stepMismatch: True`, `submit
+    fired: False`). Fixed by rounding both fields to their own `step` precision on write
+    (`Math.round(dpi * 10) / 10`, `Math.round(scale)`) — the unrounded values still flow into the
+    `/segment` request body unchanged, so segmentation precision is untouched, only the two
+    display/edit fields are affected. New regression test,
+    `test_auto_scale_fractional_values_leave_a_second_submit_working`
+    (`tests/e2e/test_viewer.py`), stubs a deliberately fractional dpi/denominator, drives
+    auto-scale to success, switches to calibrate mode (reproducing the hidden-panel failure mode
+    exactly), and asserts a second submit still reaches `/segment`.
+  - **H1 (High)** — `/auto-scale` always measured PDF page 0 (`_auto_scale_worker`'s
+    `load_raster` call took no `page`), while `cli.py`'s equivalent `--auto-scale` path correctly
+    honours the user-selected page — a CLI/viewer contract drift ADR-022 explicitly meant to
+    prevent. Fixed: new `AutoScaleRequest` body model (mirrors `SegmentRequest.page`'s
+    `Field(default=0, ge=0)` convention) threaded through `start_auto_scale` ->
+    `_auto_scale_worker` -> `load_raster(map_path, page=page, ...)`; `app.js`'s auto-scale submit
+    branch now sends the same already-computed `page` value the ratio/calibrate branches use.
+    New unit test, `test_auto_scale_passes_the_page_argument_to_load_raster`
+    (`tests/unit/web/test_app.py`), stubs `load_raster` directly (not `calibrate_map`, which never
+    sees the page number) and asserts `page == 3` reaches it.
+  - **M3 (Medium, one-line)** — `aria-selected="true"` was being set on `#controls-table`'s plain
+    `<tr>` rows, which carry no `role="grid"`/`treegrid` — an invalid ARIA attribute in this
+    context (axe's `aria-allowed-attr`). Fixed by removing both the select and deselect call sites
+    in `app.js`; the row's own `.row-selected` class and the map marker's `aria-current="true"`
+    already carry the same information validly and are untouched.
+  - **M4 (Medium, one-line)** — the auto-scale failure message
+    (`"auto-scale: no calibration signal found..."`) was in English, landing straight in
+    `#error-message` of an otherwise fully-Russian viewer — against CLAUDE.md's "User-facing
+    language: Russian." Fixed by translating `web/app.py`'s message to Russian (the CLI's own
+    English message in `cli.py` is intentionally untouched — CLI output stays English by this
+    project's own convention, only the web viewer is Russian-facing); both the unit and e2e tests'
+    assertions updated from the English substring to the Russian one.
+
+  Also fixed, review-flagged, zero-risk comment corrections (no logic change): `ocr.py`'s
+  `_MIN_INK_AREA_FACTOR` docstring described the formula backwards (implied `0.20 * h**2`, actual
+  code computes `(h * 0.20) ** 2`, i.e. `0.04 * h**2` — the code was always right, only the
+  comment was wrong); `style.css`'s `.table-scroll` comment still said the old "440px side column"
+  pre-T086 number instead of the landed 460px.
+
+  Independently re-verified, not trusted from the fixing subagent's own report: own read of the
+  full diff, own `docker compose run --rm tests` — **472 passed**, exit 0 (470 baseline + 2 new:
+  1 e2e, 1 unit); own `docker compose run --rm tests ruff check .` clean; own isolated run of
+  `tests/e2e/test_viewer.py::TestAutoScale` + `tests/unit/web/test_app.py::TestAutoScale` (7
+  passed, none skipped); own `git diff --stat` confirmed only the seven files named in the fix
+  brief were touched, nothing else. Two manual owner sign-offs (T086's visual review, M9's T082
+  spot-check) remain open — not something a review pass can close.
