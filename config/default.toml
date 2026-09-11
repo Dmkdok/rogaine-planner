@@ -321,9 +321,40 @@ density_sigma_mm = 1.0
 # Density is a locally-blurred contour-ink area fraction, clipped to [0, 1] -- not normalised to
 # span it: gaps between contour lines are most of any real area, so a real map's steepest terrain
 # never gets close to 1.0 (this project's own fixture measures well under 0.5 at its densest).
-# Speed is divided by (1 + penalty * density); 1/(1 + penalty) is a theoretical floor reached only
-# under solid, wall-to-wall contour ink, not a bound any real map's density actually reaches.
-penalty = 2.0
+# Speed is divided by (1 + penalty * density^density_exponent); 1/(1 + penalty) is a theoretical
+# floor reached only under solid, wall-to-wall contour ink, not a bound any real map's density
+# actually reaches.
+#
+# T095/ADR-029 retune: penalty 2.0 -> 6.0 and density_exponent 1.0 -> 2.0 (was implicitly 1.0,
+# i.e. linear). With density_exponent=2.0 the two curves cross at density = 1/3 (solve
+# 1 + 2d = 1 + 6d^2): below that, a crossing costs the same or less than the old linear formula
+# (small/sparse contour crossings barely matter -- "one storey" in the literature's "2-storey vs
+# 10-storey climb" framing, docs/research/route-choice-heuristics.md Rule 6); above it, cost grows
+# convexly and disproportionately (at density 0.5 -- near this project's own fixture's observed
+# ceiling -- the penalty divisor is 2.5 vs the old formula's 2.0, +25%; at density 1.0 it is 7.0
+# vs 3.0, +133%). Chosen from this project's own real-map corpus (`data/maps/`), not the
+# literature's numbers directly (ADR-029 removed the unsupported "~5 contour lines" figure).
+penalty = 6.0
+density_exponent = 2.0
+
+# --------------------------------------------------------------------------------------------
+# Linear-feature proximity bonus (T095, ADR-029, Rules 2+7)
+# --------------------------------------------------------------------------------------------
+[proximity]
+# Off until tuned against the corpus (ADR-029's own words) -- this section's other two numbers are
+# this task's own real-map best-effort starting point (`data/maps/`, a throwaway comparison script,
+# not committed), ready to flip on once the owner has reviewed a before/after example, not a
+# corpus-validated final tuning shipped as a silent behaviour change.
+enabled = false
+# Ground metres, not paper millimetres -- see ProximitySettings' own docstring (config.py) for why:
+# how far a runner still benefits from a nearby road/track/footpath is a real-world distance on the
+# ground, converted to pixels via the map's own meters_per_pixel, not a printed size via DPI. The
+# bonus is `1 + bonus_magnitude * exp(-distance_m / decay_distance_m)`: 1.0 (no bonus) far away,
+# rising smoothly to `1 + bonus_magnitude` right on the feature; one decay_distance_m away, ~37% of
+# the peak bonus remains (the classic e-folding distance).
+decay_distance_m = 40.0
+# Speed multiplier right on a linear-feature pixel is `1 + bonus_magnitude` -- 0.5 here means +50%.
+bonus_magnitude = 0.5
 
 # --------------------------------------------------------------------------------------------
 # Control detection (T020, T021)

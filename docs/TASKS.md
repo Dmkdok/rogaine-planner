@@ -1772,6 +1772,65 @@ the implementer's self-report.
   measured, concrete improvement to route plausibility lands; owner reviews example routes
   before/after on a real map before this is considered done, not only a green suite.
 
+  **Landed (implementation + measured before/after; owner review still open).** Two mechanisms
+  per ADR-029, both `cost/`-level config/tunables, no new search algorithm or scoring model:
+
+  1. **Linear-feature proximity bonus** (`src/rogaine/cost/proximity.py`, new) — distance-decay
+     speed multiplier near any `road`/`vehicle_track`/`footpath` pixel (`k_proximity`), computed
+     once via `scipy.ndimage.distance_transform_edt` and folded into `cost/field.py`'s
+     `seconds_per_pixel` alongside `k_terrain`/`k_slope` (a third multiplicative factor). New
+     `[proximity]` section in `config/default.toml` (`enabled`, `decay_distance_m`,
+     `bonus_magnitude`), **shipped off by default** (ADR-029's own words) — with defaults
+     unchanged, `k_proximity` returns exact `1.0` everywhere (no distance transform even run),
+     confirmed bit-for-bit identical to the pre-T095 formula by a new regression test.
+  2. **Slope-penalty retune** (`vision/contours.k_slope`, `config/default.toml [slope]`) — added a
+     `density_exponent` knob (`1.0` recovers the old linear formula exactly); shipped default
+     `penalty` 2.0 -> 6.0, `density_exponent` (new) -> 2.0 (quadratic). The two curves cross at
+     density = 1/3: below it, a crossing now costs the same or less (small/sparse contours barely
+     matter); above it, cost grows convexly and disproportionately (density 0.5: +25%; density
+     1.0: +133%) — the literature's "2-storey vs 10-storey climb" framing (Rule 6). This is a
+     direct default change, not gated behind a toggle.
+  3. Rule 1 (path-vs-direct) and Rule 5's speed half: no code/config change, per ADR-029 point 3
+     (already exactly/correctly solved) — no pinning test added, judged not worth the extra
+     surface for something ADR-029 itself says isn't broken.
+
+  Tests: `tests/unit/cost/test_proximity.py` (new, 9 cases — disabled-by-default returns exact
+  `1.0`; hand-computed exponential-decay formula; peak bonus exactly on the feature pixel;
+  monotonic decay; input validation) plus `tests/unit/cost/test_field.py` (+2 — bit-for-bit
+  unchanged-by-default regression, and a synthetic near-vs-far-from-footpath case proving the
+  enabled bonus strictly lowers `seconds_per_pixel`) and `tests/unit/vision/test_contours.py` (+3
+  — shipped-default formula hand-checked, the convexity crossing point, `density_exponent=1.0`
+  recovers the old linear formula exactly). `tests/e2e/golden_route.json` regenerated (route
+  order/points/score/solver unchanged — only leg times/polylines shift with the retuned slope
+  default, as expected; hand-verified against a fresh `plan --strategy exact` run on the same
+  fixture/seed, same pattern as T053's original golden).
+
+  Measured before/after (real map `data/maps/pervomayskoe`, real `segment` ->
+  `compute_cost_field` -> `build_grid_graph` -> `build_travel_matrix` pipeline call path, no
+  reimplementation — throwaway `data/maps/_t095_compare.py`, gitignored): two points 45m either
+  side of a curved local footpath, offset perpendicular into the surrounding terrain. BEFORE
+  (pre-T095 formula, proximity mechanism absent): 200.2s / 215.7m, cutting fairly directly away
+  from the footpath. AFTER (T095 defaults, proximity bonus turned on at a concrete non-default
+  value — `decay_distance_m=40`, `bonus_magnitude=0.5`, since it ships off): 146.2s / 253.3m —
+  the route visibly bends to hug the nearby footpath instead, +17.5% distance for -26.9% time, a
+  deliberate and clearly worthwhile trade, not a regression. Before/after overlay PNGs (full map
+  + cropped) saved under `data/maps/_t095_compare_out/` (gitignored) for the owner's review.
+  Separately, the slope retune alone (proximity still off, as shipped) already shows on the
+  synthetic e2e fixture: total route time 10786.3s -> 10216.6s (-5.3%), same 6-control
+  order/points/score.
+
+  Verified: `docker compose run --rm tests` — 491 passed, 0 failed (14 new: 9 in
+  `test_proximity.py`, 2 in `test_field.py`, 3 in `test_contours.py`). `ruff check .` clean.
+  `git status` scoped to `config/default.toml`, `src/rogaine/config.py`, `src/rogaine/cost/field.py`
+  (+new `proximity.py`), `src/rogaine/vision/contours.py`, `tests/e2e/golden_route.json`,
+  `tests/unit/cost/test_field.py` (+new `test_proximity.py`), `tests/unit/vision/test_contours.py`,
+  `docs/TASKS.md` — nothing under `data/maps/` staged (gitignored throwaway scripts/output only).
+
+  **Not closing this checkbox** — the DoD's owner-review half ("owner reviews example routes
+  before/after on a real map") is an explicit manual sign-off gate this session cannot satisfy
+  itself, same precedent as T082/T086 (`docs/STATUS.md`'s "Iteration I3" section). Implementation,
+  tests, and the concrete before/after above are ready for that review.
+
 - [x] **T096** — Terrain relief (elevation/DEM) integration: research and prep, no implementation
   (ADR-028) — paths: `docs/research/terrain-relief-integration.md` — deps: none — DoD: document
   covers realistic elevation data sources given the Non-goals georeferencing constraint; how a real

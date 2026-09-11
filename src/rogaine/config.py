@@ -207,6 +207,14 @@ class SlopeSettings(BaseModel):
 
     density_sigma_mm: float = Field(gt=0.0)
     penalty: float = Field(ge=0.0)
+    # Exponent applied to density before the penalty multiplier (T095, ADR-029): `1.0` is the
+    # original linear formula; `> 1.0` makes the density -> penalty curve convex, so a small
+    # increase in density near the low end barely changes the cost while the same-sized increase
+    # near the high end (genuinely steep/dense terrain) changes it a lot -- the literature's own
+    # "2-storey vs 10-storey climb" framing (`docs/research/route-choice-heuristics.md`, Rule 6),
+    # rather than every unit of density costing the same regardless of how steep the ground
+    # already is. See `config/default.toml`'s own comment for the tuned default and its rationale.
+    density_exponent: float = Field(ge=1.0)
 
     def density_sigma_px(self, dpi: float) -> float:
         """Gaussian blur sigma in pixels, for a raster at *dpi*.
@@ -216,6 +224,33 @@ class SlopeSettings(BaseModel):
         its pixel size follows from the scan resolution alone, never a hardcoded pixel constant.
         """
         return self.density_sigma_mm * dpi / 25.4
+
+
+class ProximitySettings(BaseModel):
+    """Distance-decay speed bonus near a linear feature -- `road`/`vehicle_track`/`footpath`
+    (T095, ADR-029's Rules 2+7: "prefer running near a handrail" and "prefer a leg with a catching
+    feature beyond the control" collapse to the same mechanism once expressed as a per-pixel cost
+    term -- a control near a linear feature gets the same treatment as any other nearby pixel, no
+    separate "attack point" concept needed).
+
+    **Off by default (`enabled = false`) until tuned against the corpus** -- ADR-029's own words;
+    flipping it on is a deliberate, separate decision, not implied by this settings group existing.
+
+    **Ground metres, not paper millimetres.** Unlike this file's `_mm` tunables (`LinearSettings`,
+    `SlopeSettings.density_sigma_mm`) -- fixed *printed* sizes converted to pixels via DPI, because
+    an ISOM stroke width or a blur radius is chosen in terms of ink on the sheet -- how far a
+    runner can still benefit from a nearby trail is a real-world distance on the ground, unrelated
+    to how the map happens to be printed. `cost/field.py` already carries
+    `TerrainMap.meters_per_pixel` for exactly this kind of conversion (it is how
+    `seconds_per_pixel` itself turns a pixel count into real time), so this group converts through
+    that instead of a DPI it has no reason to need.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+    decay_distance_m: float = Field(gt=0.0)
+    bonus_magnitude: float = Field(ge=0.0)
 
 
 class DetectorSettings(BaseModel):
@@ -316,6 +351,7 @@ class AppConfig(BaseModel):
     grid: GridSettings
     linear: LinearSettings
     slope: SlopeSettings
+    proximity: ProximitySettings
     detector: DetectorSettings
     graph: GraphSettings
     solver: SolverSettings

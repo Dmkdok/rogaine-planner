@@ -85,18 +85,50 @@ class TestKSlope:
 
     def test_matches_the_configured_formula_on_a_hand_computed_case(self) -> None:
         # This test only exercises `k_slope`, which never touches `density_sigma_mm` -- overriding
-        # just `penalty` keeps the override minimal and honest about what the test depends on.
-        cfg = load_config(overrides={"slope": {"penalty": 2.0}})
+        # just `penalty`/`density_exponent` keeps the override minimal and honest about what the
+        # test depends on. Exponent 2.0 here (not the shipped default) to hand-verify the exponent
+        # itself is actually applied, separately from `test_matches_the_shipped_default_config`.
+        cfg = load_config(overrides={"slope": {"penalty": 3.0, "density_exponent": 2.0}})
         density = np.array([[0.0, 0.25, 0.5, 1.0]], dtype=np.float32)
-        expected = 1.0 / (1.0 + 2.0 * density)
+        expected = 1.0 / (1.0 + 3.0 * density**2.0)
         factor = k_slope(density, cfg)
         assert factor.dtype == np.float32
         np.testing.assert_allclose(factor, expected, rtol=1e-6)
+
+    def test_matches_the_shipped_default_config(self) -> None:
+        """T095/ADR-029's retuned defaults (`config/default.toml`): penalty 6.0, exponent 2.0."""
+        cfg = default_config()
+        assert cfg.slope.penalty == pytest.approx(6.0)
+        assert cfg.slope.density_exponent == pytest.approx(2.0)
+        density = np.array([[0.0, 1 / 3, 0.5, 1.0]], dtype=np.float32)
+        expected = 1.0 / (1.0 + 6.0 * density**2.0)
+        factor = k_slope(density, cfg)
+        np.testing.assert_allclose(factor, expected, rtol=1e-6)
+
+    def test_convex_exponent_crosses_the_old_linear_formula_at_the_documented_point(self) -> None:
+        """At the shipped penalty/exponent, the new convex curve costs the same as the original
+        linear `1 + 2 * density` formula at density = 1/3, less below it, and more above it (the
+        crossing point `config/default.toml`'s own comment derives and hand-checks)."""
+        cfg = default_config()
+        below, at, above = 0.2, 1 / 3, 0.6
+        old_linear = lambda d: 1.0 + 2.0 * d  # noqa: E731 - the pre-T095 formula, for comparison
+        new_convex = lambda d: 1.0 + cfg.slope.penalty * d**cfg.slope.density_exponent  # noqa: E731
+
+        assert new_convex(below) < old_linear(below)
+        assert new_convex(at) == pytest.approx(old_linear(at), rel=1e-6)
+        assert new_convex(above) > old_linear(above)
 
     def test_decreases_monotonically_as_density_rises(self) -> None:
         density = np.linspace(0.0, 1.0, 11, dtype=np.float32).reshape(1, -1)
         factor = k_slope(density).reshape(-1)
         assert all(a > b for a, b in pairwise(factor))
+
+    def test_density_exponent_one_recovers_the_original_linear_formula(self) -> None:
+        cfg = load_config(overrides={"slope": {"penalty": 2.5, "density_exponent": 1.0}})
+        density = np.array([[0.0, 0.3, 0.7, 1.0]], dtype=np.float32)
+        expected = 1.0 / (1.0 + 2.5 * density)
+        factor = k_slope(density, cfg)
+        np.testing.assert_allclose(factor, expected, rtol=1e-6)
 
 
 class TestInputValidation:

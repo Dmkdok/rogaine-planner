@@ -11,9 +11,10 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from rogaine.config import load_config
+from rogaine.config import default_config, load_config
 from rogaine.cost.field import compute_cost_field
 from rogaine.models import CostField, TerrainClass, TerrainMap, terrain_label
+from rogaine.vision.contours import k_slope
 
 
 def _terrain_map(labels: np.ndarray, density: np.ndarray, mpp: float) -> TerrainMap:
@@ -31,7 +32,9 @@ class TestHandCheckedFormula:
 
     MPP = 2.0
     V_BASE = 5.0
-    PENALTY = 1.0  # overridden below; k_slope = 1 / (1 + PENALTY * density)
+    PENALTY = 1.0  # overridden below; k_slope = 1 / (1 + PENALTY * density ** EXPONENT)
+    EXPONENT = 1.0  # forced to the pre-T095 linear formula -- this class hand-checks that, not
+    # T095/ADR-029's retuned convex default (covered separately in test_contours.py).
 
     # Row layout: (terrain class, row's contour density). `forest_runnable` and `road` are
     # ordinary passable classes; `water_uncrossable` is impassable; `contour` is the one passable
@@ -46,7 +49,9 @@ class TestHandCheckedFormula:
 
     @pytest.fixture()
     def cfg(self):
-        return load_config(overrides={"slope": {"penalty": self.PENALTY}})
+        return load_config(
+            overrides={"slope": {"penalty": self.PENALTY, "density_exponent": self.EXPONENT}}
+        )
 
     @pytest.fixture()
     def cost_field(self, cfg) -> CostField:
@@ -150,3 +155,48 @@ class TestInputValidation:
 
         with pytest.raises(ValueError, match="base_speed_mps"):
             compute_cost_field(terrain, base_speed_mps=-1.0)
+
+
+class TestProximityBonusIntegration:
+    """T095/ADR-029: the linear-feature proximity bonus (`cost/proximity.k_proximity`), folded
+    into `compute_cost_field`'s per-pixel rate alongside `k_terrain`/`k_slope`."""
+
+    def test_default_config_leaves_seconds_per_pixel_bit_for_bit_unchanged(self) -> None:
+        """Off by default (ADR-029) -- with defaults untouched, `compute_cost_field` must match
+        the pre-T095 two-factor formula exactly, not just approximately: multiplying by an exact
+        `1.0` proximity factor never perturbs an IEEE-754 float."""
+        cfg = default_config()
+        assert cfg.proximity.enabled is False
+        labels = np.array(
+            [[terrain_label(TerrainClass.FOOTPATH), terrain_label(TerrainClass.FOREST_RUNNABLE)]],
+            dtype=np.uint8,
+        )
+        density = np.array([[0.1, 0.2]], dtype=np.float32)
+        terrain = _terrain_map(labels, density, mpp=1.5)
+
+        result = compute_cost_field(terrain, base_speed_mps=3.0, config=cfg)
+
+        k_terrain = cfg.speed_factors()[labels]
+        slope = k_slope(density, cfg)
+        expected = terrain.meters_per_pixel / (np.float32(3.0) * k_terrain * slope)
+        np.testing.assert_array_equal(result.seconds_per_pixel, expected.astype(np.float32))
+
+    def test_enabled_bonus_makes_a_pixel_near_a_linear_feature_strictly_cheaper(self) -> None:
+        """Synthetic case (DoD): a footpath at one end of an otherwise-uniform forest row. With
+        the bonus enabled at a concrete non-default value, the forest pixel next to the footpath
+        must cost strictly less than an identical-terrain pixel further away."""
+        cfg = load_config(
+            overrides={
+                "proximity": {"enabled": True, "decay_distance_m": 10.0, "bonus_magnitude": 0.5}
+            }
+        )
+        labels = np.full((1, 6), terrain_label(TerrainClass.FOREST_RUNNABLE), dtype=np.uint8)
+        labels[0, 0] = terrain_label(TerrainClass.FOOTPATH)
+        density = np.zeros((1, 6), dtype=np.float32)
+        terrain = _terrain_map(labels, density, mpp=1.0)
+
+        result = compute_cost_field(terrain, base_speed_mps=3.0, config=cfg)
+
+        near = result.seconds_per_pixel[0, 1]
+        far = result.seconds_per_pixel[0, 5]
+        assert near < far, f"near-footpath cost {near} not below far cost {far}"

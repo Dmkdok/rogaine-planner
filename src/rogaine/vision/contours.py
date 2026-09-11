@@ -91,14 +91,23 @@ def k_slope(density: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
     """The multiplicative slope factor T030's cost field multiplies into ``k_terrain``.
 
     ``config/default.toml``'s own comment states the model: "speed is divided by
-    ``(1 + penalty * density)``". ``k_slope`` is the reciprocal of that divisor, so that
-    ``t = mpp / (v_base * k_terrain * k_slope)`` (T030) applies it by multiplication like every
-    other factor in the cost field, rather than needing a separate division step there. At
-    ``density = 0`` this is exactly 1.0 (no penalty); it decreases monotonically as ``density``
-    rises. ``1 / (1 + penalty)`` is the theoretical floor, reached only at ``density = 1.0`` --
-    wall-to-wall contour ink -- which does not happen on a real map: gaps between contour lines are
-    most of any real area, so a map's actual steepest terrain sits well short of that floor (see
-    ``config/default.toml``'s own comment for a measured range).
+    ``(1 + penalty * density ** density_exponent)``". ``k_slope`` is the reciprocal of that
+    divisor, so that ``t = mpp / (v_base * k_terrain * k_slope)`` (T030) applies it by
+    multiplication like every other factor in the cost field, rather than needing a separate
+    division step there. At ``density = 0`` this is exactly 1.0 (no penalty) regardless of
+    ``density_exponent``; it decreases monotonically as ``density`` rises. ``1 / (1 + penalty)`` is
+    the theoretical floor, reached only at ``density = 1.0`` -- wall-to-wall contour ink -- which
+    does not happen on a real map: gaps between contour lines are most of any real area, so a map's
+    actual steepest terrain sits well short of that floor (see ``config/default.toml``'s own
+    comment for a measured range).
+
+    **Convex by default (T095, ADR-029).** ``density_exponent > 1.0`` (the shipped default is
+    ``2.0``) makes the divisor grow convexly with density rather than linearly: since
+    ``density ** density_exponent <= density`` everywhere on ``[0, 1]``, a *sparse* contour
+    crossing costs the same or less than the original linear formula would, while a *dense* one
+    costs disproportionately more -- the literature's own "2-storey vs 10-storey climb" framing
+    (Rule 6), where a small climb barely registers but a big one costs far more than proportionally.
+    ``density_exponent = 1.0`` recovers the original linear formula exactly.
 
     **Direction-blind by construction (ADR-006, F6).** The signature takes only a density field --
     no "from" pixel, no "to" pixel, no travel direction -- so this function has no way of knowing
@@ -115,4 +124,6 @@ def k_slope(density: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
         raise ValueError(f"density must be in [0, 1], got [{density.min()}, {density.max()}]")
 
     cfg = config or default_config()
-    return (1.0 / (1.0 + cfg.slope.penalty * density)).astype(np.float32)
+    return (1.0 / (1.0 + cfg.slope.penalty * density**cfg.slope.density_exponent)).astype(
+        np.float32
+    )
