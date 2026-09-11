@@ -97,6 +97,15 @@ const state = {
 
 const view = new MapView(els.mapViewport, els.mapCanvas);
 
+// Per-control "points was hand-edited" flag (ADR-024, F22): sticky-off for the points auto-fill
+// below, once a control's points field has been genuinely edited by the user. Keyed by object
+// identity (not control.id) so it resets for free whenever controls are freshly populated wholesale
+// (a new detect result, or a reload) -- those replace state.controls with brand-new objects that
+// were never in this map. A WeakMap (not a plain property on the control) also keeps this
+// client-only flag out of the JSON PUT to /api/runs/{runId}/controls, whose Control schema is
+// extra="forbid".
+const pointsManuallySet = new WeakMap();
+
 // -----------------------------------------------------------------------------------------
 // Small helpers
 // -----------------------------------------------------------------------------------------
@@ -578,6 +587,11 @@ function createControlRow(control) {
       { step: 1, min: 0, allowNull: true },
       (v) => {
         control.number = v == null ? null : Math.trunc(v);
+        // Auto-fill points from the corrected T091 rule (JS equiv. of Python's `number // 10`),
+        // unless this control's points has been hand-edited since its last detect/import.
+        if (control.number != null && !pointsManuallySet.get(control)) {
+          control.points = Math.floor(control.number / 10);
+        }
         refreshControlsUI();
         saveControlsNow();
       }
@@ -590,6 +604,7 @@ function createControlRow(control) {
       { step: 1, min: 0, allowNull: true },
       (v) => {
         control.points = v == null ? null : Math.trunc(v);
+        pointsManuallySet.set(control, true); // sticky-off: further number edits won't overwrite
         refreshControlsUI();
         saveControlsNow();
       }

@@ -1696,11 +1696,22 @@ the implementer's self-report.
   474 passed (472 baseline + 2), `ruff check .` clean, diff confirmed scoped to the three named
   paths only.
 
-- [ ] **T092** — Viewer auto-fills points from a control's number, sticky-off once manually edited
+- [x] **T092** — Viewer auto-fills points from a control's number, sticky-off once manually edited
   (ADR-024, F22) — paths: `src/rogaine/web/static/app.js` — deps: T091 — DoD: editing a control's
   number in the viewer auto-fills its points field via T091's corrected rule, unless that control's
   points has been hand-edited since its last detect/import (per-control, in-memory, resets on
   reload/re-import); covered by a new e2e case in `tests/e2e/test_viewer.py`.
+
+  **Landed** (`<pending commit>`) — a module-level `WeakMap` (`pointsManuallySet`) keyed by control
+  object identity, not `control.id`, so it resets for free whenever `state.controls` is replaced
+  wholesale (a fresh detect or reload); kept out of the `PUT /api/runs/{runId}/controls` payload
+  since that schema is `extra="forbid"`. The number-field handler auto-fills
+  `Math.floor(number / 10)` (JS equivalent of T091's `number // 10`) unless the flag is set; the
+  points-field handler sets it. New e2e case
+  (`TestControlsPointsAutoFill::test_number_edit_autofills_points_until_points_hand_edited`) drives
+  a real number edit (123 -> points 12), a hand-edit of points (-> 99), then a further number edit
+  (-> 45) and asserts points stays 99. 475 passed (474 baseline + 1), `ruff check .` clean, `git
+  diff --stat` scoped to `app.js` and the new test only.
 
 - [ ] **T093** — Viewer exposes the solver's existing top-K alternative routes, switchable (ADR-025)
   — paths: `src/rogaine/web/static/app.js`, `src/rogaine/web/static/index.html`,
@@ -1741,10 +1752,14 @@ the implementer's self-report.
   measured, concrete improvement to route plausibility lands; owner reviews example routes
   before/after on a real map before this is considered done, not only a green suite.
 
-- [ ] **T096** — Terrain relief (elevation/DEM) integration: research and prep, no implementation
+- [x] **T096** — Terrain relief (elevation/DEM) integration: research and prep, no implementation
   (ADR-028) — paths: `docs/research/terrain-relief-integration.md` — deps: none — DoD: document
   covers realistic elevation data sources given the Non-goals georeferencing constraint; how a real
   slope signal would plug into `cost/field.py`'s existing `k_slope`/`compute_cost_field` contract;
   what a separate off-road/forest base-speed parameter needs beyond the current 17-class
   `speed_factor` table; the georeferencing tension stated as an open question for the owner. No
   code, no config, no SPEC requirement added.
+
+  **Landed** (`fc82460`) — checkbox was stale (still `[ ]`) despite the commit already on the tree;
+  corrected per this project's own "trust the tree" rule, backfilled from the commit rather than
+  re-done. See `docs/research/terrain-relief-integration.md` for the document itself.

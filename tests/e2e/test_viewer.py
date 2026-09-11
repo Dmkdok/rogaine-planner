@@ -465,3 +465,72 @@ class TestAutoScale:
 
         with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/segment")):
             page.click("#apply-scale-btn")
+
+
+class TestControlsPointsAutoFill:
+    """T092 (ADR-024, F22): the controls table's points field auto-fills from a control's number
+    using T091's corrected rule (`Math.floor(number / 10)`, JS equivalent of Python's `number //
+    10`), unless that control's points has been hand-edited since its last detect/import
+    (sticky-off, per-control, in-memory client state). Reuses `TestFullViewerFlow`'s own
+    upload/calibrate/detect setup (see that class's docstring) rather than a shared fixture --
+    this module has none, for the reason `TestViewerLayout` gives for its own copy.
+    """
+
+    def test_number_edit_autofills_points_until_points_hand_edited(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+
+        control_id = (
+            page.locator("#controls-tbody tr").first.get_attribute("id") or ""
+        ).removeprefix("control-row-")
+        assert control_id
+
+        number_selector = f"#control-{control_id}-number"
+        points_selector = f"#control-{control_id}-points"
+
+        def _set_field(selector: str, value: str) -> None:
+            # Same approach as `TestFullViewerFlow`'s table edit: set the value and dispatch a
+            # real `change` event directly (what a blur/Enter would fire in a live browser),
+            # then wait for the resulting PUT .../controls to land before asserting on state.
+            with page.expect_response(
+                lambda r: r.request.method == "PUT" and r.url.endswith("/controls")
+            ):
+                page.evaluate(
+                    """([sel, val]) => {
+                        const el = document.querySelector(sel);
+                        el.value = val;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }""",
+                    [selector, value],
+                )
+
+        # --- Editing the number auto-fills points via T091's corrected rule (F22: 123 -> 12) ---
+        _set_field(number_selector, "123")
+        assert page.input_value(points_selector) == "12"
+
+        # --- Hand-editing points marks this control's points manually-set (sticky-off) ---------
+        _set_field(points_selector, "99")
+        assert page.input_value(points_selector) == "99"
+
+        # --- A further number edit no longer overwrites the hand-edited points (45 -> 4 skipped,
+        # per F22: "once points has been hand-edited for that control, further number edits no
+        # longer overwrite it") ------------------------------------------------------------------
+        _set_field(number_selector, "45")
+        assert page.input_value(number_selector) == "45"
+        assert page.input_value(points_selector) == "99"
