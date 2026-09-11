@@ -553,6 +553,20 @@ tr.row-selected td {
   border-color: var(--danger);
 }
 
+/* T093/ADR-025: switch controls for the solver's alternative routes, one per alternative plus the
+   primary route. Reuses the global `button[aria-pressed="true"]` accent styling, same as
+   `toggle-add-mode-btn`/`calib-start-btn`, so the active option needs no bespoke color rule. */
+.route-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.4rem 0;
+}
+.route-switch-btn {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+}
+
 .route-summary {
   display: grid;
   grid-template-columns: auto 1fr;

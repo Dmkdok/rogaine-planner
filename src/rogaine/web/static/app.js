@@ -63,6 +63,7 @@ const els = {
   runBtn: document.getElementById("run-btn"),
 
   routeResults: document.getElementById("route-results"),
+  routeSwitcher: document.getElementById("route-switcher"),
   routeTotalTime: document.getElementById("route-total-time"),
   routeTotalDistance: document.getElementById("route-total-distance"),
   routePoints: document.getElementById("route-points"),
@@ -84,7 +85,10 @@ const state = {
   runId: null,
   segment: null, // {width, height, meters_per_pixel, dpi} once segment succeeds
   controls: [], // Control[] -- the client's working copy, PUT to the server on every commit
-  route: null, // Route once plan succeeds
+  route: null, // Route currently displayed (primary or a switched-in alternative), once plan succeeds
+  planPrimaryRoute: null, // the primary Route from the last successful plan (ADR-025)
+  planAlternatives: [], // alternative Route[] from the last successful plan, already rank-ordered (ADR-025)
+  selectedRouteIndex: 0, // which switcher option is displayed: 0 = primary, i = planAlternatives[i - 1] (ADR-025)
   visitOrder: new Map(), // control id -> 1-based visiting order, derived from `route`
   mode: "idle", // "idle" | "add" | "calibrate" -- what a canvas click currently does
   selectedControlId: null, // id of the control whose marker/row are cross-highlighted, or null
@@ -808,14 +812,57 @@ function onDetectDone(job) {
   refreshControlsUI();
 }
 
-function onPlanDone(route) {
-  state.route = route;
+function onPlanDone(route, alternatives) {
+  state.planPrimaryRoute = route;
+  state.planAlternatives = Array.isArray(alternatives) ? alternatives : [];
   state.routeArtifactReady = true;
+  selectRouteOption(0);
+  setStatus("Маршрут построен.");
+}
+
+/** Switch the displayed route (ADR-025): 0 selects the primary route, i selects
+ * `planAlternatives[i - 1]`. Purely client-side -- no server round-trip -- since the plan response
+ * already carries every alternative's full Route (legs, geometry, score). */
+function selectRouteOption(index) {
+  const route = index === 0 ? state.planPrimaryRoute : state.planAlternatives[index - 1];
+  if (!route) return;
+  state.selectedRouteIndex = index;
+  state.route = route;
   view.setRoute(route);
   redraw();
   renderRouteResults(route);
   refreshControlsUI(); // picks up the new visit-order badges
-  setStatus("Маршрут построен.");
+  renderRouteSwitcher();
+}
+
+/** Rebuilds the route switch controls from `state.planPrimaryRoute`/`planAlternatives`. Hidden
+ * entirely (not just empty) unless `planAlternatives` has more than one entry (ADR-025) -- a
+ * single alternative alongside the primary is not a meaningful choice to surface. */
+function renderRouteSwitcher() {
+  const alternatives = state.planAlternatives;
+  els.routeSwitcher.innerHTML = "";
+  if (alternatives.length <= 1) {
+    els.routeSwitcher.hidden = true;
+    return;
+  }
+  els.routeSwitcher.hidden = false;
+  const options = [
+    { index: 0, route: state.planPrimaryRoute, label: "Основной" },
+    ...alternatives.map((route, i) => ({
+      index: i + 1,
+      route,
+      label: `Альтернатива ${i + 1} (счёт: ${route.score.toFixed(1)})`,
+    })),
+  ];
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "route-switch-btn";
+    btn.textContent = opt.label;
+    btn.setAttribute("aria-pressed", String(opt.index === state.selectedRouteIndex));
+    btn.addEventListener("click", () => selectRouteOption(opt.index));
+    els.routeSwitcher.appendChild(btn);
+  }
 }
 
 function renderRouteResults(route) {
@@ -863,6 +910,9 @@ function resetForNewRun(runId) {
   state.segment = null;
   state.controls = [];
   state.route = null;
+  state.planPrimaryRoute = null;
+  state.planAlternatives = [];
+  state.selectedRouteIndex = 0;
   state.visitOrder = new Map();
   state.detectAttempted = false;
   state.controlsArtifactReady = false;
@@ -877,6 +927,8 @@ function resetForNewRun(runId) {
   els.runIdValue.textContent = runId;
   els.runIdDisplay.hidden = false;
   els.routeResults.hidden = true;
+  els.routeSwitcher.hidden = true;
+  els.routeSwitcher.innerHTML = "";
   refreshControlsUI();
   redraw();
 }
@@ -1167,7 +1219,7 @@ function initRunForm() {
         setError(job.error || "Не удалось построить маршрут");
         return;
       }
-      onPlanDone(job.result.route);
+      onPlanDone(job.result.route, job.result.alternatives);
     } catch (err) {
       setError(describeError(err, "Не удалось построить маршрут"));
     } finally {

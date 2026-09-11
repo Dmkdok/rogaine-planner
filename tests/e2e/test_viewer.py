@@ -41,6 +41,7 @@ heuristic, so this test carries no seed-flakiness risk of its own.
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 import threading
@@ -56,6 +57,8 @@ import uvicorn
 from playwright.sync_api import Page, expect
 
 import rogaine.web.app as web_app
+from rogaine.models import Leg, Route
+from rogaine.solve.alternatives import AlternativesResult
 from rogaine.vision.calibrate import CalibrationResult
 
 pytestmark = pytest.mark.e2e
@@ -534,3 +537,140 @@ class TestControlsPointsAutoFill:
         _set_field(number_selector, "45")
         assert page.input_value(number_selector) == "45"
         assert page.input_value(points_selector) == "99"
+
+
+class TestRouteAlternativesSwitcher:
+    """T093 (ADR-025): the viewer exposes the plan response's `alternatives` as switch controls,
+    switching between them client-side with no new server round-trip. Reuses
+    `TestFullViewerFlow`'s own upload/calibrate/detect setup, like `TestControlsPointsAutoFill`.
+
+    The two cases below each force a specific `alternatives` shape onto an otherwise real
+    upload/segment/detect/plan flow, rather than gambling on whether the real GRASP-restart search
+    happens to find something structurally distinct on this one fixture map:
+    - the "switcher appears" case monkeypatches `web_app.solve_alternatives` itself -- the same
+      technique `TestAutoScale` already uses for `web_app.calibrate_map` -- so the two
+      alternatives' scores/totals are known exactly rather than read back and trusted blind. Only
+      the alternatives search is stubbed; upload, segment, detect, and the primary route (the real
+      `solve_exact`) are untouched.
+    - the "hidden" case instead forces `RunConfig.alternatives=1` onto the real `/plan` POST body
+      via Playwright request interception (`app.js`'s run form has no field for it) -- the
+      server's own `top = ranked[:k]` cap (`solve/alternatives.py`) then guarantees exactly one
+      entry back, real end to end, regardless of how many distinct candidates the real search
+      would otherwise find.
+    """
+
+    def test_two_alternatives_show_a_switcher_that_redraws_client_side(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path, monkeypatch
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        def _stub_solve_alternatives(controls, matrix, run_config, config):
+            hub = next(c for c in controls if c.is_hub)
+            candidates = [c for c in controls if not c.is_hub]
+            assert len(candidates) >= 2, "fixture needs >=2 non-hub controls for this stub"
+            routes = []
+            for i, control in enumerate(candidates[:2]):
+                leg_out = Leg(from_id=hub.id, to_id=control.id, seconds=100.0, meters=50.0)
+                leg_back = Leg(from_id=control.id, to_id=hub.id, seconds=100.0, meters=50.0)
+                routes.append(
+                    Route(
+                        order=[hub.id, control.id, hub.id],
+                        legs=[leg_out, leg_back],
+                        total_seconds=200.0 + i * 1000.0,
+                        total_meters=100.0,
+                        points=1,
+                        penalty=0.0,
+                        score=50.0 - i * 20.0,
+                        solver="heuristic",
+                        optimal=False,
+                        seed=run_config.seed,
+                    )
+                )
+            return AlternativesResult(
+                routes=routes, interestingness=routes[0].score - routes[-1].score
+            )
+
+        monkeypatch.setattr(web_app, "solve_alternatives", _stub_solve_alternatives)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+
+        page.click("#run-btn")
+        page.wait_for_selector("#legs-tbody tr", state="attached", timeout=_PLAN_TIMEOUT_MS)
+
+        switcher = page.locator("#route-switcher")
+        expect(switcher).to_be_visible()
+        buttons = switcher.locator("button")
+        expect(buttons).to_have_count(3)  # primary + 2 stubbed alternatives
+        expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+        expect(buttons.nth(1)).to_have_attribute("aria-pressed", "false")
+        expect(buttons.nth(2)).to_have_attribute("aria-pressed", "false")
+
+        primary_score = page.inner_text("#route-score")
+
+        # --- Selecting the lower-scored alternative redraws the summary/legs client-side, with
+        # no new network request of any kind -----------------------------------------------------
+        requests: list[str] = []
+        page.on("request", lambda req: requests.append(f"{req.method} {req.url}"))
+
+        buttons.nth(2).click()
+
+        expect(buttons.nth(2)).to_have_attribute("aria-pressed", "true")
+        expect(buttons.nth(0)).to_have_attribute("aria-pressed", "false")
+        expect(page.locator("#route-score")).to_have_text("30.0")
+        assert page.inner_text("#route-score") != primary_score
+        expect(page.locator("#legs-tbody tr")).to_have_count(2)
+        assert requests == [], f"selecting an alternative fired network requests: {requests}"
+
+        # --- Switching back to the primary restores its own numbers (idempotent) -----------------
+        buttons.nth(0).click()
+        expect(page.locator("#route-score")).to_have_text(primary_score)
+        expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+
+    def test_at_most_one_alternative_hides_the_switcher(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        # `app.js`'s run form posts no `alternatives` field -- force it onto the real `/plan` POST
+        # body instead; the server still runs a real solve, and `solve_alternatives`'s own
+        # `top = ranked[:k]` cap guarantees at most one entry comes back.
+        def _cap_alternatives_at_one(pw_route, request):
+            payload = json.loads(request.post_data or "{}")
+            payload["alternatives"] = 1
+            pw_route.continue_(post_data=json.dumps(payload))
+
+        page.route(re.compile(r"/plan$"), _cap_alternatives_at_one)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+
+        page.click("#run-btn")
+        page.wait_for_selector("#legs-tbody tr", state="attached", timeout=_PLAN_TIMEOUT_MS)
+
+        expect(page.locator("#route-switcher")).to_be_hidden()
+        assert page.locator("#route-switcher").inner_html() == ""

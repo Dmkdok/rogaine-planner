@@ -1713,13 +1713,33 @@ the implementer's self-report.
   (-> 45) and asserts points stays 99. 475 passed (474 baseline + 1), `ruff check .` clean, `git
   diff --stat` scoped to `app.js` and the new test only.
 
-- [ ] **T093** — Viewer exposes the solver's existing top-K alternative routes, switchable (ADR-025)
+- [x] **T093** — Viewer exposes the solver's existing top-K alternative routes, switchable (ADR-025)
   — paths: `src/rogaine/web/static/app.js`, `src/rogaine/web/static/index.html`,
   `src/rogaine/web/static/style.css` — deps: T092 (shares `app.js`) — DoD: when a plan response's
   `alternatives` array has more than one route, the viewer shows switch controls (labelled by
   rank/score, primary route always its own first option); selecting one redraws the map overlay and
   legs/summary panel client-side, no new server round-trip; hidden/absent when `alternatives` has
   zero or one entries; covered by a new e2e case.
+
+  **Landed** — new `#route-switcher` button row (`role="group"`, above the summary `<dl>`) plus
+  three `state` fields (`planPrimaryRoute`, `planAlternatives`, `selectedRouteIndex`); `onPlanDone`
+  now takes `alternatives` too and delegates to `selectRouteOption(index)` (0 = primary, i =
+  `planAlternatives[i-1]`), which redraws `view.setRoute`/`renderRouteResults`/`refreshControlsUI`
+  and rebuilds the switcher client-side only (no fetch). `renderRouteSwitcher` hides the row
+  entirely, not just empties it, unless `planAlternatives.length > 1`; `resetForNewRun` clears all
+  three new fields and the row between runs. Two new e2e cases in `TestRouteAlternativesSwitcher`:
+  one monkeypatches `web_app.solve_alternatives` (same technique `TestAutoScale` already uses for
+  `calibrate_map`) for two deterministic, score-distinguishable alternatives and asserts 3 switcher
+  buttons appear, selecting one updates `#route-score`/`#legs-tbody` to that alternative's own
+  numbers with zero network requests fired, and reselecting the primary restores its own numbers;
+  the other forces `RunConfig.alternatives=1` onto the real `/plan` POST body via Playwright request
+  interception (the run form has no field for it) and asserts `#route-switcher` stays hidden and
+  empty. `tests/e2e/test_viewer.py` alone: 8 passed (6 baseline + 2 new). `ruff check .` clean. Full
+  suite: 474 passed, 3 failed — all three (`TestGoldenRegression`, cost `TestHandCheckedFormula`,
+  vision `TestKSlope`) are in files this task never touched, caused by another agent's concurrent
+  uncommitted work in the same tree (`config/default.toml`, `src/rogaine/cost/field.py`,
+  `src/rogaine/vision/contours.py`); `git diff --stat` confirmed this task's own diff scoped to
+  exactly the five paths named above.
 
 - [x] **T094** — Route-choice heuristics: literature pass + human synthesis (ADR-027) — paths:
   `docs/research/route-choice-heuristics.md` (review/correct the existing haiku-drafted pass — a
