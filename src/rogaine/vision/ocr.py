@@ -265,12 +265,11 @@ def _apply_points_rule(number: int | None, det: DetectorSettings) -> int | None:
         return None
     if det.points_rule == "constant":
         return det.points_constant
-    # first_digit: the general form -- the first character of the number's decimal string, not a
-    # hardcoded `// 10` -- so a 1- or 3-digit control number is handled correctly too, even though
-    # this project's fixture only ever generates 2-digit ones.
+    # first_digit: every digit but the last one (ADR-024) -- control 45 is worth 4 points, control
+    # 123 is worth 12. A single-digit control number floors to 0 (accepted edge case).
     if number is None:
         return None
-    return int(str(number)[0])
+    return number // 10
 
 
 def read_control_number(

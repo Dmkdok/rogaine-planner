@@ -25,7 +25,7 @@ from rogaine.config import AppConfig, default_config
 from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.models import Control
 from rogaine.vision.controls import detect_controls
-from rogaine.vision.ocr import read_control_number, read_control_numbers
+from rogaine.vision.ocr import _apply_points_rule, read_control_number, read_control_numbers
 
 # The one fixture control close enough to the course boundary that its number is unreadable even
 # with this module's widened crop margin (see the module docstring above and ocr.py's own).
@@ -170,6 +170,20 @@ class TestPointsRule:
 
         assert updated.number == control.number
         assert updated.points == int(str(control.number)[0])
+
+    def test_first_digit_uses_all_digits_but_the_last_for_a_three_digit_number(self) -> None:
+        """ADR-024: `first_digit` is every digit but the last, not the literal first character --
+        the two coincide only for 2-digit numbers (see the test above)."""
+        det = _with_detector(default_config(), points_rule="first_digit").detector
+
+        assert _apply_points_rule(123, det) == 12
+
+    def test_first_digit_floors_a_single_digit_number_to_zero(self) -> None:
+        """Documented edge case (ADR-024): a single-digit control number floors to 0 under
+        `number // 10` -- accepted, not special-cased."""
+        det = _with_detector(default_config(), points_rule="first_digit").detector
+
+        assert _apply_points_rule(7, det) == 0
 
     def test_first_digit_leaves_points_null_when_number_is_unreadable(
         self, clean_synthetic_map

@@ -403,7 +403,8 @@ circle_scale_multipliers = [1.0, 1.5, 2.0, 2.5, 3.0]
 number_font_height_mm = 4.0
 # How far from the circle edge to look for the number, in circle radii.
 number_search_radius = 1.8
-# first_digit — the usual rogaine convention (control 45 is worth 4 points)
+# first_digit — the usual rogaine convention: every digit but the last (control 45 is worth 4
+#               points, control 123 is worth 12)
 # constant    — every control worth `points_constant`
 # csv         — points come from the controls CSV and nothing is inferred
 points_rule = "first_digit"
