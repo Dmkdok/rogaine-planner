@@ -141,17 +141,23 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
 - [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
   closed)
 - [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
-- [ ] 4 implementation — in progress, this session. **5/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
+- [ ] 4 implementation — in progress, this session. **6/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
   docs), T094 (`f8b6243`, ADR-029), T096 (`fc82460`, checkbox was stale — backfilled per
   trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed),
   T093 (`b3953eb`, ADR-025 viewer route-alternatives switcher — independently re-verified this
-  session, isolated `tests/e2e/test_viewer.py` run 8/8 passed, diff read clean). Open: **T089**
-  (diagnose OCR scale-invariance, deps T084 — met; in progress, background agent mid-run against the
-  full 204-map ogps corpus), **T090** (fix per T089's findings, deps T089+T091 — T091 now met, T089
-  not), **T095** (apply T094's route-choice rules to cost/solve, deps T094 — met; in progress,
-  background agent mid-implementation — working tree currently carries its uncommitted changes under
-  `src/rogaine/cost/`, `src/rogaine/vision/contours.py`, `src/rogaine/config.py`,
-  `config/default.toml`, plus new `src/rogaine/cost/proximity.py`).
+  session, isolated `tests/e2e/test_viewer.py` run 8/8 passed, diff read clean), **T095**
+  (`f0fa41f`, ADR-029 linear-feature proximity bonus off-by-default + slope-penalty retune —
+  independently re-verified this session: own full `docker compose run --rm tests` 491 passed exit
+  0, own `ruff check .` clean, own diff read of all 10 changed files, own spot-check of
+  `golden_route.json`'s diff confirming only leg timings moved, `order`/`points`/`score` untouched.
+  **Owner-review gate still open** — this task's own DoD requires the owner to review a before/after
+  example on a real map before T095 counts as done (ADR-019 precedent, same as T082/T086); TASKS.md
+  checkbox correctly left `[ ]`. Sent the owner the before/after crop overlays via `SendUserFile`
+  this session (`data/maps/pervomayskoe`: before 200.2s/215.7m cutting directly through
+  terrain/contours, after 146.2s/253.3m bending to hug a nearby footpath — -26.9% time for +17.5%
+  distance); **awaiting the owner's sign-off**). Open: **T089** (diagnose OCR scale-invariance, deps
+  T084 — met; in progress, background agent mid-run against the full 204-map ogps corpus), **T090**
+  (fix per T089's findings, deps T089+T091 — T091 now met, T089 not).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed
