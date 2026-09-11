@@ -1683,12 +1683,18 @@ the implementer's self-report.
   superseded with T090's own measured numbers); the synthetic fixture's 11/12 floor
   (`test_at_least_eleven_of_twelve_controls_read_correctly`) holds.
 
-- [ ] **T091** — Fix `first_digit` points rule to use all digits but the last (ADR-024) — paths:
+- [x] **T091** — Fix `first_digit` points rule to use all digits but the last (ADR-024) — paths:
   `src/rogaine/vision/ocr.py`, `config/default.toml` (comment only), `tests/unit/vision/test_ocr.py`
   — deps: none — DoD: `_apply_points_rule`'s `first_digit` branch computes `number // 10`; existing
   `TestPointsRule` assertions unchanged (2-digit numbers give the same result under both formulas);
   new test covers a 3-digit number (`123` -> `12`) and documents the single-digit edge case
   (`7` -> `0`).
+
+  **Landed** (`f4f0b15`) — `number // 10` replaces `int(str(number)[0])`; two new tests
+  (`test_first_digit_uses_all_digits_but_the_last_for_a_three_digit_number`,
+  `test_first_digit_floors_a_single_digit_number_to_zero`) call `_apply_points_rule` directly.
+  474 passed (472 baseline + 2), `ruff check .` clean, diff confirmed scoped to the three named
+  paths only.
 
 - [ ] **T092** — Viewer auto-fills points from a control's number, sticky-off once manually edited
   (ADR-024, F22) — paths: `src/rogaine/web/static/app.js` — deps: T091 — DoD: editing a control's
