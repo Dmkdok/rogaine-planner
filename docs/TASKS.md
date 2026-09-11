@@ -1662,7 +1662,7 @@ the implementer's self-report.
 > then T093. **Route-choice** (T094 -> T095) and **relief-prep** (T096) touch neither vision nor web
 > paths and are freely parallel with everything above.
 
-- [ ] **T089** — Diagnose control-number OCR/detection failure across map physical scale and DPI —
+- [x] **T089** — Diagnose control-number OCR/detection failure across map physical scale and DPI —
   paths: none (diagnosis only; a throwaway script under `data/maps/`, gitignored like its siblings)
   — deps: T084 — DoD: measure `detect_controls`/`read_control_numbers` end to end against every
   raster in `data/maps/` (owner's corpus at minimum; `ogps-*` harvest sample budget-permitting),
@@ -1670,6 +1670,26 @@ the implementer's self-report.
   ADR-026's two hypotheses (DPI/auto-calibration accuracy for photographed maps; the
   `circle_scale_multipliers` ladder never sweeping below `1.0`) against the data, not assumed.
   Findings plus a fix design go into a new ADR and feed T090 directly; no product-code changes.
+
+  **Landed** (ADR-030) — owner corpus reproduces T084's 205/416 (49.3%) baseline exactly. H1
+  (DPI/calibration) not supported: owner-corpus DPI=300 maps alone span 4%-81% read rate; the full
+  204-dir `ogps-*` sweep (203 loaded, 1 pre-existing decompression-bomb load failure) sits in a flat
+  17.6%-29.9% band across every `cal_source`/`cal_tier`/DPI-bucket/sheet-size-bucket split, `measured`
+  beating `assumed_default` by only 1.5 points. H2 (no sub-1.0 multiplier) is real but not uniformly
+  helpful: apples-to-apples OCR (not just scorer preference) on the 7 owner maps where an extended
+  0.3-6.0 sweep picks a different multiplier than production shows 3 genuine wins (kkm-toksovo
+  4%→32%, lembolovo-kkm 35%→59%, novo-kavgolovsky-lesopark 29%→70%, +23 combined) and 4 regressions
+  (history-race-2024-michurinskoe, history-race-primorsk, kkm-3-2020, ozero-shchuche, −47 combined) —
+  net −24 if the ring-coverage scorer alone picked among a widened ladder. Traced to two distinct
+  mechanisms: genuinely undersized hand-drawn circles (the 3 wins) vs. the same correctly-matched
+  ring getting a smaller, mis-sized OCR crop (`_ocr_crop`'s crop/digit-size math scales with the
+  matched radius) on 3 of the 4 regressions, plus one ADR-015-style false-cluster win on the fourth.
+  Fix design for T090: add measured-justified sub-1.0 rungs (`0.5`, `0.85`; not lower — `0.4` is
+  where the false-cluster failure appeared), gate any sub-1.0 winner behind an OCR-outcome check
+  (run `read_control_numbers` on both candidates, keep whichever reads more) rather than trusting
+  ring coverage alone, and re-verify the OCR crop-sizing constants across the full matched-scale
+  range, not just the base scale. `docker compose run --rm tests` still 475 passed, `ruff check .`
+  clean (diagnosis-only, no `src/` changes).
 
 - [ ] **T090** — Fix OCR/detection scale-invariance per T089's findings — paths:
   `src/rogaine/vision/controls.py`, `src/rogaine/vision/ocr.py`, `src/rogaine/vision/calibrate.py`

@@ -26,6 +26,13 @@
 | 021 | Viewer layout becomes a fixed split view — map pinned, controls list independently scrollable | accepted |
 | 022 | Auto-calibration is exposed as an opt-in path in the CLI and viewer, not only the M7 corpus tool | accepted |
 | 023 | Real-scan OCR failure is dominated by leftover non-digit ink and ring-erasure undershoot, not crop framing | accepted |
+| 024 | `first_digit` points rule uses all digits but the last; viewer auto-fills points from the control number | accepted |
+| 025 | The web viewer exposes the solver's existing top-K alternative routes, switchable | accepted |
+| 026 | Control-number OCR scale-invariance work is diagnosis-first (T089), mirroring T083, not a speculative fix | accepted |
+| 027 | Route-choice heuristics: a cheap-model literature pass feeds a human synthesis step before any cost-model code changes | accepted |
+| 028 | True terrain relief (elevation/DEM) integration is deferred; research/options document only | accepted |
+| 029 | T095 implements a linear-feature proximity bonus and slope-penalty retuning; several rules deferred | accepted |
+| 030 | T089 diagnosis: H1 (DPI/calibration) unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps but the ring-coverage scorer can't safely act on it alone | accepted |
 
 ---
 
@@ -946,3 +953,122 @@
   only a green suite). Rule 9's buffer half and Rules 3/5-fatigue/6-directional/8 stay out of T095
   and need their own future task filings before any code is written for them — this ADR is not a
   commitment to build them this iteration or any specific future one.
+
+## ADR-030 — T089 diagnosis: H1 (DPI/calibration) is unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps, but the ring-coverage scorer can't safely act on it alone
+- Date: 2026-09-12
+- Status: accepted
+- Context: T089 measured `detect_controls`/`read_control_numbers` end to end (real pipeline call
+  path, no re-implementation — `data/maps/_t089_measure.py`, `_t089_h2_apples.py`, both throwaway
+  and gitignored per T083/T084's own precedent) against the owner's full 14-directory corpus (13
+  unique files — `kkm-3-2020`/`ozero-shchuche` are byte-identical, md5
+  `effb08bbca48870b94dfad9a79bf6ee8`, same duplicate ADR-023 already documented) and the full
+  204-directory `ogps-*` harvest (203 loaded; `ogps-5962_ee6127c2617fdb1199f49df1722d35f0` fails to
+  load — `10258x14796 = 151,777,368px`, over `load_raster`'s 150,000,000px decompression-bomb cap,
+  an unrelated pre-existing guard, not a T089 finding). Owner-corpus total reproduces T084's own
+  49% baseline exactly: **205/416 (49.3%)**.
+
+  **H1 (DPI/auto-calibration accuracy)**: not supported by either corpus.
+  - Owner corpus: every map's `resolved_dpi` came from a successful JFIF probe (`probed_dpi ==
+    resolved_dpi` in all 14 rows) — auto-calibration is never invoked here (ADR-022's opt-in default;
+    these are the owner's own scans, "out_of_scope, never touched" per `docs/STATUS.md`'s T078 note).
+    Read rate does not track the DPI value itself: the six `dpi=300` maps alone span 4%-81%.
+  - `ogps-*` corpus (full 204-dir sweep, 203 measured, 10,343 circles): corpus-wide 2372/10343
+    (22.9%). Every bucket sits in a narrow 17.6%-29.9% band, with no directional story matching the
+    "physical-scale mismatch" hypothesis:
+    | Split | n maps | circles | read | rate |
+    |---|---|---|---|---|
+    | `cal_source=measured` | 45 | 2844 | 683 | 24.0% |
+    | `cal_source=assumed_default` | 158 | 7499 | 1689 | 22.5% |
+    | `cal_tier=circle` | 35 | 1987 | 515 | 25.9% |
+    | `cal_tier=grid` | 9 | 855 | 168 | 19.6% |
+    | `cal_tier=scale_bar` | 1 | 2 | 0 | 0.0% |
+    | dpi [0,150) | 61 | 3347 | 590 | 17.6% |
+    | dpi [150,250) | 25 | 1561 | 414 | 26.5% |
+    | dpi [250,320) | 110 | 5230 | 1318 | 25.2% |
+    | dpi [400,∞) | 7 | 205 | 50 | 24.4% |
+    | sheet [0,250)mm | 36 | 551 | 119 | 21.6% |
+    | sheet [250,350)mm | 26 | 1256 | 376 | 29.9% |
+    | sheet [350,450)mm | 25 | 1742 | 433 | 24.9% |
+    | sheet [450,∞)mm | 116 | 6794 | 1444 | 21.3% |
+
+    `measured` beats `assumed_default` by 1.5 points — noise-level, not the large effect ADR-026
+    hypothesised. DPI and sheet-size buckets are non-monotonic (the best-reading sheet bucket is the
+    *middle* one, not the smallest or largest). Auto-calibration accuracy is not the bottleneck this
+    diagnosis can find; something else keeps the whole corpus in the low 20s regardless of
+    calibration or scale.
+
+  **H2 (`circle_scale_multipliers` has no entry below 1.0)**: real, but only for a subset of maps,
+  and the existing selector cannot be trusted to find that subset unaided. `_t089_measure.py`'s
+  extended sweep (multipliers 0.3-6.0, same `_select_best_scale`/`_ring_coverage` gate) found a
+  different winning multiplier than production's `[1.0, 1.5, 2.0, 2.5, 3.0]` ladder on 7 of the 14
+  owner maps. `_t089_h2_apples.py` then ran `read_control_numbers` against *both* candidate sets on
+  all 7 (not just which multiplier the coverage scorer prefers — the actual OCR outcome, reusing
+  `read_control_numbers` unmodified):
+
+  | Map | production mult/n/ok | ext-selected mult/n/ok | centre overlap | mean radius Δ | verdict |
+  |---|---|---|---|---|---|
+  | kkm-toksovo | 1.0 / 25 / 1 (4%) | 0.85 / 25 / 8 (32%) | 25/25 (100%) | −5.3px | **EXT BETTER (+7)** |
+  | lembolovo-kkm | 1.0 / 20 / 7 (35%) | 0.5 / 22 / 13 (59%) | 20/22 (91%) | −17.7px | **EXT BETTER (+6)** |
+  | novo-kavgolovsky-lesopark | 1.0 / 21 / 6 (29%) | 0.5 / 23 / 16 (70%) | 21/23 (91%) | −35.4px | **EXT BETTER (+10)** |
+  | history-race-primorsk | 1.0 / 49 / 17 (35%) | 0.5 / 53 / 7 (13%) | 48/53 (91%) | −17.7px | EXT WORSE (−10) |
+  | kkm-3-2020 | 1.0 / 21 / 17 (81%) | 0.85 / 23 / 5 (22%) | 21/23 (91%) | −5.3px | EXT WORSE (−12) |
+  | ozero-shchuche (dup) | 1.0 / 21 / 17 (81%) | 0.85 / 23 / 5 (22%) | 21/23 (91%) | −5.3px | EXT WORSE (−12) |
+  | history-race-2024-michurinskoe | 2.0 / 37 / 13 (35%) | 0.4 / 3 / 0 (0%) | 0/3 (0%) | n/a | EXT WORSE (−13) |
+
+  Totals across the 7: production 78/194 (40.2%) vs. ext-selected 54/172 (31.4%) — **naively
+  widening the ladder and letting the existing scorer pick is a net loss of 24 correct reads**, even
+  though it is a clear win on 3 of the 7 maps individually (+23 combined there). Two distinct
+  mechanisms, both traced through code, explain the split:
+  1. **Genuine undersized rings** (kkm-toksovo, lembolovo-kkm, novo-kavgolovsky-lesopark, 91-100%
+     centre overlap with production's own candidates): these maps' hand-drawn control circles really
+     are smaller than the base ISOM assumption predicts — the same phenomenon ADR-015 first measured
+     (`grid-lines-red-controls`' circles at ~2.37x the ISOM print size; here it runs the other way).
+     `circle_scale_multipliers`' missing sub-1.0 floor is a real, structural gap for these maps.
+  2. **Same ring, wrong crop, worse OCR** (history-race-primorsk, kkm-3-2020, ozero-shchuche — also
+     91% centre overlap, i.e. the *same* real rings production already finds correctly): forcing a
+     smaller matched radius onto an already-correctly-matched ring degrades OCR, traced to
+     `vision/ocr.py::_ocr_crop`: `half = r_mid * (1 + number_search_radius + _CROP_MARGIN_FACTOR)`
+     shrinks the crop window, and `digit_height_px = number_font_height_mm * (dpi/25.4) * (r_mid /
+     base_r_mid)` shrinks the expected-digit-size estimate `_strip_thin_ink` uses in lockstep — both
+     mis-sized relative to the digits' true (base-scale) printed size. The candidate is right; the
+     crop math built for a single matched scale is not being asked to generalise correctly.
+  3. **A small false-positive cluster winning outright** (history-race-2024-michurinskoe, 0%
+     overlap, only 3 ext candidates): exactly ADR-015's own documented failure mode — mean ring
+     coverage saturates near 1.0 for a small blob cluster, letting it outscore a much larger genuine
+     set — reproduced here at a smaller multiplier (0.4) instead of the larger one ADR-015 originally
+     found it at.
+- Decision: neither hypothesis alone explains the owner's complaint; H1 is not supported by measured
+  data (drop it — do not make auto-calibration default-on off the strength of this diagnosis, the
+  1.5-point `measured` vs. `assumed_default` gap does not justify it) and H2 is real but only
+  actionable with a design change beyond "add more multipliers":
+  1. **Extend `circle_scale_multipliers` with measured-justified sub-1.0 rungs** — `0.5` and `0.85`
+     both won outright on real maps in this data; `0.4` is where the false-cluster failure mode
+     appeared, so the floor should sit at `0.5`, not lower, absent further measurement.
+  2. **Replace (or gate) pure ring-coverage scoring with OCR-outcome validation before committing to
+     a sub-base-scale winner.** This diagnosis's own `overlap_stats`/`controls_from_candidates`
+     helpers (`data/maps/_t089_h2_apples.py`) are a ready-made template: when the coverage scorer's
+     preferred multiplier is below `1.0`, run `read_control_numbers` against both it and the
+     production-ladder winner (bounded to two extra OCR passes, not one per multiplier) and keep
+     whichever reads strictly more valid numbers. This is what would have picked correctly on all 7
+     divergent maps in this data set, where coverage-alone scoring is wrong 4 times out of 7.
+  3. **Re-verify `_CIRCLE_MASK_RADIUS_FACTOR`/`_CROP_MARGIN_FACTOR`/`_MIN_INK_AREA_FACTOR` across the
+     matched-scale range**, not just the base scale — ADR-023 already flagged this as open for T084;
+     this diagnosis reproduces the same undershoot/overshoot shape at non-base multipliers, so it is
+     still open, now with a second, independent reproduction.
+  4. The dominant cause of the corpus staying in the low 20s-50s regardless of DPI/calibration/scale
+     is still most likely ADR-023's own mode 1 (leftover non-digit ink defeating `psm 7`) generalised
+     across the wider corpus — T089 did not re-run that specific crop-by-crop inspection at `ogps-*`
+     scale (out of this task's budget), so T090 should treat it as the leading remaining suspect, not
+     a re-opened question.
+- Consequences: `TestRealScanReadRateFloor`'s existing floors are compatible with this diagnosis's
+  own numbers — `pervomayskoe` (`>= 15/41`) was not among the 7 divergent maps (H2 does not touch it)
+  and `novo-kavgolovsky-lesopark` (`>= 5/21`, currently reading 6/21) is one of the 3 genuine H2
+  wins measured here at 16/21 — T090 should raise this floor toward that number if its landed fix
+  reproduces this diagnosis's own measurement, not guess a new value. `kkm-toksovo` (currently the
+  worst owner-corpus reader, 1/25) and `lembolovo-kkm` are the other two concrete, measured targets
+  T090's own before/after table should report against by name. This diagnosis rests on the owner
+  corpus's 7 divergent maps plus a full (not sampled) `ogps-*` sweep for H1 — the H2 mechanism
+  analysis (mask 1 vs. mask 2 above) is not exhaustively tested against `ogps-*` due to budget; if
+  T090's landed fix does not reproduce the +23/-47 split measured here, that is new information for
+  T090 to report, not a contradiction to paper over (same posture ADR-023 took toward its own
+  three-mode split).
