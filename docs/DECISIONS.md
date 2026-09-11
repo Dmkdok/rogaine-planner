@@ -713,3 +713,165 @@
   rather than a large labelled sample, so treat the three-mode split as directional — if T084's
   measured before/after does not follow the shape this ADR predicts (mode-1 fix moving the
   under-50% maps furthest), that is new information, not a contradiction to paper over.
+
+## ADR-024 — `first_digit` points rule uses all digits but the last, not the literal first character; the viewer auto-fills points from the control number, editable
+- Date: 2026-09-11
+- Status: accepted
+- Context: Iteration I4. `vision/ocr.py::_apply_points_rule`'s `first_digit` branch is
+  `int(str(number)[0])` — the *literal first character* of the decimal string. This is silently
+  wrong for any 3+-digit control number: rogaine convention (config/default.toml's own comment,
+  "control 45 is worth 4 points") means the point value is every digit except the last one, which
+  only coincides with "first character" for 2-digit numbers. Control 123 should be worth 12 points;
+  the shipped code returns 1. `tests/unit/vision/test_ocr.py::TestPointsRule` only ever exercises
+  the synthetic fixture's 2-digit control numbers, so this has never been caught by the suite.
+  Separately, the web viewer's manual controls editor (`app.js`, `numberInputCell` for
+  `control-*-number`/`control-*-points`) has never auto-derived points from a typed-in number at
+  all — the two fields are independent inputs with no relationship, so every manually-entered
+  control number requires separately typing its points too.
+- Decision: `_apply_points_rule`'s `first_digit` branch becomes `number // 10` (integer division),
+  matching the documented convention exactly for any digit count instead of only 2-digit numbers by
+  coincidence. A single-digit control number (rare/atypical for this sport, no example exists in
+  the corpus or the fixture) floors to `0` under this formula rather than returning the digit
+  itself; treated as an accepted, documented edge case, not a reason to special-case digit count.
+  The web viewer's control-number field gains the same computation client-side: typing/editing a
+  control's number auto-fills its points field using the corrected rule. Per the owner's explicit
+  answer this iteration, auto-fill is **sticky-off once touched**: the first manual edit to a
+  control's points field marks it manually-set for that control, and further edits to the same
+  control's number no longer overwrite points — matching how a human would expect a field they just
+  corrected not to be silently reverted. A freshly detected/imported control (never manually
+  points-edited) keeps auto-filling on every number edit.
+- Consequences: `TestPointsRule`'s existing assertions are unaffected for 2-digit numbers (`45 // 10
+  == int(str(45)[0]) == 4`), so no existing test's expectation changes; a new test covers a 3-digit
+  number (123 -> 12) and the single-digit edge case (7 -> 0), both previously unspecified. The
+  viewer's "manually-set" flag is per-control, in-memory client state (not persisted to
+  `controls.csv`'s schema, F9) — reloading a run or re-importing a CSV resets it, which is
+  consistent with the CSV import path already overriding detection wholesale (F9's "a hand-edited
+  CSV overrides detection entirely").
+
+## ADR-025 — The web viewer exposes the solver's existing top-K alternative routes, switchable, not only the single primary route
+- Date: 2026-09-11
+- Status: accepted
+- Context: Iteration I4. F16 (`solve/alternatives.py::solve_alternatives`, `RunConfig.alternatives`,
+  default 3) has computed top-K structurally distinct routes since M4 and `web/app.py`'s `/plan`
+  handler has returned them under the response's `"alternatives"` key since that same landing — but
+  neither `app.js` nor `view.js` ever reads that key. The viewer has only ever rendered the single
+  primary `route`. The owner reports that when no route is a clear stand-out winner, seeing only one
+  option hides a real, already-computed choice.
+- Decision: the viewer keeps the primary `route` (from `solve_exact`/`solve_heuristic`) as the
+  default selected/displayed route, and — only when a plan response's `alternatives` array has more
+  than one entry — adds a row of switch controls (one per alternative, labelled by rank/score) above
+  the route summary. Selecting one re-runs the existing client-side draw path
+  (`view.setRoute`/`renderRouteResults`) against that alternative's `Route` object; no new server
+  round-trip, since the full alternative routes (legs, polylines, scores) are already in the plan
+  response. `route` and `alt_result.routes[0]` are two independently-run searches (main objective
+  solve vs. the alternatives search) and are not guaranteed bit-identical, so the primary `route` is
+  always its own, clearly-labelled first option ("основной") rather than assumed identical to
+  `alternatives[0]`.
+- Consequences: purely additive on the wire contract (the `alternatives` key already exists and is
+  unchanged); `tests/unit/solve/test_alternatives.py`'s existing coverage
+  (`TestKConfigurable`, `TestStructurallyDistinctAndRanking`, etc.) is untouched. New coverage is
+  viewer-side only: an e2e case asserting the switch controls appear when `alternatives` has more
+  than one route, are absent/hidden when it has zero or one (a map with only one feasible route),
+  and that switching updates both the map overlay and the legs table without a new job/run id.
+
+## ADR-026 — Control-number OCR scale-invariance work is diagnosis-first (T089), mirroring T083, not a speculative fix
+- Date: 2026-09-11
+- Status: accepted
+- Context: Iteration I4. T084/ADR-023 raised corpus-wide read rate 19%→49%, but the owner reports
+  many maps still fail to read clearly-legible numbers, specifically calling out that map *physical*
+  scale (an A3 sheet vs. an A5 sheet photographed close-up, so printed features vary hugely in pixel
+  size across the owner's own corpus) seems to matter. Two concrete, code-grounded hypotheses exist,
+  neither yet measured against the corpus this iteration:
+  1. `DetectorSettings.circle_radius_px(dpi)` derives the expected circle pixel size from `dpi`
+     alone by design ("the map scale never enters into it" — the docstring's own words, correct for
+     a flatbed scan at a known, correct DPI). For a *photograph* of a map, `dpi` is not a physical
+     scan resolution — it is inferred (JFIF metadata, "found untrustworthy" per `docs/STATUS.md`'s
+     T078 note: 72/96 checked values are indistinguishable from camera/editor defaults) or must come
+     from auto-calibration (`vision/calibrate.py::calibrate_map`, T078), which ADR-022 made an
+     **opt-in** action in both CLI and viewer, not the default. A map photographed close-up (so an
+     A5 sheet fills the frame) and one photographed from further back (so an A3 sheet fits) can
+     carry near-identical JFIF `dpi` while their controls' true pixel size differs by several times —
+     if the owner is not invoking auto-scale/calibration explicitly, this alone would explain
+     systematic misses correlated with physical map size, independent of any detector-quality bug.
+  2. `DetectorSettings.circle_scale_multipliers` (default `[1.0, 1.5, 2.0, 2.5, 3.0]`) only sweeps
+     circles at or *above* the base ISOM print size — there is no multiplier below `1.0`. A map
+     whose controls render smaller than the base-scale window (e.g. a genuinely small-format print,
+     or a correct-DPI scan where the base assumption itself runs slightly large) is structurally
+     unreachable by `_select_best_scale` today, regardless of how well-tuned the rest of the pipeline
+     is.
+  Both are stated as hypotheses to verify, not assumed causes — this project's own established
+  practice (T079-T081, T083) is to measure real scans before designing a fix, and T080 closed with
+  no code change specifically because its assumed trigger did not reproduce.
+- Decision: T089 measures `detect_controls`/`read_control_numbers` end to end against every raster
+  in `data/maps/` (owner's corpus plus, budget permitting, a sample of the `ogps-*` harvest),
+  bucketed by the map's resolved DPI and, where derivable, its approximate physical sheet size, and
+  explicitly checks whether read/detection rate correlates with either hypothesis above or with
+  neither. No product-code changes in T089 (script-only, gitignored, same convention as T083); its
+  output is a measured diagnosis plus a fix design, written into a follow-up ADR, that T090
+  implements against.
+- Consequences: T090's actual scope (which of the two hypotheses, if either, drives a real fix; a
+  simple default-on auto-calibration is one plausible outcome but not committed to yet) is
+  deliberately left open until T089 reports. `TestRealScanReadRateFloor`'s existing floors
+  (`pervomayskoe` >= 15/41, `novo-kavgolovsky-lesopark`'s own floor) must not regress; T090 raises
+  them, or adds new per-map floors, using T089's own measured before/after numbers, not a guess.
+
+## ADR-027 — Route-choice heuristics: a cheap-model literature pass feeds a human synthesis step before any cost-model code changes
+- Date: 2026-09-11
+- Status: accepted
+- Context: Iteration I4. The owner is often unhappy with proposed routes' plausibility (e.g.
+  cutting through slow/rough terrain where a real orienteer would obviously detour via a road) and
+  asked specifically for a cheap-model pass over published route-choice advice from orienteering/
+  rogaine practice, distilled into applicable rules. The existing cost model
+  (`cost = mpp / (v_base * k_terrain * k_slope)`, F10) is pure physical-speed cost — it has no
+  concept of navigation risk, handrails/catching features, or attack points, all of which real
+  route-choice literature treats as first-order factors, not refinements.
+- Decision: T094 runs a `general-purpose` subagent on the `haiku` model (the cheapest tier
+  available) to gather and synthesize published route-choice material into
+  `docs/research/route-choice-heuristics.md` — sources plus a distilled, if-then-shaped rules list,
+  each flagged against whether this project's cost model already has a knob for it (terrain
+  `speed_factor`, contour-density `k_slope`) or would need a new mechanism. The haiku output is
+  treated as raw research material, not an approved design: a human/architect synthesis step
+  (T094's own second half) selects which rules are both well-supported and cheaply encodable as
+  cost-model tunables this iteration, and writes that selection as its own follow-up entry in this
+  file before T095 touches any code. T095's scope is bounded to `cost/`/`solve/`-level tunables and
+  config, explicitly not a solver-architecture rewrite (no new search algorithm, no route-choice
+  ML/heuristic scoring model) — anything larger than that is out of this iteration's budget and
+  becomes its own future item.
+- Consequences: there is a real risk the literature pass surfaces good ideas that do not reduce to a
+  config-tunable cost term (e.g. "prefer routes that pass attack points" needs a notion of attack
+  points this codebase does not have) — T094's synthesis is expected to name those explicitly as
+  deferred/future work rather than force-fitting them. T095's DoD is intentionally not fully
+  specified at gate time (same pattern as T078's original filing): the owner reviews before/after
+  example routes on a real map before T095 is considered done, not only a green test suite.
+
+## ADR-028 — True terrain relief (elevation/DEM) integration is deferred; this iteration produces a research/options document only
+- Date: 2026-09-11
+- Status: accepted
+- Context: Iteration I4. SPEC's own Risks & assumptions #3 already states the honest limitation:
+  "Contour density is a proxy, not a slope. It cannot tell uphill from downhill, so route direction
+  does not change cost. Accepted for v1." The owner now wants this actively worked toward — routes
+  currently sometimes prefer a route that "ismarter" only because the model has no real slope
+  signal — but also explicitly frames this as future preparation, not this iteration's
+  implementation: "нужно изучить вопрос... подготовиться к дальнейшей реализации." Real elevation
+  integration is a materially larger problem than a config tweak: it needs an elevation data source
+  per map (a DEM API, contour-derived elevation reconstruction, or manual input), and — the sharper
+  issue — a scanned/photographed orienteering map has no known real-world georeference by design
+  (SPEC's own Non-goals line: "GPS georeferencing, GPX export, GeoTIFF, world files" is explicitly
+  out of scope). Any DEM-based approach needs *some* way to align map pixels to real-world elevation
+  samples, which is either a new georeferencing step (reopening that Non-goals line) or a
+  contour-line-only elevation reconstruction that stays entirely inside the map's own pixel space
+  (no external data, no georeferencing, but bounded by how much real elevation information printed
+  contour lines actually carry — index-line labels, contour interval — versus the current
+  density-only proxy).
+- Decision: T096 produces `docs/research/terrain-relief-integration.md` only — no code, no new
+  config fields, no SPEC requirement added this iteration. It must cover: realistic elevation data
+  sources and their feasibility given the Non-goals constraint above; how a real slope signal would
+  plug into the existing `k_slope`/`compute_cost_field` pipeline (`cost/field.py`) without breaking
+  its current contract; what a separate, explicit off-road/forest base-speed parameter would need
+  beyond the existing 17-class `speed_factor` table (`config/default.toml`); and the georeferencing
+  tension above, stated as an open question for the owner rather than resolved unilaterally.
+- Consequences: Risks & assumptions #3 gets a trailing note pointing at this ADR and the research
+  document, not a rewrite — the limitation itself is unchanged this iteration, only the plan to
+  eventually address it now exists in writing. Any future iteration that implements this needs its
+  own gated delta, informed by T096's findings, and — if a georeferencing step is chosen — its own
+  explicit reversal of the current Non-goals line via a superseding ADR.

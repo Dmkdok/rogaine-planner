@@ -1263,12 +1263,18 @@ the implementer's self-report.
   (448 baseline + 1 new test), `ruff check .` clean (both independently re-run, not just trusted
   from the implementer). Re-ran `rogaine detect --map data/maps/ozero-shchuche/map.jpg` directly:
   `hub: found`, 21 circles (matches T080's post-T079 count, unchanged). See commit 00b1b97.
-- [ ] **T082** — Owner spot-check across the real-scan corpus (ADR-019) — paths: none (validation
+- [x] **T082** — Owner spot-check across the real-scan corpus (ADR-019) — paths: none (validation
   only; a throwaway script under `data/maps/` if useful, gitignored like its siblings) — deps:
   T077, T079, T080, T081 — DoD: re-run `rogaine detect` (and/or the viewer) on 2-3 of the owner's
   own maps post-fix; owner reviews the output and confirms circle positions, hub, and numbers look
   right. Recorded in `docs/STATUS.md`, not a new automated floor (ADR-019 — no ground truth exists
   for these files).
+
+  **Done, partial pass (2026-09-11).** Owner: control-number recognition "стало лучше" (better than
+  before) but still misses many clearly legible numbers, specifically on maps far from the base
+  print scale (large physical sheet photographed from afar, or a small sheet photographed close
+  up). Treated as this task's real spot-check result, not deferred — closes M9. The follow-up
+  (measured diagnosis + fix) is filed as Iteration I4, M11, T089-T090; not reopening this task.
 
 ## M10 — Viewer UX, scale auto-detection exposure, control-number OCR (Iteration I3, `docs/iterations/I3-viewer-ux-and-detection.md`)
 
@@ -1645,3 +1651,79 @@ the implementer's self-report.
   passed, none skipped); own `git diff --stat` confirmed only the seven files named in the fix
   brief were touched, nothing else. Two manual owner sign-offs (T086's visual review, M9's T082
   spot-check) remain open — not something a review pass can close.
+
+## M11 — OCR scale-invariance, points auto-fill, viewer route alternatives, route-choice heuristics, relief prep (Iteration I4, `docs/iterations/I4-ocr-scale-and-route-quality.md`)
+
+> Five independent workstreams. **OCR** (T089 diagnose -> T090 fix) and **points-rule** (T091) both
+> own `src/rogaine/vision/ocr.py`/`config/default.toml`/`tests/unit/vision/test_ocr.py` — land T091
+> first (small, independent of T089's findings), then T090 after both T089 and T091 close, to avoid
+> two concurrent edits to the same files. **Viewer-alternatives** (T093) and **points-viewer**
+> (T092) both own `src/rogaine/web/static/app.js` — land T092 first (T091 depends on it anyway),
+> then T093. **Route-choice** (T094 -> T095) and **relief-prep** (T096) touch neither vision nor web
+> paths and are freely parallel with everything above.
+
+- [ ] **T089** — Diagnose control-number OCR/detection failure across map physical scale and DPI —
+  paths: none (diagnosis only; a throwaway script under `data/maps/`, gitignored like its siblings)
+  — deps: T084 — DoD: measure `detect_controls`/`read_control_numbers` end to end against every
+  raster in `data/maps/` (owner's corpus at minimum; `ogps-*` harvest sample budget-permitting),
+  bucketed by resolved DPI and, where derivable, approximate physical sheet size; explicitly test
+  ADR-026's two hypotheses (DPI/auto-calibration accuracy for photographed maps; the
+  `circle_scale_multipliers` ladder never sweeping below `1.0`) against the data, not assumed.
+  Findings plus a fix design go into a new ADR and feed T090 directly; no product-code changes.
+
+- [ ] **T090** — Fix OCR/detection scale-invariance per T089's findings — paths:
+  `src/rogaine/vision/controls.py`, `src/rogaine/vision/ocr.py`, `src/rogaine/vision/calibrate.py`
+  (only if auto-calibration defaulting changes), `config/default.toml`, `src/rogaine/cli.py` /
+  `src/rogaine/web/app.py` (only if auto-scale's opt-in default changes per T089's findings — a
+  contract change needs both sides updated together, ADR-022 precedent), tests under
+  `tests/unit/vision/` and, if the CLI/web default changes, `tests/unit/web/` — deps: T089, T091 —
+  DoD: corpus-wide read rate and circle-detection recall/precision measurably improve beyond T089's
+  own baseline, before/after counts recorded per-map in `docs/DECISIONS.md` (same style as
+  T079-T081/ADR-023); `TestRealScanReadRateFloor`'s existing floors don't regress (raised or
+  superseded with T090's own measured numbers); the synthetic fixture's 11/12 floor
+  (`test_at_least_eleven_of_twelve_controls_read_correctly`) holds.
+
+- [ ] **T091** — Fix `first_digit` points rule to use all digits but the last (ADR-024) — paths:
+  `src/rogaine/vision/ocr.py`, `config/default.toml` (comment only), `tests/unit/vision/test_ocr.py`
+  — deps: none — DoD: `_apply_points_rule`'s `first_digit` branch computes `number // 10`; existing
+  `TestPointsRule` assertions unchanged (2-digit numbers give the same result under both formulas);
+  new test covers a 3-digit number (`123` -> `12`) and documents the single-digit edge case
+  (`7` -> `0`).
+
+- [ ] **T092** — Viewer auto-fills points from a control's number, sticky-off once manually edited
+  (ADR-024, F22) — paths: `src/rogaine/web/static/app.js` — deps: T091 — DoD: editing a control's
+  number in the viewer auto-fills its points field via T091's corrected rule, unless that control's
+  points has been hand-edited since its last detect/import (per-control, in-memory, resets on
+  reload/re-import); covered by a new e2e case in `tests/e2e/test_viewer.py`.
+
+- [ ] **T093** — Viewer exposes the solver's existing top-K alternative routes, switchable (ADR-025)
+  — paths: `src/rogaine/web/static/app.js`, `src/rogaine/web/static/index.html`,
+  `src/rogaine/web/static/style.css` — deps: T092 (shares `app.js`) — DoD: when a plan response's
+  `alternatives` array has more than one route, the viewer shows switch controls (labelled by
+  rank/score, primary route always its own first option); selecting one redraws the map overlay and
+  legs/summary panel client-side, no new server round-trip; hidden/absent when `alternatives` has
+  zero or one entries; covered by a new e2e case.
+
+- [ ] **T094** — Route-choice heuristics: literature pass + human synthesis (ADR-027) — paths:
+  `docs/research/route-choice-heuristics.md` (review/correct the existing haiku-drafted pass — a
+  spot-check during intake found at least one mischaracterized/misattributed source, so citations
+  need verifying, not just the rules list), `docs/DECISIONS.md` (new ADR selecting which rules this
+  iteration actually implements) — deps: none — DoD: every cited source in the research document is
+  verified to actually support its claimed rule (fetch and check, not trusted from the draft); the
+  new ADR names which rules become T095's concrete scope and which are named explicitly as
+  deferred/future (e.g. rules needing a concept this codebase doesn't have yet, like attack points).
+
+- [ ] **T095** — Apply T094's selected route-choice rules to the cost/solve model — paths:
+  `src/rogaine/cost/`, `src/rogaine/solve/`, `config/default.toml`, `tests/unit/cost/`,
+  `tests/unit/solve/` — deps: T094 — DoD: set precisely by T094's synthesis ADR; bounded to
+  cost-model tunables/config (no new search algorithm or ML scoring model, ADR-027); at least one
+  measured, concrete improvement to route plausibility lands; owner reviews example routes
+  before/after on a real map before this is considered done, not only a green suite.
+
+- [ ] **T096** — Terrain relief (elevation/DEM) integration: research and prep, no implementation
+  (ADR-028) — paths: `docs/research/terrain-relief-integration.md` — deps: none — DoD: document
+  covers realistic elevation data sources given the Non-goals georeferencing constraint; how a real
+  slope signal would plug into `cost/field.py`'s existing `k_slope`/`compute_cost_field` contract;
+  what a separate off-road/forest base-speed parameter needs beyond the current 17-class
+  `speed_factor` table; the georeferencing tension stated as an open question for the owner. No
+  code, no config, no SPEC requirement added.

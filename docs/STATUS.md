@@ -30,10 +30,15 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   `5957120`+`14bbccb`) — real-scan OCR read rate 19%→49% corpus-wide (T084/ADR-023).
   Implementation closed 2026-09-09; independent review (scoped `reviewer` subagent) then FAILed on
   1 Critical + 1 High + 2 Medium in T088's scope, all fixed and independently re-verified same
-  session (472 passed, `ruff check .` clean) — full account in T088's `docs/TASKS.md` entry. **Two
-  manual owner sign-offs remain open** (T086's visual review, M9's T082 spot-check) — the only
-  thing left before this iteration closes — see "Iteration I3" below for the full per-task detail
-  and progress checklist.
+  session (472 passed, `ruff check .` clean) — full account in T088's `docs/TASKS.md` entry.
+  **2026-09-11: T082 done (partial pass)** — owner spot-checked, recognition "стало лучше" but still
+  misses many numbers on maps far from the base print scale; M9 is now fully closed. That report,
+  plus four further owner requests (points auto-fill, viewer route alternatives, route-choice
+  quality, relief prep), became **Iteration I4** (M11, T089-T096,
+  `docs/iterations/I4-ocr-scale-and-route-quality.md`) — delta written, **pending gate approval**.
+  **One manual owner sign-off remains open** (T086's visual review, I3) — unaffected by I4, not
+  blocking it — see "Iteration I3" below for I3's own detail, and "Iteration I4" below for the new
+  delta.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -112,6 +117,34 @@ subagent call in that session succeeded normally, so this looks transient/interm
 hard block — but if a future session sees the same error, know that subagent tool calls can fail
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
+
+## Iteration I4: OCR scale-invariance, points auto-fill, viewer route alternatives, route-choice quality, relief prep (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
+
+Owner request, in-chat 2026-09-11 (five items — see the iteration doc's "In scope" table for the
+one-line reason each is in this round). Doubles as M9/I2's own T082 owner spot-check (see the
+`current:` line above and T082's own entry in `docs/TASKS.md` — done, partial pass, closes M9). Full
+intake + impact map: `docs/iterations/I4-ocr-scale-and-route-quality.md`. New ADRs: ADR-024 (`first_digit`
+points rule + viewer auto-fill), ADR-025 (viewer exposes alternative routes), ADR-026 (OCR
+scale-invariance is diagnosis-first, two named hypotheses), ADR-027 (route-choice heuristics:
+cheap-model research feeds a human synthesis step before any code), ADR-028 (terrain relief is
+research-only this round). New SPEC: F16 acceptance extended, F22 added, Risks & assumptions #3
+gets a pointer note. `docs/research/route-choice-heuristics.md` already drafted by a background
+`haiku`-model agent (19 sources, 9 rules) — **not yet verified**; a intake-time spot-check of 2
+citations found one page mischaracterized (cites a links page as if it were attack-point
+navigation content), so T094 re-verifies every source before any rule is trusted.
+
+Progress (M11 in `docs/TASKS.md`, T089-T096):
+- [x] 0 baseline recorded — `docker compose run --rm tests` 472 passed, exit 0; `ruff check .`
+  clean; 2026-09-11
+- [x] 1 delta intake agreed (in / out / deferred) — `docs/iterations/I4-ocr-scale-and-route-quality.md`
+- [x] 2 impact map written — same file
+- [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
+  closed)
+- [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
+- [ ] 4 implementation — in progress, this session
+- [ ] 5 verification
+- [ ] 6 review
+- [ ] 7 closed
 
 ## Iteration I3: viewer UX, scale auto-detection exposure, control-number OCR (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
 

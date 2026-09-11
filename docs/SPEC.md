@@ -61,12 +61,13 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 | F13 | Heuristic solver for 30-80 controls | Returns a feasible route within a configurable time budget; gap versus exact at most 5% on instances where exact is computable |
 | F14 | Objective `score = sum(points) - penalty_per_min * max(0, T - limit)`, route starts and ends at the hub | A very large `penalty_per_min` produces a route strictly inside the limit; zero lets the solver overrun |
 | F15 | Route artefacts: JSON (order, per-leg time and distance, cumulative time, points, penalty, polylines) and PNG (route over the map, numbered) | JSON validates against the documented schema; PNG legs match the JSON polylines |
-| F16 | Alternative routes: top-K structurally distinct solutions with their scores | K configurable; alternatives differ by at least one visited control; doubles as the map's "interestingness" measure |
+| F16 | Alternative routes: top-K structurally distinct solutions with their scores | K configurable; alternatives differ by at least one visited control; doubles as the map's "interestingness" measure. The web viewer (F17) surfaces these as switchable routes whenever more than one exists, not only the primary route (I4) |
 | F17 | Local web viewer: upload, calibrate, edit controls, run, inspect, export | A Playwright script completes the full flow on the fixture map with no manual steps; the map and the controls list are both visible at once on a standard viewport (I3) — assigning a control's number never requires scrolling the map out of view |
 | F18 | Every tunable (terrain coefficients, slope factor, circle radius range, solver budgets, penalty) lives in one config file, overridable per run | Changing a coefficient in the config changes the route with no code edit |
 | F19 | Deterministic runs | Same inputs and same seed produce byte-identical JSON |
 | F20 | Non-terrain map ink (grid lines, magnetic-north lines) is never misread as a real terrain feature | On a real scan with full-height grid lines (I1, `data/maps/grid-lines-red-controls/`): the grid columns classify as `unknown`, not `water_uncrossable`; a real water body in the same fixture family still classifies as water |
 | F21 | Best-effort automatic scale detection (reuses `vision/calibrate.py::calibrate_map`'s scale-bar / grid / circle-diameter tiers), offered as an explicit opt-in action in both the CLI and the web viewer, alongside the existing manual paths (F2/F3) (I3, ADR-022) | On a map where a tier fires: CLI/viewer report which tier (`scale_bar`/`grid`/`circle`) and the resulting mpp/dpi. On a map where none fires: a clear "auto-detection unavailable, enter manually" outcome, never a crash or a silently guessed value. Auto-detection only runs on explicit user action and never overrides an explicit `--scale`/`--calibrate` (CLI) or `scale`/`calibrate` (viewer) value |
+| F22 | Web viewer auto-fills a control's points from its number using the `first_digit` rule (all digits but the last), editable; a manual points edit is sticky and survives further number edits (I4, ADR-024) | Typing/editing a freshly-detected or never-points-edited control's number auto-fills points (`123` -> `12`, `45` -> `4`); once points has been hand-edited for that control, further number edits no longer overwrite it. Resets to auto-fill on reload/re-import (CSV import already overrides detection wholesale, F9) |
 
 ## Non-functional
 - Performance on a 4000x3000 map at 1:10000, CPU only: segmentation at most 30 s, all-pairs travel
@@ -107,7 +108,9 @@ None. No external APIs, no VLM, no telemetry.
    path; grid/magnetic-north lines read as water by colour alone (I1, F20). Mitigation: size and
    elongation filters plus an `unknown` class filled from its neighbourhood.
 3. **Contour density is a proxy, not a slope.** It cannot tell uphill from downhill, so route
-   direction does not change cost. Accepted for v1 and stated in the output.
+   direction does not change cost. Accepted for v1 and stated in the output. Real elevation
+   integration is deferred pending research (I4, ADR-028, `docs/research/terrain-relief-integration.md`) —
+   not started, no implementation commitment yet.
 4. **OCR of control numbers is the most fragile step.** Mitigation: it is never load-bearing — points
    fall back to a constant, and the CSV/viewer edit path is a first-class flow, not a repair hatch.
 5. **No real map fixture exists yet.** Mitigation: a synthetic ISOM map generator produces a fixture
