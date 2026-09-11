@@ -141,13 +141,17 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
 - [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
   closed)
 - [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
-- [ ] 4 implementation — in progress, this session. **4/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
+- [ ] 4 implementation — in progress, this session. **5/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
   docs), T094 (`f8b6243`, ADR-029), T096 (`fc82460`, checkbox was stale — backfilled per
-  trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed).
-  Open: **T089** (diagnose OCR scale-invariance, deps T084 — met, unblocked), **T090** (fix per
-  T089's findings, deps T089+T091 — T091 now met, T089 not), **T093** (viewer route alternatives,
-  ADR-025, deps T092 — now met, unblocked), **T095** (apply T094's route-choice rules to
-  cost/solve, deps T094 — met, unblocked).
+  trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed),
+  T093 (`b3953eb`, ADR-025 viewer route-alternatives switcher — independently re-verified this
+  session, isolated `tests/e2e/test_viewer.py` run 8/8 passed, diff read clean). Open: **T089**
+  (diagnose OCR scale-invariance, deps T084 — met; in progress, background agent mid-run against the
+  full 204-map ogps corpus), **T090** (fix per T089's findings, deps T089+T091 — T091 now met, T089
+  not), **T095** (apply T094's route-choice rules to cost/solve, deps T094 — met; in progress,
+  background agent mid-implementation — working tree currently carries its uncommitted changes under
+  `src/rogaine/cost/`, `src/rogaine/vision/contours.py`, `src/rogaine/config.py`,
+  `config/default.toml`, plus new `src/rogaine/cost/proximity.py`).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed
