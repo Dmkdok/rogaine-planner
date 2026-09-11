@@ -1702,7 +1702,7 @@ the implementer's self-report.
   points has been hand-edited since its last detect/import (per-control, in-memory, resets on
   reload/re-import); covered by a new e2e case in `tests/e2e/test_viewer.py`.
 
-  **Landed** (`<pending commit>`) — a module-level `WeakMap` (`pointsManuallySet`) keyed by control
+  **Landed** (`c9ad78c`) — a module-level `WeakMap` (`pointsManuallySet`) keyed by control
   object identity, not `control.id`, so it resets for free whenever `state.controls` is replaced
   wholesale (a fresh detect or reload); kept out of the `PUT /api/runs/{runId}/controls` payload
   since that schema is `extra="forbid"`. The number-field handler auto-fills
