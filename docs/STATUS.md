@@ -141,7 +141,7 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
 - [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
   closed)
 - [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
-- [ ] 4 implementation — in progress, this session. **6/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
+- [ ] 4 implementation — in progress, this session. **7/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
   docs), T094 (`f8b6243`, ADR-029), T096 (`fc82460`, checkbox was stale — backfilled per
   trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed),
   T093 (`b3953eb`, ADR-025 viewer route-alternatives switcher — independently re-verified this
@@ -155,9 +155,18 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
   checkbox correctly left `[ ]`. Sent the owner the before/after crop overlays via `SendUserFile`
   this session (`data/maps/pervomayskoe`: before 200.2s/215.7m cutting directly through
   terrain/contours, after 146.2s/253.3m bending to hug a nearby footpath — -26.9% time for +17.5%
-  distance); **awaiting the owner's sign-off**). Open: **T089** (diagnose OCR scale-invariance, deps
-  T084 — met; in progress, background agent mid-run against the full 204-map ogps corpus), **T090**
-  (fix per T089's findings, deps T089+T091 — T091 now met, T089 not).
+  distance); **awaiting the owner's sign-off**), **T089** (`ce3d0c6`, ADR-030 — independently
+  re-verified this session: own full suite 491 passed exit 0, own `ruff check .` clean, own read of
+  the full ADR. H1 (DPI/auto-calibration accuracy) not supported by either corpus (owner corpus's
+  own dpi=300 maps span 4%-81%; the full 204-map `ogps-*` sweep sits in a flat 17.6%-29.9% band
+  across every split). H2 (no sub-1.0 `circle_scale_multipliers` rung) is real but not safely
+  actionable by the existing ring-coverage scorer alone — apples-to-apples OCR comparison (not just
+  scorer preference) on the 7 owner maps where it fires found 3 genuine wins and 4 regressions, net
+  −24 reads if naively widened. Fix design for T090: add measured `0.5`/`0.85` rungs, gate any
+  sub-1.0 winner behind an OCR-outcome check rather than trusting ring coverage alone, re-verify
+  `_ocr_crop`'s sizing constants across the matched-scale range. Also backfilled ADR-024..029's
+  missing index-table rows, a pre-existing gap noticed independently by this session too). Open:
+  **T090** (fix per T089's findings, deps T089+T091 — both now met, unblocked).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed
