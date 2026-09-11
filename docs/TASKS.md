@@ -1688,8 +1688,9 @@ the implementer's self-report.
   where the false-cluster failure appeared), gate any sub-1.0 winner behind an OCR-outcome check
   (run `read_control_numbers` on both candidates, keep whichever reads more) rather than trusting
   ring coverage alone, and re-verify the OCR crop-sizing constants across the full matched-scale
-  range, not just the base scale. `docker compose run --rm tests` still 475 passed, `ruff check .`
-  clean (diagnosis-only, no `src/` changes).
+  range, not just the base scale. `docker compose run --rm tests` — 491 passed (this session's two
+  concurrent T093/T095 landings had already raised the baseline from 475 by the time this commit was
+  made; T089 itself added/removed none, diagnosis-only, no `src/` changes), `ruff check .` clean.
 
 - [ ] **T090** — Fix OCR/detection scale-invariance per T089's findings — paths:
   `src/rogaine/vision/controls.py`, `src/rogaine/vision/ocr.py`, `src/rogaine/vision/calibrate.py`
