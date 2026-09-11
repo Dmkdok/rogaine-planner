@@ -1710,7 +1710,7 @@ the implementer's self-report.
   legs/summary panel client-side, no new server round-trip; hidden/absent when `alternatives` has
   zero or one entries; covered by a new e2e case.
 
-- [ ] **T094** — Route-choice heuristics: literature pass + human synthesis (ADR-027) — paths:
+- [x] **T094** — Route-choice heuristics: literature pass + human synthesis (ADR-027) — paths:
   `docs/research/route-choice-heuristics.md` (review/correct the existing haiku-drafted pass — a
   spot-check during intake found at least one mischaracterized/misattributed source, so citations
   need verifying, not just the rules list), `docs/DECISIONS.md` (new ADR selecting which rules this
@@ -1718,6 +1718,21 @@ the implementer's self-report.
   verified to actually support its claimed rule (fetch and check, not trusted from the draft); the
   new ADR names which rules become T095's concrete scope and which are named explicitly as
   deferred/future (e.g. rules needing a concept this codebase doesn't have yet, like attack points).
+
+  **Landed** (ADR-029) — every citation fetched and checked directly. Confirmed the intake
+  spot-check: `baoc.org`'s "Attack_Point" page (cited for Rules 2 and 3) is a generic links
+  directory, discusses neither — removed. A second misattribution found independently (Orienteering
+  USA's "root cause" article, cited for Rule 4) — replaced. Five unsupported numbers removed (a
+  "~5 contour lines" threshold, "5-10s/control", "5-15s/leg", "10-20% fatigue", Rule 8's pace
+  bands). Cross-checked the surviving rules against actual `config/default.toml`/`cost/`/`solve/`
+  code: Rule 1 (path-vs-direct) is already solved exactly by the existing Dijkstra grid solve, and
+  Rule 5's vegetation speeds are already faithfully calibrated — neither explains the owner's "cuts
+  through slow terrain" complaint; that points at the missing handrail/catching-feature attraction
+  instead. ADR-029 scopes T095 to a linear-feature proximity bonus (Rules 2+7) plus a slope-penalty
+  retune (Rule 6); defers attack points (Rule 3), vegetation fatigue (Rule 5 half), slope direction
+  (Rule 6 half, ADR-028/T096's track), pace segmentation (Rule 8), and the rogaine time-safety
+  buffer (Rule 9 half) as named future work. `git diff --stat` confirmed only
+  `docs/research/route-choice-heuristics.md` changed by this task.
 
 - [ ] **T095** — Apply T094's selected route-choice rules to the cost/solve model — paths:
   `src/rogaine/cost/`, `src/rogaine/solve/`, `config/default.toml`, `tests/unit/cost/`,

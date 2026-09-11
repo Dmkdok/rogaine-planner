@@ -875,3 +875,74 @@
   eventually address it now exists in writing. Any future iteration that implements this needs its
   own gated delta, informed by T096's findings, and — if a georeferencing step is chosen — its own
   explicit reversal of the current Non-goals line via a superseding ADR.
+
+## ADR-029 — T095 implements a linear-feature proximity bonus and slope-penalty retuning; attack points, catching-feature-specific numbers, vegetation fatigue, and pace segmentation are deferred
+- Date: 2026-09-11
+- Status: accepted
+- Context: T094's second half verified every citation in `docs/research/route-choice-heuristics.md`
+  against its source, fetching each directly rather than trusting the haiku-tier draft. The
+  intake-time spot-check's suspicion was confirmed: `baoc.org`'s "Attack_Point" wiki page, cited for
+  both Rule 2 (handrails) and Rule 3 (attack points), is a generic links directory that discusses
+  neither — removed. A second source (Orienteering USA's "root cause" article, cited for Rule 4's
+  core empirical claim) also did not hold up on direct fetch — replaced. Several specific numbers in
+  the draft (a "~5 contour lines" climb/contour threshold, "5-10 seconds per control" safety-margin
+  figure, "5-15 seconds per leg" catching-feature savings, "10-20% fatigue" late-event speed penalty,
+  numeric pace-percentage bands for Rule 8) do not appear in any source checked and were removed as
+  unsupported rather than left in place. Cross-checking the verified rules against this codebase's
+  actual `config/default.toml` and `cost/`/`solve/` code (not just the draft's own claims about them)
+  also surfaced two corrections to the draft's own "cost model mapping" judgments: Rule 1
+  (path-vs-direct tradeoff) is not merely "expressible" via `speed_factor` — `cost/graph.py`'s
+  8-connected grid Dijkstra already solves it exactly, more precisely than the literature's own
+  60%-runnability rule of thumb; and Rule 5's vegetation-speed percentages are already faithfully
+  encoded (`config/default.toml`'s own comments show the same "% of open-forest speed" arithmetic the
+  source PDF gives). This means the owner's "routes cut through implausibly slow terrain" complaint
+  (ADR-027's own framing) is not explained by either of those — it points at the missing
+  handrail/catching-feature attraction instead (Rules 2 and 7).
+- Decision: T095's concrete scope is a linear-feature proximity cost term plus a slope-penalty
+  retune, both `cost/`-level config/mechanism additions, no solver-algorithm change:
+  1. **New mechanism — linear-feature proximity bonus** (Rules 2 and 7, same mechanism): a
+     distance-decay cost reduction near any linear feature already extracted by `vision/linear.py`
+     (T014) — roads, tracks, footpaths — computed once as a distance-transform layer and folded into
+     `cost/field.py`'s per-pixel rate alongside the existing `k_terrain`/`k_slope` factors.
+     Config-tunable (decay distance, bonus magnitude), off by default until tuned against the corpus.
+     This single mechanism covers both "prefer running near a handrail" (Rule 2) and "prefer a leg
+     with an obvious catching feature beyond the control" (Rule 7) — the latter needs no separate
+     code, only treating a control's nearby linear features the same way as en-route ones.
+  2. **Retune — slope-penalty magnitude/shape** (Rule 6, penalty half only): `[slope].penalty`
+     (currently `2.0`) and/or the density→penalty curve shape (linear → convex) in
+     `vision/contours.k_slope`, re-tuned against the corpus so steep/dense contour crossings cost
+     disproportionately more, consistent with the literature's "2-storey vs. 10-storey climb"
+     framing. Existing knob, no new mechanism.
+  3. **No change** for Rule 1 (already exactly solved by the existing Dijkstra solve) and Rule 5's
+     speed half (already correctly calibrated) — T095 may add a regression test pinning current
+     behavior for both, but no code/config change is expected.
+  Deferred/future, named explicitly rather than force-fit:
+  - **Rule 3 (attack points)** — needs a "which feature is this control's attack point" concept and
+    backward-from-control route bias this codebase has none of. ADR-027's own anticipated example.
+  - **Rule 5, fatigue half (vegetation fatigue carrying into later legs)** — needs
+    path-history-dependent cost, which breaks the per-pixel cost field's path-independence assumption
+    Dijkstra correctness relies on; a different solver treatment, not a config knob.
+  - **Rule 6, directional half** (uphill vs. downhill, "contour around" vs. "climb over" as a real
+    directional choice) — needs real elevation data; already ADR-028/T096's separate, already-deferred
+    research track. T095 should not duplicate that work.
+  - **Rule 8 (pace segmentation / traffic-light zones)** — not a cost-model rule at all; a
+    viewer/UX pacing-advisory feature for a human runner, out of `cost/`/`solve/` scope entirely.
+    Left for a future, separate task if the owner wants it.
+  - **Rule 9, selection half** (which controls to visit within budget) — already solved by the
+    existing exact/heuristic Orienteering Problem solvers (F12/F13); nothing to add.
+  - **Rule 9, buffer half** (a rogaine time-safety-margin) is verified, cheap, and directly on-domain
+    (this project is a rogaine planner, not generic orienteering) but is scoped as its own follow-up
+    rather than bundled into T095, since it touches `solve/objective.py`'s budget semantics rather
+    than `cost/field.py`'s per-pixel term, and needs its own owner-facing decision (does the margin
+    apply by default, is it visible/editable in the viewer) that the two `cost/`-level items above
+    don't.
+  - **Rule 4** (navigation-risk-exceeds-optimization) is not separately implemented — it is the
+    rationale for item 1 above, not an independent cost term.
+- Consequences: T095's diff footprint is `cost/field.py` (new proximity term), `cost/graph.py` if
+  the distance-transform needs a new `TerrainMap`/`CostField` field, `vision/linear.py` (expose
+  corridor geometry for the distance transform if not already convenient), `vision/contours.py`/
+  `config/default.toml` (slope retune), plus new unit tests and at least one before/after route
+  comparison on a real map the owner reviews (ADR-027's own DoD: owner review of example routes, not
+  only a green suite). Rule 9's buffer half and Rules 3/5-fatigue/6-directional/8 stay out of T095
+  and need their own future task filings before any code is written for them — this ADR is not a
+  commitment to build them this iteration or any specific future one.
