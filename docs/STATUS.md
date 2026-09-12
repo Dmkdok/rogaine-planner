@@ -35,10 +35,14 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   misses many numbers on maps far from the base print scale; M9 is now fully closed. That report,
   plus four further owner requests (points auto-fill, viewer route alternatives, route-choice
   quality, relief prep), became **Iteration I4** (M11, T089-T096,
-  `docs/iterations/I4-ocr-scale-and-route-quality.md`) — delta written, **pending gate approval**.
-  **One manual owner sign-off remains open** (T086's visual review, I3) — unaffected by I4, not
-  blocking it — see "Iteration I3" below for I3's own detail, and "Iteration I4" below for the new
-  delta.
+  `docs/iterations/I4-ocr-scale-and-route-quality.md`) — delta written, **gate approved 2026-09-11**
+  («Утверждаю»). **All 8 M11 tasks now landed** (T091, T092, T093, T094, T096, T089/ADR-030, T090/
+  ADR-031, T095) — real-scan OCR read rate on the owner corpus 49.3%→54.3%, `ogps-*` corpus-wide
+  22.9%→25.3% (T090/ADR-031). Verification green (493 passed, `ruff check .` clean, 2026-09-12).
+  Milestone-level review (step 6) not yet run. **Two manual owner sign-offs remain open**, neither
+  automatable (ADR-019 precedent): T095's before/after route-quality review (crop overlays already
+  sent, awaiting reply) and I3's own T086 visual review — see "Iteration I4" below for the full
+  progress checklist and "Iteration I3" for T086's own detail.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -141,7 +145,9 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
 - [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
   closed)
 - [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
-- [ ] 4 implementation — in progress, this session. **7/8 tasks landed**: T091 (`f4f0b15`+`9a4866e`
+- [x] 4 implementation — **all 8/8 tasks landed** (T095's own owner-review sign-off gate is
+  separate, see below, and does not block this checklist item — same precedent as I3's T086).
+  T091 (`f4f0b15`+`9a4866e`
   docs), T094 (`f8b6243`, ADR-029), T096 (`fc82460`, checkbox was stale — backfilled per
   trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed),
   T093 (`b3953eb`, ADR-025 viewer route-alternatives switcher — independently re-verified this
@@ -165,11 +171,28 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
   −24 reads if naively widened. Fix design for T090: add measured `0.5`/`0.85` rungs, gate any
   sub-1.0 winner behind an OCR-outcome check rather than trusting ring coverage alone, re-verify
   `_ocr_crop`'s sizing constants across the matched-scale range. Also backfilled ADR-024..029's
-  missing index-table rows, a pre-existing gap noticed independently by this session too). Open:
-  **T090** (fix per T089's findings, deps T089+T091 — both now met, unblocked).
-- [ ] 5 verification
-- [ ] 6 review
-- [ ] 7 closed
+  missing index-table rows, a pre-existing gap noticed independently by this session too), **T090**
+  (`c3b0071`, ADR-031 — `circle_scale_multipliers` gains measured sub-1.0 rungs `0.5`/`0.85`;
+  `_detect_circles` gates any sub-1.0 winner behind a new `_ocr_gate_sub_base_scale` OCR-outcome
+  check against the production winner, keeping whichever reads strictly more numbers; OCR
+  crop-sizing constants re-verified and left unchanged, no single value helps all 3 affected maps
+  (`data/maps/_t090_crop_sweep.py`). Owner corpus 205/416 (49.3%) -> 228/420 (54.3%), all +23 on the
+  3 maps ADR-030 predicted as genuine wins, all 4 predicted regressions correctly avoided by the
+  gate. Full `ogps-*` corpus 2372/10343 (22.9%) -> 2796/11051 (25.3%), every split that moved moved
+  up. `TestRealScanReadRateFloor`: `novo-kavgolovsky-lesopark` floor raised `>=5/21` -> `>=13/23`
+  (its gated scale is now 0.5, circle count itself moves 21->23); two new floors, `kkm-toksovo`
+  `>=6/25` and `lembolovo-kkm` `>=10/22` (20->22 circles). Full before/after tables: ADR-031. 493
+  passed (491 baseline + 2 net new tests), `ruff check .` clean — this session's own run, not
+  trusted from the commit message alone. Corpus-wide rate (25.3%) is real but modest — ADR-030's own
+  leading remaining suspect (leftover non-digit ink defeating Tesseract's `psm 7`, ADR-023's mode 1,
+  never re-tested at `ogps-*` scale) is still open, flagged for the owner/a future iteration rather
+  than silently left undocumented).
+- [x] 5 verification — baseline suites still green, this session's own run: 493 passed exit 0,
+  `ruff check .` clean (2026-09-12, after T090 landed)
+- [ ] 6 review — not yet run against the full M11 diff (T089-T096)
+- [ ] 7 closed — blocked on two manual owner sign-offs, neither automatable (ADR-019 precedent):
+  T095's before/after route-quality review (crop overlays already sent via `SendUserFile`,
+  awaiting reply) and I3's own still-open T086 visual review (unaffected by I4, tracked separately)
 
 ## Iteration I3: viewer UX, scale auto-detection exposure, control-number OCR (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
 
