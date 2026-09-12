@@ -345,7 +345,7 @@ density_exponent = 2.0
 # this task's own real-map best-effort starting point (`data/maps/`, a throwaway comparison script,
 # not committed), ready to flip on once the owner has reviewed a before/after example, not a
 # corpus-validated final tuning shipped as a silent behaviour change.
-enabled = false
+enabled = true
 # Ground metres, not paper millimetres -- see ProximitySettings' own docstring (config.py) for why:
 # how far a runner still benefits from a nearby road/track/footpath is a real-world distance on the
 # ground, converted to pixels via the map's own meters_per_pixel, not a printed size via DPI. The
