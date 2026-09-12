@@ -186,6 +186,27 @@ def _annulus_ink_density(
     return float(mask[annulus].sum()) / float(total)
 
 
+def _slide_window(lo: float, hi: float, max_dim: int) -> tuple[int, int]:
+    """Round `[lo, hi)` to an integer pixel window and, if it overflows one side of
+    `[0, max_dim)`, slide the whole window along that axis so it keeps its full width
+    (T097) rather than clamping each end independently and shrinking it. Only falls back
+    to a clamped/shrunk window when the window itself is wider than the raster (`max_dim`)
+    on that axis, in which case sliding cannot make it fit at all.
+    """
+    x0 = round(lo)
+    x1 = round(hi)
+    width = x1 - x0
+    if width >= max_dim:
+        return max(0, x0), min(max_dim, x1)
+    if x0 < 0:
+        x1 -= x0
+        x0 = 0
+    if x1 > max_dim:
+        x0 -= x1 - max_dim
+        x1 = max_dim
+    return x0, x1
+
+
 def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -> np.ndarray:
     """The black-ink-on-white crop `pytesseract` reads from: a generous square around *control*,
     purple ink only, with the control's own circle ring erased and any remaining ink too small to
@@ -197,10 +218,8 @@ def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -
     half = r_mid * (1.0 + det.number_search_radius + _CROP_MARGIN_FACTOR)
 
     h_img, w_img = image.shape[:2]
-    x0 = max(0, round(control.x - half))
-    x1 = min(w_img, round(control.x + half))
-    y0 = max(0, round(control.y - half))
-    y1 = min(h_img, round(control.y + half))
+    x0, x1 = _slide_window(control.x - half, control.x + half, w_img)
+    y0, y1 = _slide_window(control.y - half, control.y + half, h_img)
     crop = image[y0:y1, x0:x1]
 
     mask = purple_mask(crop, cfg)

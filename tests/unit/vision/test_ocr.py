@@ -25,7 +25,13 @@ from rogaine.config import AppConfig, default_config
 from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.models import Control
 from rogaine.vision.controls import detect_controls
-from rogaine.vision.ocr import _apply_points_rule, read_control_number, read_control_numbers
+from rogaine.vision.ocr import (
+    _CROP_MARGIN_FACTOR,
+    _apply_points_rule,
+    _ocr_crop,
+    read_control_number,
+    read_control_numbers,
+)
 
 # The one fixture control close enough to the course boundary that its number is unreadable even
 # with this module's widened crop margin (see the module docstring above and ocr.py's own).
@@ -118,6 +124,56 @@ class TestOcrNeverAborts:
         assert len(updated) == 3
         assert updated[1].number == sm.controls[1].number  # the good control still reads fine
         assert len(flags) == 1 and "control 99" in flags[0]
+
+
+class TestCropWindowSlidesNearEdges:
+    """T097: near an image boundary, `_ocr_crop`'s `(x0, y0, x1, y1)` window must slide along
+    that axis to keep its full configured half-width, rather than clamping each end
+    independently -- which used to shrink the window instead. One control per edge, each placed
+    close enough that a naive per-end clamp would have truncated it, but with the fixture image
+    (400x400) comfortably larger than the window so the slide path applies, not the
+    smaller-than-raster shrink fallback.
+    """
+
+    @pytest.mark.parametrize(
+        "x, y",
+        [(2.0, 200.0), (398.0, 200.0), (200.0, 2.0), (200.0, 398.0)],
+        ids=["left-edge", "right-edge", "top-edge", "bottom-edge"],
+    )
+    def test_edge_control_crop_reaches_full_configured_size(self, x: float, y: float) -> None:
+        cfg = default_config()
+        dpi = 300.0
+        image = np.zeros((400, 400, 3), dtype=np.uint8)
+        control = Control(id=1, x=x, y=y, radius_px=30.0)
+
+        crop = _ocr_crop(image, control, dpi, cfg)
+
+        half = control.radius_px * (
+            1.0 + cfg.detector.number_search_radius + _CROP_MARGIN_FACTOR
+        )
+        expected_w = round(x + half) - round(x - half)
+        expected_h = round(y + half) - round(y - half)
+        assert crop.shape[:2] == (expected_h, expected_w), (
+            f"edge control at ({x},{y}) got crop shape {crop.shape[:2]}, expected the full "
+            f"window ({expected_h}, {expected_w}) -- the window must slide, not shrink"
+        )
+
+    def test_centred_control_crop_is_unaffected(self) -> None:
+        """Regression guard: away from every edge, the slide path is a no-op -- same window as
+        before T097."""
+        cfg = default_config()
+        dpi = 300.0
+        image = np.zeros((400, 400, 3), dtype=np.uint8)
+        control = Control(id=1, x=200.0, y=200.0, radius_px=30.0)
+
+        crop = _ocr_crop(image, control, dpi, cfg)
+
+        half = control.radius_px * (
+            1.0 + cfg.detector.number_search_radius + _CROP_MARGIN_FACTOR
+        )
+        expected_w = round(200.0 + half) - round(200.0 - half)
+        expected_h = expected_w
+        assert crop.shape[:2] == (expected_h, expected_w)
 
 
 class TestReadsNumbersOnFixture:
