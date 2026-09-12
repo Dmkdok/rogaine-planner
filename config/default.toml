@@ -341,10 +341,9 @@ density_exponent = 2.0
 # Linear-feature proximity bonus (T095, ADR-029, Rules 2+7)
 # --------------------------------------------------------------------------------------------
 [proximity]
-# Off until tuned against the corpus (ADR-029's own words) -- this section's other two numbers are
-# this task's own real-map best-effort starting point (`data/maps/`, a throwaway comparison script,
-# not committed), ready to flip on once the owner has reviewed a before/after example, not a
-# corpus-validated final tuning shipped as a silent behaviour change.
+# Enabled 2026-09-12, owner sign-off (ADR-029's amendment) -- this section's other two numbers are
+# still this task's own real-map best-effort starting point (`data/maps/`, a throwaway comparison
+# script, not committed), not yet a corpus-validated final tuning.
 enabled = true
 # Ground metres, not paper millimetres -- see ProximitySettings' own docstring (config.py) for why:
 # how far a runner still benefits from a nearby road/track/footpath is a real-world distance on the

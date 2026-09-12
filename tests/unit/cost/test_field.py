@@ -13,6 +13,7 @@ import pytest
 
 from rogaine.config import default_config, load_config
 from rogaine.cost.field import compute_cost_field
+from rogaine.cost.proximity import k_proximity
 from rogaine.models import CostField, TerrainClass, TerrainMap, terrain_label
 from rogaine.vision.contours import k_slope
 
@@ -49,8 +50,16 @@ class TestHandCheckedFormula:
 
     @pytest.fixture()
     def cfg(self):
+        # `proximity.enabled` explicitly forced off (T095/ADR-029's default flipped `true` on
+        # 2026-09-12, sign-off): this class hand-checks the base two-factor `k_terrain * k_slope`
+        # formula in isolation, independent of whatever the shipped proximity default happens to
+        # be -- the proximity bonus itself is covered separately by `TestProximityBonusIntegration`
+        # below and by `tests/unit/cost/test_proximity.py`.
         return load_config(
-            overrides={"slope": {"penalty": self.PENALTY, "density_exponent": self.EXPONENT}}
+            overrides={
+                "slope": {"penalty": self.PENALTY, "density_exponent": self.EXPONENT},
+                "proximity": {"enabled": False},
+            }
         )
 
     @pytest.fixture()
@@ -161,12 +170,14 @@ class TestProximityBonusIntegration:
     """T095/ADR-029: the linear-feature proximity bonus (`cost/proximity.k_proximity`), folded
     into `compute_cost_field`'s per-pixel rate alongside `k_terrain`/`k_slope`."""
 
-    def test_default_config_leaves_seconds_per_pixel_bit_for_bit_unchanged(self) -> None:
-        """Off by default (ADR-029) -- with defaults untouched, `compute_cost_field` must match
-        the pre-T095 two-factor formula exactly, not just approximately: multiplying by an exact
-        `1.0` proximity factor never perturbs an IEEE-754 float."""
+    def test_default_config_applies_the_proximity_bonus(self) -> None:
+        """Enabled by default (ADR-029 amendment, owner sign-off 2026-09-12) -- with defaults
+        untouched, `compute_cost_field` must fold in `k_proximity` alongside `k_terrain`/
+        `k_slope`, exactly matching the three-factor formula computed independently here.
+        `TestHandCheckedFormula` above covers the plain two-factor formula in isolation, with
+        `proximity.enabled` explicitly forced off."""
         cfg = default_config()
-        assert cfg.proximity.enabled is False
+        assert cfg.proximity.enabled is True
         labels = np.array(
             [[terrain_label(TerrainClass.FOOTPATH), terrain_label(TerrainClass.FOREST_RUNNABLE)]],
             dtype=np.uint8,
@@ -178,8 +189,9 @@ class TestProximityBonusIntegration:
 
         k_terrain = cfg.speed_factors()[labels]
         slope = k_slope(density, cfg)
-        expected = terrain.meters_per_pixel / (np.float32(3.0) * k_terrain * slope)
-        np.testing.assert_array_equal(result.seconds_per_pixel, expected.astype(np.float32))
+        proximity = k_proximity(labels, meters_per_pixel=terrain.meters_per_pixel, config=cfg)
+        expected = terrain.meters_per_pixel / (np.float32(3.0) * k_terrain * slope * proximity)
+        np.testing.assert_allclose(result.seconds_per_pixel, expected.astype(np.float32), rtol=1e-6)
 
     def test_enabled_bonus_makes_a_pixel_near_a_linear_feature_strictly_cheaper(self) -> None:
         """Synthetic case (DoD): a footpath at one end of an otherwise-uniform forest row. With

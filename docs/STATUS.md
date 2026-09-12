@@ -38,11 +38,14 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   `docs/iterations/I4-ocr-scale-and-route-quality.md`) — delta written, **gate approved 2026-09-11**
   («Утверждаю»). **All 8 M11 tasks now landed** (T091, T092, T093, T094, T096, T089/ADR-030, T090/
   ADR-031, T095) — real-scan OCR read rate on the owner corpus 49.3%→54.3%, `ogps-*` corpus-wide
-  22.9%→25.3% (T090/ADR-031). Verification green (493 passed, `ruff check .` clean, 2026-09-12).
-  Milestone-level review (step 6) not yet run. **Two manual owner sign-offs remain open**, neither
-  automatable (ADR-019 precedent): T095's before/after route-quality review (crop overlays already
-  sent, awaiting reply) and I3's own T086 visual review — see "Iteration I4" below for the full
-  progress checklist and "Iteration I3" for T086's own detail.
+  22.9%→25.3% (T090/ADR-031). Milestone-level review run (scoped `reviewer` subagent, all 8 M11
+  tasks): **PASS WITH WAIVERS** — 2 High findings in T090 fixed same session (499 passed after),
+  several Low items waived as documented follow-up debt — see "Iteration I4" below for the full
+  account. **2026-09-12: T095's owner sign-off received** — `[proximity].enabled` flipped to
+  `true` in `config/default.toml` (ADR-029's amendment), 5 tests whose premise was the old
+  off-by-default updated to match (not left red), `tests/e2e/golden_route.json` regenerated a
+  second time. 500 passed, `ruff check .` clean. **One manual owner sign-off remains open**
+  (ADR-019 precedent): I3's own T086 visual review — see "Iteration I3" for its detail.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -145,8 +148,8 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
 - [x] 3 docs amended (SPEC F16/F22/Risks#3, DECISIONS ADR-024..028, TASKS M11 T089-T096, M9's T082
   closed)
 - [x] GATE — approved by the owner 2026-09-11 («Утверждаю»)
-- [x] 4 implementation — **all 8/8 tasks landed** (T095's own owner-review sign-off gate is
-  separate, see below, and does not block this checklist item — same precedent as I3's T086).
+- [x] 4 implementation — **all 8/8 tasks landed**; T095's own owner-review sign-off gate (was
+  separate, tracked below) **received 2026-09-12** — see the amendment note after item 6.
   T091 (`f4f0b15`+`9a4866e`
   docs), T094 (`f8b6243`, ADR-029), T096 (`fc82460`, checkbox was stale — backfilled per
   trust-the-tree), T092 (`c9ad78c`+`4eb1640` docs, ADR-024/F22 viewer points auto-fill, 475 passed),
@@ -209,9 +212,29 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
   when a points field is cleared to blank; the pre-existing uncommitted `docker-compose.yml` port
   change). T091/T092/T094/T095's off-by-default/security/citation claims all independently
   re-confirmed by the reviewer, not just re-asserted.
-- [ ] 7 closed — blocked on two manual owner sign-offs, neither automatable (ADR-019 precedent):
-  T095's before/after route-quality review (crop overlays already sent via `SendUserFile`,
-  corrected time-delta framing above, awaiting reply) and I3's own still-open T086 visual review
+
+  **Amendment, 2026-09-12 — T095's owner sign-off received.** Judged on the geometric claim per
+  the review's own correction above (+17.5% distance to bend and hug the footpath on
+  `pervomayskoe`), not the paired time-delta framing. `[proximity].enabled` flipped `false` ->
+  `true` in `config/default.toml`; `decay_distance_m`/`bonus_magnitude` unchanged, still the
+  real-map best-effort starting point, not a corpus-validated final tuning. Five tests whose
+  premise was "off by default" were updated to match, not left red: full account in ADR-029's own
+  amendment paragraph and T095's `docs/TASKS.md` entry. `tests/e2e/golden_route.json` regenerated a
+  second time — `order`/`points` unchanged, `total_seconds` -7.6%. 500 passed, `ruff check .`
+  clean, this session's own run.
+
+  **Two of the review's own waived Low items are no longer inert now that the default is on**,
+  flagged here rather than silently left stale: the "wasted full-raster allocation on the
+  proximity-disabled default path" is moot now (the allocation is used, not wasted); the
+  "double-counting edge case at distance 0" (a linear-feature pixel gets both its own favourable
+  `k_terrain` speed factor *and* the maximum possible `k_proximity` bonus, since its distance to
+  itself is 0) was waived as inert while off-by-default and is now live. Not fixed in this
+  session — it is a design question (is stacking both effects on the feature's own pixel
+  over-rewarding it, or correctly modelling two real, independent effects) rather than a
+  reproduced-wrong-output bug, and fixing it is outside this session's actual task (closing T095's
+  sign-off). Filed as a follow-up for the owner/a future iteration, not silently dropped.
+- [ ] 7 closed — blocked on one remaining manual owner sign-off (ADR-019 precedent): I3's own
+  still-open T086 visual review
   (unaffected by I4, tracked separately)
 
 ## Iteration I3: viewer UX, scale auto-detection exposure, control-number OCR (in progress, branch `iteration/I2-vision-recognition-fix`, continued)

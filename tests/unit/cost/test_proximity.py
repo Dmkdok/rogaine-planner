@@ -1,9 +1,12 @@
 """Linear-feature proximity bonus (T095, ADR-029, Rules 2+7): `k_proximity` in isolation.
 
 DoD: off (all-ones, no distance transform even attempted) when `config.proximity.enabled` is
-`False` -- the shipped default; a synthetic case where distance to a linear feature (`road`/
-`vehicle_track`/`footpath`) decays the bonus exactly per the configured exponential-decay formula
-once enabled.
+`False`; a synthetic case where distance to a linear feature (`road`/`vehicle_track`/`footpath`)
+decays the bonus exactly per the configured exponential-decay formula once enabled.
+
+ADR-029 amendment (owner sign-off, 2026-09-12): the shipped default is now `enabled=True`, not
+`False` -- `TestEnabledByDefault` below covers that; `TestDisabledExplicitly` still covers the
+off-path, forced via an explicit override rather than relying on the default.
 """
 
 from __future__ import annotations
@@ -24,13 +27,25 @@ def _labels_with_road_at(shape: tuple[int, int], road_col: int) -> np.ndarray:
     return labels
 
 
-class TestDisabledByDefault:
-    def test_shipped_default_config_has_it_disabled(self) -> None:
-        assert default_config().proximity.enabled is False
+class TestEnabledByDefault:
+    """ADR-029 amendment (owner sign-off, 2026-09-12): the shipped default is now enabled."""
 
-    def test_returns_all_ones_with_default_config(self) -> None:
+    def test_shipped_default_config_has_it_enabled(self) -> None:
+        assert default_config().proximity.enabled is True
+
+    def test_returns_a_real_bonus_with_default_config(self) -> None:
         labels = _labels_with_road_at((5, 5), road_col=2)
         factor = k_proximity(labels, meters_per_pixel=1.0)
+        assert factor.dtype == np.float32
+        assert factor[0, 2] > 1.0, "no bonus at all on the linear-feature pixel itself"
+        assert not np.array_equal(factor, np.ones((5, 5), dtype=np.float32))
+
+
+class TestDisabledExplicitly:
+    def test_returns_all_ones_when_forced_off(self) -> None:
+        cfg = load_config(overrides={"proximity": {"enabled": False}})
+        labels = _labels_with_road_at((5, 5), road_col=2)
+        factor = k_proximity(labels, meters_per_pixel=1.0, config=cfg)
         assert factor.dtype == np.float32
         assert np.array_equal(factor, np.ones((5, 5), dtype=np.float32))
 

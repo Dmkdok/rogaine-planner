@@ -233,8 +233,11 @@ class ProximitySettings(BaseModel):
     term -- a control near a linear feature gets the same treatment as any other nearby pixel, no
     separate "attack point" concept needed).
 
-    **Off by default (`enabled = false`) until tuned against the corpus** -- ADR-029's own words;
-    flipping it on is a deliberate, separate decision, not implied by this settings group existing.
+    **Enabled by default (`enabled = true`)** -- shipped off pending an owner review of a
+    before/after example on a real map (ADR-029, T095); the owner signed off 2026-09-12 and this
+    group's own two other numbers (`decay_distance_m`, `bonus_magnitude`) are that session's
+    real-map best-effort starting point, not yet a corpus-validated final tuning (ADR-029's
+    amendment paragraph).
 
     **Ground metres, not paper millimetres.** Unlike this file's `_mm` tunables (`LinearSettings`,
     `SlopeSettings.density_sigma_mm`) -- fixed *printed* sizes converted to pixels via DPI, because

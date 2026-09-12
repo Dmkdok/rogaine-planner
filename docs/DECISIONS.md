@@ -954,6 +954,28 @@
   only a green suite). Rule 9's buffer half and Rules 3/5-fatigue/6-directional/8 stay out of T095
   and need their own future task filings before any code is written for them — this ADR is not a
   commitment to build them this iteration or any specific future one.
+- **Amendment, 2026-09-12 (owner sign-off, T095's own gate):** `[proximity].enabled` flipped
+  `false` -> `true` in `config/default.toml` — the owner's explicit decision, made directly
+  (not conditioned on further corpus tuning), confirmed after the before/after crop overlays
+  already sent via `SendUserFile` (`data/maps/pervomayskoe`: -26.9% time for +17.5% distance,
+  bending to hug a nearby footpath instead of cutting through terrain/contours). `decay_distance_m`
+  and `bonus_magnitude` are unchanged, still the real-map best-effort starting point, not a
+  corpus-validated final tuning. Five tests whose premise was "off by default" were updated to
+  match, not left red or silently reverted: `test_proximity.py`'s `TestDisabledByDefault` split into
+  `TestEnabledByDefault` (new shipped-default assertion) and `TestDisabledExplicitly` (the same
+  off-path, now via an explicit override rather than the default); `test_field.py`'s
+  `TestHandCheckedFormula` fixture now explicitly forces `proximity.enabled=False` so it keeps
+  testing the base two-factor formula in isolation regardless of the shipped default;
+  `TestProximityBonusIntegration`'s "default leaves seconds_per_pixel unchanged" test became
+  "default applies the bonus", checked against the same three-factor formula `cost/field.py` itself
+  computes. `tests/e2e/golden_route.json` regenerated (same script the test itself runs, same
+  seed=8/n_controls=6/`--strategy exact`/`--seed 0` inputs): visit `order` and `points` (35)
+  unchanged, `total_seconds` 10216.6 -> 9444.1 (-7.6%), consistent with the real-map example's
+  direction and magnitude — not independently re-tuned, and not evidence toward a future numeric
+  retune of `decay_distance_m`/`bonus_magnitude` themselves, which stays out of scope here.
+  499 total pre-existing (5 failing on the flip alone, confirmed by running the suite with the
+  config change but none of these test fixes first) -> 500 passed (3 tests edited in place, 1 net
+  new from the `TestDisabledByDefault` split), `ruff check .` clean.
 
 ## ADR-030 — T089 diagnosis: H1 (DPI/calibration) is unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps, but the ring-coverage scorer can't safely act on it alone
 - Date: 2026-09-12

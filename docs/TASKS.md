@@ -1824,7 +1824,7 @@ the implementer's self-report.
   buffer (Rule 9 half) as named future work. `git diff --stat` confirmed only
   `docs/research/route-choice-heuristics.md` changed by this task.
 
-- [ ] **T095** — Apply T094's selected route-choice rules to the cost/solve model — paths:
+- [x] **T095** — Apply T094's selected route-choice rules to the cost/solve model — paths:
   `src/rogaine/cost/`, `src/rogaine/solve/`, `config/default.toml`, `tests/unit/cost/`,
   `tests/unit/solve/` — deps: T094 — DoD: set precisely by T094's synthesis ADR; bounded to
   cost-model tunables/config (no new search algorithm or ML scoring model, ADR-027); at least one
@@ -1901,10 +1901,25 @@ the implementer's self-report.
   `tests/unit/cost/test_field.py` (+new `test_proximity.py`), `tests/unit/vision/test_contours.py`,
   `docs/TASKS.md` — nothing under `data/maps/` staged (gitignored throwaway scripts/output only).
 
-  **Not closing this checkbox** — the DoD's owner-review half ("owner reviews example routes
-  before/after on a real map") is an explicit manual sign-off gate this session cannot satisfy
-  itself, same precedent as T082/T086 (`docs/STATUS.md`'s "Iteration I3" section). Implementation,
-  tests, and the concrete before/after above are ready for that review.
+  **Owner sign-off received 2026-09-12** — closes the DoD's remaining manual gate. Reviewed
+  against the geometric claim per the review's own correction above (+17.5% distance to bend and
+  hug the footpath on `pervomayskoe`), not the paired time-delta framing. Owner decision:
+  `[proximity].enabled` `false` -> `true` in `config/default.toml`, `decay_distance_m`/
+  `bonus_magnitude` unchanged (still the real-map best-effort starting point, not a
+  corpus-validated final tuning — a future retune is a separate task). Five tests whose premise was
+  "off by default" were updated to match the new default rather than left red or silently reverted
+  — `test_proximity.py`'s `TestDisabledByDefault` split into `TestEnabledByDefault` (new
+  shipped-default assertion, +1 net test) and `TestDisabledExplicitly` (the same off-path, now via
+  an explicit override); `test_field.py`'s `TestHandCheckedFormula` fixture now explicitly forces
+  `proximity.enabled=False` so it keeps testing the base two-factor formula in isolation regardless
+  of the shipped default; `TestProximityBonusIntegration`'s "default leaves seconds_per_pixel
+  unchanged" test became "default applies the bonus" against the same three-factor formula
+  `cost/field.py` itself computes. `tests/e2e/golden_route.json` regenerated a second time (same
+  script/inputs as the first regeneration above): `order`/`points` (35) unchanged, `total_seconds`
+  10216.6 -> 9444.1 (-7.6%), consistent with the real-map example's direction/magnitude. Full
+  account: ADR-029's own amendment paragraph. 499 total pre-existing -> 500 passed (3 tests edited,
+  1 net new), `ruff check .` clean — this session's own run, independently re-verified, not trusted
+  from a self-report.
 
 - [x] **T096** — Terrain relief (elevation/DEM) integration: research and prep, no implementation
   (ADR-028) — paths: `docs/research/terrain-relief-integration.md` — deps: none — DoD: document

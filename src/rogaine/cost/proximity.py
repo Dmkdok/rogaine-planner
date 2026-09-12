@@ -23,11 +23,12 @@ with the classic e-folding shape (~37% of the peak bonus remains one ``decay_dis
 genuine speed bonus, not a separate additive term that could break ``CostField``'s ``+inf``/finite
 invariants (see ``cost/field.py``'s own module docstring).
 
-**Off by default (``ProximitySettings.enabled``).** When disabled this returns an all-ones array
-with no distance transform computed at all, so ``k_terrain * k_slope * 1.0`` in ``cost/field.py``
-is bit-for-bit identical to the pre-T095 formula -- multiplying by an exact ``1.0`` never perturbs
-an IEEE-754 float, so every existing cost-field test's numbers hold unchanged with defaults
-unchanged (ADR-029's own "off by default until tuned against the corpus").
+**Enabled by default (``ProximitySettings.enabled``).** ADR-029 shipped this off, pending an owner
+review of a before/after example on a real map (T095); the owner signed off 2026-09-12 and the
+shipped default is now ``True`` (see ADR-029's amendment paragraph). When disabled -- still
+available as an explicit override -- this returns an all-ones array with no distance transform
+computed at all, so ``k_terrain * k_slope * 1.0`` in ``cost/field.py`` is bit-for-bit identical to
+the pre-T095 formula.
 """
 
 from __future__ import annotations
@@ -50,9 +51,10 @@ def k_proximity(
     *labels* is ``TerrainMap.labels`` -- an ``(H, W)`` uint8 array indexed by
     :data:`rogaine.models.TERRAIN_ORDER` (same contract as
     :func:`rogaine.vision.contours.contour_mask`). Returns an ``(H, W)`` float32 array, always
-    exactly ``1.0`` everywhere when ``config.proximity.enabled`` is ``False`` (the shipped default)
-    or when the map has no linear-feature pixels at all -- both cases skip the distance transform
-    entirely rather than compute-and-discard it.
+    exactly ``1.0`` everywhere when ``config.proximity.enabled`` is ``False`` (an explicit
+    override -- the shipped default is now ``True``, ADR-029's amendment) or when the map has no
+    linear-feature pixels at all -- both cases skip the distance transform entirely rather than
+    compute-and-discard it.
     """
     if labels.ndim != 2:
         raise ValueError(f"expected an (H, W) labels array, got shape {labels.shape}")

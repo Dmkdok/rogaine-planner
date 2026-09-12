@@ -104,6 +104,11 @@ class TestGoldenRegression:
     genuine float/library-version differences as what `pytest.approx` needs to absorb -- 6
     candidate controls (well under `exact_max_controls=15`, `config/default.toml`) keeps Held-Karp
     fast.
+
+    Regenerated 2026-09-12 (owner sign-off on T095/ADR-029, `[proximity].enabled` default
+    `false` -> `true`): same visit `order` and `points` (35) as before, `total_seconds`
+    10216.6 -> 9444.1 (-7.6%) from the route now bending closer to linear features -- expected,
+    not a regression. See ADR-029's amendment paragraph and T095's `docs/TASKS.md` entry.
     """
 
     def test_route_json_matches_golden(self, tmp_path: Path) -> None:
