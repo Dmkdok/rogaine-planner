@@ -235,7 +235,7 @@ def _select_best_scale(
 
 
 def _detect_circles(
-    mask: np.ndarray, dpi: float, config: AppConfig
+    image: np.ndarray, mask: np.ndarray, dpi: float, config: AppConfig
 ) -> list[tuple[float, float, float, float]]:
     """Hough-circle candidates on the purple mask, filtered to those actually ringed in purple.
 
@@ -248,6 +248,17 @@ def _detect_circles(
     candidates -- see its own docstring for why comparing scales as sets, not pooling every
     scale's individually-passing candidates, is what actually separates a real ring from a
     same-threshold-clearing false fit at the wrong scale.
+
+    T090/ADR-031: when the winner sits below multiplier `1.0` (a real, measured gap for some
+    hand-drawn scans, T089's H2 finding -- see `config/default.toml`'s own comment on
+    `circle_scale_multipliers`), it is not trusted on ring-coverage alone -- `_ring_coverage`
+    cannot tell a genuinely undersized ring from the *same* correctly-matched >=1.0 ring winning a
+    sweep-order tie against its own sub-1.0 window, or from a small false-positive ink cluster
+    (ADR-030 measured both failure modes on real scans: naive widening was a net -24 reads across
+    7 owner maps). `_ocr_gate_sub_base_scale` below runs the real OCR outcome against both
+    candidate sets and keeps whichever reads strictly more valid numbers, defaulting to the >=1.0
+    (production) winner otherwise -- bounded to at most one extra OCR pass, only paid when a
+    sub-1.0 candidate would otherwise be chosen blind.
     """
     det = config.detector
     base_r_min, base_r_max = det.circle_radius_px(dpi)
@@ -293,7 +304,54 @@ def _detect_circles(
                     candidates.append((float(x), float(y), r_mid, coverage))
         per_multiplier.append((mult, candidates))
 
-    return _select_best_scale(per_multiplier)
+    selected = _select_best_scale(per_multiplier)
+    base_r_mid = (base_r_min + base_r_max) / 2.0
+    selected_mult = selected[0][2] / base_r_mid if selected and base_r_mid > 0 else None
+    if selected_mult is not None and selected_mult < 1.0:
+        selected = _ocr_gate_sub_base_scale(image, dpi, config, per_multiplier, selected)
+
+    return selected
+
+
+def _ocr_gate_sub_base_scale(
+    image: np.ndarray,
+    dpi: float,
+    config: AppConfig,
+    per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]],
+    sub_base_candidates: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float, float, float]]:
+    """T090/ADR-031 H2 gate: `_select_best_scale`'s ring-coverage-only score is not enough to
+    trust a sub-1.0 winner. Compare the real OCR outcome (`read_control_numbers`, unmodified --
+    same technique T089's own throwaway comparison script `_t089_h2_apples.py` worked out) between
+    *sub_base_candidates* and whatever `_select_best_scale` would pick from the >=1.0 (production)
+    subset alone, and keep whichever set reads strictly more valid numbers. Ties -- including the
+    degenerate case where both sides read zero, e.g. a purely geometric image with no digit ink --
+    fall back to the production winner, never to a sub-1.0 set that reads no better. If no >=1.0
+    candidate exists at all, there is nothing to gate against, so the sub-1.0 set stands.
+    """
+    production_candidates = _select_best_scale(
+        [(mult, candidates) for mult, candidates in per_multiplier if mult >= 1.0]
+    )
+    if not production_candidates:
+        return sub_base_candidates
+
+    # Deferred import: `vision.ocr` imports `purple_mask` from this module at load time, so a
+    # module-level import here would be circular.
+    from rogaine.vision.ocr import read_control_numbers
+
+    def _n_read(candidates: list[tuple[float, float, float, float]]) -> int:
+        controls = [
+            Control(
+                id=i, x=x, y=y, confidence=coverage, radius_px=r, source="detected", is_hub=False
+            )
+            for i, (x, y, r, coverage) in enumerate(candidates, start=1)
+        ]
+        updated, _flags = read_control_numbers(image, controls, dpi, config)
+        return sum(1 for c in updated if c.number is not None)
+
+    sub_ok = _n_read(sub_base_candidates)
+    prod_ok = _n_read(production_candidates)
+    return sub_base_candidates if sub_ok > prod_ok else production_candidates
 
 
 def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Control | None:
@@ -428,7 +486,7 @@ def detect_controls(
     if hub is not None:
         controls.append(hub)
 
-    circles = _detect_circles(mask, dpi, cfg)
+    circles = _detect_circles(image, mask, dpi, cfg)
     circles.sort(key=lambda c: (c[1], c[0]))
     for i, (x, y, r, confidence) in enumerate(circles, start=1):
         controls.append(

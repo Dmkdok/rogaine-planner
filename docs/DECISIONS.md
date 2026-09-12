@@ -33,6 +33,7 @@
 | 028 | True terrain relief (elevation/DEM) integration is deferred; research/options document only | accepted |
 | 029 | T095 implements a linear-feature proximity bonus and slope-penalty retuning; several rules deferred | accepted |
 | 030 | T089 diagnosis: H1 (DPI/calibration) unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps but the ring-coverage scorer can't safely act on it alone | accepted |
+| 031 | T090 fixes H2 with measured sub-1.0 `circle_scale_multipliers` rungs gated behind an OCR-outcome check; OCR crop-sizing constants are re-verified and left unchanged (no clean win found) | accepted |
 
 ---
 
@@ -1072,3 +1073,100 @@
   T090's landed fix does not reproduce the +23/-47 split measured here, that is new information for
   T090 to report, not a contradiction to paper over (same posture ADR-023 took toward its own
   three-mode split).
+
+## ADR-031 — T090 fixes H2 with measured sub-1.0 `circle_scale_multipliers` rungs gated behind an OCR-outcome check; OCR crop-sizing constants are re-verified and left unchanged (no clean win found)
+- Date: 2026-09-12
+- Status: accepted
+- Context: T090 implements ADR-030's three-point fix design against its own measured findings.
+  1. **Sub-1.0 rungs**: `circle_scale_multipliers` gains `0.5`/`0.85` (config/default.toml),
+     ADR-030's own measured floor — `0.4` is where a false-positive blob cluster won outright on a
+     real scan, so it stays excluded.
+  2. **OCR-outcome gate**: `vision/controls.py::_detect_circles` now checks whether
+     `_select_best_scale`'s winner sits below multiplier `1.0`; if so, `_ocr_gate_sub_base_scale`
+     runs `read_control_numbers` (unmodified) against both the sub-1.0 candidate set and whatever
+     `_select_best_scale` would pick from the >=1.0 (production) subset alone, and keeps whichever
+     reads strictly more valid numbers — ties (including both reading zero) fall back to production.
+     Bounded to at most one extra OCR pass, only paid when a sub-1.0 candidate would otherwise be
+     chosen blind. This is exactly ADR-030's own `_t089_h2_apples.py` technique, promoted from a
+     throwaway diagnostic into the shipped code path.
+  3. **Crop-sizing constants** (`_CIRCLE_MASK_RADIUS_FACTOR`/`_CROP_MARGIN_FACTOR`/
+     `_MIN_INK_AREA_FACTOR` in `vision/ocr.py`): re-verified per ADR-030 point 3, via
+     `data/maps/_t090_crop_sweep.py` sweeping `_CROP_MARGIN_FACTOR` from the shipped `0.6` up to
+     `2.0` against the 3 maps a sub-1.0 gate win now touches. No single value helps all three:
+     `kkm-toksovo` improves monotonically with a wider margin (10/25 at margin 1.0 -> 12/25 at
+     margin 2.0), but `lembolovo-kkm` peaks at margin 1.2 (18/22) and then gets *worse* than its
+     margin-1.0 reading as the margin widens further (14/22 at margin 2.0, vs. 17/22 at 1.0) —
+     `novo-kavgolovsky-lesopark` is flat at 18/23 across the whole sweep, insensitive either way.
+     Left unchanged — a global constant retune here is a net loss on at least one real map for any
+     value tried, the same "measured, not speculative" bar ADR-030/T080 already applied.
+
+  **Owner corpus, per-map before ([T089/ADR-030's own count](#adr-030) — production ladder
+  `[1.0, 1.5, 2.0, 2.5, 3.0]` only) vs. after (this task, landed gate, ladder widened to
+  `[0.5, 0.85, 1.0, 1.5, 2.0, 2.5, 3.0]`):**
+
+  | Map | before mult/n/ok | after mult/n/ok | Δ reads |
+  |---|---|---|---|
+  | grid-lines-red-controls | 2.0 / 13 / 10 | 2.0 / 13 / 10 | 0 (unaffected — winner was already >=1.0) |
+  | history-race-2024-michurinskoe | 2.0 / 37 / 13 | 2.0 / 37 / 13 | 0 (gate correctly rejected the 0.4 false-cluster winner) |
+  | history-race-primorsk | 1.0 / 49 / 17 | 1.0 / 49 / 17 | 0 (gate correctly rejected the 0.5 same-ring-worse-crop candidate) |
+  | kkm-3-2020 | 1.0 / 21 / 17 | 1.0 / 21 / 17 | 0 (gate correctly rejected the 0.85 same-ring-worse-crop candidate) |
+  | kkm-5-2020 | 2.0 / 21 / 11 | 2.0 / 21 / 11 | 0 (unaffected) |
+  | **kkm-toksovo** | 1.0 / 25 / 1 (4%) | **0.85 / 25 / 8 (32%)** | **+7** |
+  | **lembolovo-kkm** | 1.0 / 20 / 7 (35%) | **0.5 / 22 / 13 (59%)** | **+6** (+2 circles: 2 more real rings found) |
+  | michurinskoe | 2.0 / 37 / 23 | 2.0 / 37 / 23 | 0 (unaffected) |
+  | **novo-kavgolovsky-lesopark** | 1.0 / 21 / 6 (29%) | **0.5 / 23 / 16 (70%)** | **+10** (+2 circles) |
+  | ozero-shchuche (dup of kkm-3-2020) | 1.0 / 21 / 17 | 1.0 / 21 / 17 | 0 (gate correctly rejected) |
+  | pervomayskoe | 1.5 / 41 / 19 | 1.5 / 41 / 19 | 0 (unaffected) |
+  | toksovo-1 | 1.5 / 21 / 19 | 1.5 / 21 / 19 | 0 (unaffected) |
+  | toksovo-zubry | 1.5 / 31 / 24 | 1.5 / 31 / 24 | 0 (unaffected) |
+  | treugolnoe | 1.5 / 58 / 21 | 1.5 / 58 / 21 | 0 (unaffected) |
+  | **TOTAL** | **205/416 (49.3%)** | **228/420 (54.3%)** | **+23 reads, +4 circles, +5.0 points** |
+
+  The gate reproduces ADR-030's own apples-to-apples prediction exactly: the 3 genuine H2 wins land
+  (+7/+6/+10 = +23, matching ADR-030's "+23 combined" for the winning subset) and all 4 predicted
+  regressions (history-race-primorsk, kkm-3-2020, ozero-shchuche, history-race-2024-michurinskoe) are
+  correctly avoided by falling back to production — none of ADR-030's measured "-47 combined" net
+  loss materialises. Circle-detection recall improves on the 2 maps whose true (smaller) scale finds
+  more real rings than the base-scale-only ladder did (lembolovo-kkm 20->22, novo-kavgolovsky-lesopark
+  21->23); precision is unaffected — the gate only ever substitutes one already-ring-coverage-passing
+  candidate set for another, never adds an unfiltered one.
+
+  **`ogps-*` corpus, full 204-dir sweep (203 loaded, same 1 pre-existing decompression-bomb load
+  failure as ADR-030), before (ADR-030's own numbers) vs. after (this task):**
+
+  | Split | before | after |
+  |---|---|---|
+  | corpus-wide | 2372/10343 (22.9%) | **2796/11051 (25.3%)** |
+  | `cal_source=measured` | 2844→683 (24.0%) n=45 | 3190/839 (26.3%) n=45 |
+  | `cal_source=assumed_default` | 7499→1689 (22.5%) n=158 | 7861/1957 (24.9%) n=158 |
+  | `cal_tier=circle` | 1987/515 (25.9%) n=35 | 2291/636 (27.8%) n=35 |
+  | `cal_tier=grid` | 855/168 (19.6%) n=9 | 855/176 (20.6%) n=9 |
+  | `cal_tier=scale_bar` | 2/0 (0.0%) n=1 | 44/27 (61.4%) n=1 |
+  | dpi [0,150) | 3347/590 (17.6%) n=61 | 3347/590 (17.6%) n=61 (unchanged — no gate win in this bucket) |
+  | dpi [150,250) | 1561/414 (26.5%) n=25 | 1598/451 (28.2%) n=25 |
+  | dpi [250,320) | 5230/1318 (25.2%) n=110 | 5901/1705 (28.9%) n=110 |
+  | dpi [400,∞) | 205/50 (24.4%) n=7 | 205/50 (24.4%) n=7 (unchanged) |
+  | sheet [0,250)mm | 551/119 (21.6%) n=36 | 1171/413 (35.3%) n=36 |
+  | sheet [250,350)mm | 1256/376 (29.9%) n=26 | 1259/387 (30.7%) n=26 |
+  | sheet [350,450)mm | 1742/433 (24.9%) n=25 | 1748/447 (25.6%) n=25 |
+  | sheet [450,∞)mm | 6794/1444 (21.3%) n=116 | 6873/1549 (22.5%) n=116 |
+
+  Corpus-wide: +708 circles found (+6.8%), +424 correct reads (+17.9% relative, +2.4 points
+  absolute). The gate generalises past the 14-map owner corpus it was designed against — every
+  split that moved, moved up, none regressed; the untouched dpi/[0,150) and dpi/[400,∞) buckets
+  (identical circle and read counts before/after) show the gate is genuinely conditional, not a
+  blanket change that happens to net positive.
+- Decision: land the multiplier ladder change + OCR-outcome gate as implemented; leave
+  `vision/ocr.py`'s crop-sizing constants unchanged (point 3 above — re-verified, no value helps
+  every map, ADR-030's own item closed by measurement rather than guesswork); raise
+  `TestRealScanReadRateFloor`'s `novo-kavgolovsky-lesopark` floor from `>= 5` (of 21 circles) to
+  `>= 13` (of 23 circles, measured 16/23) and add two new floors in the same class,
+  `kkm-toksovo` (`>= 6` of 25, measured 8/25) and `lembolovo-kkm` (`>= 10` of 22, measured 13/22).
+- Consequences: the corpus-wide `ogps-*` rate (25.3%) confirms this fix is real but not the
+  dominant lever — ADR-030 point 4's leading remaining suspect (ADR-023's own mode 1, leftover
+  non-digit ink defeating Tesseract's `psm 7`, generalised across the wider corpus, never re-run at
+  `ogps-*` scale by either T089 or T090) is still unaddressed and still most likely the largest
+  remaining source of unread numbers; a corpus still reading barely one in four controls is not
+  "fixed", only measurably better. Flagged for the owner/a future iteration to decide whether it is
+  worth another diagnose-then-fix round in the same style as T083/T084 and T089/T090, rather than
+  silently left as a documented rate.

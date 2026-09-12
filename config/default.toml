@@ -421,15 +421,22 @@ hough_dp = 1.2
 hough_param1 = 100
 hough_param2 = 30
 # Scale multipliers `_detect_circles`/`_detect_hub_triangle` sweep the printed-size radius window
-# through (T076, ADR-015). `1.0` (the ISOM 6mm print size above, unscaled) must stay first so the
-# synthetic fixture -- printed at exact ISOM scale -- keeps matching today's window unchanged. The
-# rest cover hand-marked scans whose circles are drawn larger than print spec: measured on
+# through (T076, ADR-015). `1.0` is the ISOM 6mm print size above, unscaled. The >=1.0 rest cover
+# hand-marked scans whose circles are drawn larger than print spec: measured on
 # data/maps/grid-lines-red-controls/map.jpeg (I1, ADR-011/ADR-015), the true control rings are
 # ~56px radius at 200dpi versus circle_radius_px(200)'s ~23.6px mid-radius -- a ~2.37x ratio,
 # bracketed by both 2.0 and 2.5 (2.0 is the one `_select_best_scale` actually picks on this file:
 # highest mean ring-coverage, 0.9943 vs 2.5's 0.9907 -- 2.5 is kept in the list as headroom, not
 # because it's load-bearing here).
-circle_scale_multipliers = [1.0, 1.5, 2.0, 2.5, 3.0]
+# `0.5`/`0.85` (T090, ADR-030/ADR-031): the opposite gap -- some hand-drawn scans' circles print
+# *smaller* than ISOM spec (T089's H2 finding). `0.4` measured a false-positive blob cluster
+# winning outright on a real scan (ADR-030) and is deliberately excluded; `0.5` is the measured
+# floor. A sub-1.0 winner is never trusted on ring-coverage alone -- `_detect_circles` gates it
+# behind an OCR-outcome comparison against the >=1.0 (production) winner before committing to it
+# (`_ocr_gate_sub_base_scale`), which is also what keeps a same-ring tie between a sub-1.0 and a
+# >=1.0 window (e.g. this list's own 0.85 vs 1.0 overlap) from silently handing a correctly-matched
+# base-scale ring a mis-sized crop just because 0.85 now sweeps first.
+circle_scale_multipliers = [0.5, 0.85, 1.0, 1.5, 2.0, 2.5, 3.0]
 # [ISOM] symbol 704 control number: Arial 4.0 mm, non-bold, non-italic, oriented north.
 number_font_height_mm = 4.0
 # How far from the circle edge to look for the number, in circle radii.

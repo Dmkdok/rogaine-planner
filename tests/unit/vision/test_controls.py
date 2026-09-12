@@ -225,7 +225,7 @@ class TestOversizedRingsBeatABaseScaleDecoy:
         cv2.circle(image, decoy_centre, round(r_mid), RENDER_SRGB["purple_100"], -1)
 
         mask = purple_mask(image, config)
-        candidates = _detect_circles(mask, dpi, config)
+        candidates = _detect_circles(image, mask, dpi, config)
 
         assert len(candidates) == len(true_centres), (
             f"expected the true scale's {len(true_centres)} rings, not the base-scale decoy; "
@@ -271,7 +271,7 @@ class TestSingleScaleSelected:
         cv2.circle(image, (cx, cy), round(r_mid), RENDER_SRGB["purple_100"], ring_width)
 
         mask = purple_mask(image, config)
-        candidates = _detect_circles(mask, dpi, config)
+        candidates = _detect_circles(image, mask, dpi, config)
 
         assert len(candidates) == 1, (
             f"expected exactly one candidate for the one true ring at multiplier 1.0's mid-radius "
@@ -310,7 +310,7 @@ class TestRadiusThreadedThroughDetection:
         cv2.circle(image, (cx, cy), round(r_mid), RENDER_SRGB["purple_100"], ring_width)
 
         mask = purple_mask(image, config)
-        candidates = _detect_circles(mask, dpi, config)
+        candidates = _detect_circles(image, mask, dpi, config)
 
         assert len(candidates) == 1
         _x, _y, r, coverage = candidates[0]

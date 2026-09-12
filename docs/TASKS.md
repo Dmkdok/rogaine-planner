@@ -1692,7 +1692,7 @@ the implementer's self-report.
   concurrent T093/T095 landings had already raised the baseline from 475 by the time this commit was
   made; T089 itself added/removed none, diagnosis-only, no `src/` changes), `ruff check .` clean.
 
-- [ ] **T090** — Fix OCR/detection scale-invariance per T089's findings — paths:
+- [x] **T090** — Fix OCR/detection scale-invariance per T089's findings — paths:
   `src/rogaine/vision/controls.py`, `src/rogaine/vision/ocr.py`, `src/rogaine/vision/calibrate.py`
   (only if auto-calibration defaulting changes), `config/default.toml`, `src/rogaine/cli.py` /
   `src/rogaine/web/app.py` (only if auto-scale's opt-in default changes per T089's findings — a
@@ -1703,6 +1703,27 @@ the implementer's self-report.
   T079-T081/ADR-023); `TestRealScanReadRateFloor`'s existing floors don't regress (raised or
   superseded with T090's own measured numbers); the synthetic fixture's 11/12 floor
   (`test_at_least_eleven_of_twelve_controls_read_correctly`) holds.
+
+  **Landed** (ADR-031) — `config/default.toml`'s `circle_scale_multipliers` gains measured sub-1.0
+  rungs `0.5`/`0.85`; `vision/controls.py::_detect_circles` gates any sub-1.0 winner behind a new
+  `_ocr_gate_sub_base_scale` OCR-outcome check (runs `read_control_numbers` against both the sub-1.0
+  and production candidate sets, keeps whichever reads strictly more). `vision/ocr.py`'s crop-sizing
+  constants were re-verified (`data/maps/_t090_crop_sweep.py`, ADR-030 point 3) and left unchanged —
+  no single value helps all 3 affected maps (kkm-toksovo improves monotonically with a wider crop
+  margin, lembolovo-kkm peaks then regresses, novo-kavgolovsky-lesopark is flat) — measured, not a
+  guess. Neither `calibrate.py` nor the CLI/web auto-scale default needed touching (T089's H1 found
+  no case for it). Owner corpus: 205/416 (49.3%) -> 228/420 (54.3%), all +23 reads on the 3 maps
+  ADR-030 predicted as genuine wins (kkm-toksovo +7, lembolovo-kkm +6, novo-kavgolovsky-lesopark
+  +10), all 4 predicted regressions correctly avoided by the gate. Full `ogps-*` corpus (203/204
+  loaded, same pre-existing decompression-bomb failure as T089): 2372/10343 (22.9%) -> 2796/11051
+  (25.3%), every split that moved moved up, none regressed. `TestRealScanReadRateFloor` floors:
+  `novo-kavgolovsky-lesopark` raised `>=5` (of 21) -> `>=13` (of 23, now 23 circles not 21 — its
+  gated scale is 0.5); two new floors added, `kkm-toksovo` (`>=6` of 25) and `lembolovo-kkm` (`>=10`
+  of 22, now 22 circles not 20). Full account, including the complete before/after per-map and
+  per-split tables: `docs/DECISIONS.md` ADR-031. Corpus-wide rate (25.3%) is real but modest —
+  ADR-030's own leading remaining suspect (leftover non-digit ink defeating Tesseract's `psm 7`,
+  ADR-023's mode 1, never re-tested at `ogps-*` scale) is still open, flagged for the owner/a future
+  iteration rather than silently left undocumented.
 
 - [x] **T091** — Fix `first_digit` points rule to use all digits but the last (ADR-024) — paths:
   `src/rogaine/vision/ocr.py`, `config/default.toml` (comment only), `tests/unit/vision/test_ocr.py`
