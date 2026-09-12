@@ -46,6 +46,10 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   off-by-default updated to match (not left red), `tests/e2e/golden_route.json` regenerated a
   second time. 500 passed, `ruff check .` clean. **One manual owner sign-off remains open**
   (ADR-019 precedent): I3's own T086 visual review — see "Iteration I3" for its detail.
+  **2026-09-12, same session: new owner bug report** — control numbers still unread on many real
+  scans despite being clearly legible, plus spurious tiny detections in cover-page/legend text.
+  Became **Iteration I5** (M12, T097-T100, `docs/iterations/I5-control-detection-false-negatives.md`)
+  — delta written, **gate pending** — see "Iteration I5" below.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -124,6 +128,38 @@ subagent call in that session succeeded normally, so this looks transient/interm
 hard block — but if a future session sees the same error, know that subagent tool calls can fail
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
+
+## Iteration I5: control-circle/number false negatives and false positives on real scans (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
+
+Owner bug report, in-chat 2026-09-12, with two annotated screenshots (crops from real
+`ogps-*`-harvested maps — the owner tested broadly across that corpus, not one named file) showing
+controls (72/44/66/42/53) whose printed number is clearly legible to a human but came back unread,
+plus one correctly-read control (71) for contrast, and a separate report of spurious tiny
+"controls" detected inside cover-page/legend text. The owner proposed four heuristics (colour,
+known circle size, edge-of-segment failure, text false positives); code inspection this session
+(not the owner's claims taken at face value) found each already partially addressed, with one
+concrete gap per item. Full intake + impact map: `docs/iterations/I5-control-detection-false-negatives.md`.
+New ADR: ADR-032 (crop window slides instead of truncating at the raster edge; a per-candidate
+raw-radius consistency filter; the sub-1.0 OCR gate becomes per-candidate). SPEC F7/F8 acceptance
+text extended, no new requirement id.
+
+Owner explicitly chose to design all four fixes now rather than a separate measurement-first
+diagnosis pass (I4/ADR-026's precedent) — a recorded departure, not a process lapse; Phase 5
+verification still measures against the real corpus before anything lands.
+
+Progress (M12 in `docs/TASKS.md`, T097-T100):
+- [x] 0 baseline recorded — `docker compose run --rm tests` 500 passed, exit 0; `ruff check .`
+  clean; 2026-09-12, tree clean (this session closed T095's own owner-sign-off first — see the
+  `current:` line above and Iteration I4's own section)
+- [x] 1 delta intake agreed (in / out / deferred) —
+  `docs/iterations/I5-control-detection-false-negatives.md`
+- [x] 2 impact map written — same file
+- [x] 3 docs amended (SPEC F7/F8 acceptance extended, DECISIONS ADR-032, TASKS M12 T097-T100)
+- [ ] GATE — pending owner approval
+- [ ] 4 implementation
+- [ ] 5 verification
+- [ ] 6 review
+- [ ] 7 closed
 
 ## Iteration I4: OCR scale-invariance, points auto-fill, viewer route alternatives, route-choice quality, relief prep (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
 

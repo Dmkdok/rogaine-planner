@@ -34,6 +34,7 @@
 | 029 | T095 implements a linear-feature proximity bonus and slope-penalty retuning; several rules deferred | accepted |
 | 030 | T089 diagnosis: H1 (DPI/calibration) unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps but the ring-coverage scorer can't safely act on it alone | accepted |
 | 031 | T090 fixes H2 with measured sub-1.0 `circle_scale_multipliers` rungs gated behind an OCR-outcome check; OCR crop-sizing constants are re-verified and left unchanged (no clean win found) | accepted |
+| 032 | Real-scan control detection: OCR crop windows slide instead of truncating at the raster edge; a per-candidate raw-radius consistency filter and a per-candidate sub-1.0 OCR gate replace their set-level predecessors | accepted |
 
 ---
 
@@ -1242,3 +1243,60 @@
   before/after route-*time* numbers being partly an artifact of the cost-model change itself rather
   than only the route choice, T095) are outside T090's own scope and are tracked separately rather
   than fixed here — see `docs/STATUS.md`'s Iteration I4 section for how each is being handled.
+
+## ADR-032 — Real-scan control detection: OCR crop windows slide instead of truncating at the raster edge; a per-candidate raw-radius consistency filter and a per-candidate sub-1.0 OCR gate replace their set-level predecessors
+- Date: 2026-09-12
+- Status: accepted
+- Context: Owner bug report, in-chat, with two annotated screenshots of real (`ogps-*`-harvested)
+  maps showing controls (72/44/66/42/53) whose printed number is clearly legible to a human but
+  came back unread, plus one correctly-read control (71) for contrast, and a separate report of
+  spurious tiny "controls" detected inside cover-page/legend text. The owner proposed four
+  heuristics (colour, known circle size, edge-of-segment failure, text false positives). Code
+  inspection (not the owner's claims taken at face value) found each already partially addressed,
+  with one concrete gap per item — full detail in
+  `docs/iterations/I5-control-detection-false-negatives.md`. Owner chose to design all four fixes
+  directly rather than a separate measurement-first diagnosis pass first (ADR-026/I4's precedent),
+  an explicit, recorded departure — Phase 5 verification still measures against the real corpus
+  before anything lands.
+- Decision: four bounded fixes, all within `vision/controls.py`/`vision/ocr.py`'s existing
+  mechanisms, no new detection algorithm:
+  1. **T097 — OCR crop no longer truncates at the raster edge.** `_ocr_crop`'s window clamp
+     (`vision/ocr.py`) changes from independently clamping each axis (which shrinks the window when
+     a control sits near the scan's physical boundary, potentially cutting off a number printed
+     toward that side) to sliding the fixed-size window to stay in-bounds, keeping the full
+     configured half-width whenever the raster is large enough to hold it (true for every real
+     scan). Falls back to the old shrink-to-fit behaviour only if the raster itself is smaller than
+     the crop window.
+  2. **T098 — a per-candidate raw-radius consistency filter.** `_select_best_scale` (ADR-015)
+     already picks one global scale per map and assigns every accepted candidate the same nominal
+     `r_mid` (T077/ADR-020) — but nothing today compares an individual candidate's own *raw*
+     Hough-fitted radius (computed, then discarded, in `_detect_circles`) against the cluster of
+     other accepted candidates at the winning scale. A coincidental ink blob (e.g. inside a bold
+     digit/letter glyph) that clears `_ring_coverage`'s threshold at the right scale is accepted
+     with no further shape check today. `_detect_circles` threads the raw radius alongside `r_mid`
+     for this filter only; `Control.radius_px`/`_ocr_crop` keep using `r_mid`, unchanged — T077's
+     own reasoning for why the raw fit must not drive crop sizing is untouched.
+  3. **T099 — the sub-1.0 OCR gate becomes per-candidate.** `_ocr_gate_sub_base_scale` (T090/
+     ADR-031) compares two whole candidate *sets* (sub-1.0 vs. the >=1.0 production winner) by
+     aggregate valid-read count and keeps one set entirely — so a few genuine sub-1.0 controls
+     mixed with glyph false positives can still let the false positives through as part of the
+     winning set. Generalised to gate each sub-1.0 candidate individually: keep only the ones whose
+     own crop actually yields a plausible read, when the winning scale is itself sub-1.0.
+  4. **T100 — confirm, measure, don't re-design, the colour heuristic.** No gap found in the colour
+     signal itself (`purple_mask`/`ink_hue_ranges` already gate every detection and OCR-crop code
+     path) — add a pinning regression test if none already exists, then re-measure false-positive
+     rate and OCR read rate across the owner's real corpus before/after T097-T099, as the concrete
+     evidence for the owner's manual sign-off.
+  Deferred, named rather than silently dropped: a full diagnosis-first measurement pass before
+  design (owner's explicit choice this round); retuning `ink_hue_ranges`/`purple_mask` itself (no
+  gap found — becomes its own task if T100's measurement finds one); a general spatial
+  non-maximum-suppression/declustering pass (broader, higher-risk than T098's narrower check, only
+  attempted if T100 shows a residual text-shaped false-positive class); DPI/scale auto-calibration
+  retuning (ADR-030/T089 already measured this is not the corpus's dominant driver).
+- Consequences: diff footprint is `vision/ocr.py` (T097), `vision/controls.py` (T098, T099), plus
+  new unit tests for each and a real-corpus before/after measurement (T100) recorded here once
+  landed. T098 and T097 are independent of each other and of T099; T099 should land after T098
+  since both touch `_detect_circles`'s per-candidate data (landing T098 first avoids threading the
+  same raw-radius field twice). Acceptance is the owner's manual spot-check of example controls
+  (ADR-019 precedent, same as T082/T086/T095) — no numeric corpus-wide floor required for this
+  iteration's gate, though T100's own measurement is recorded regardless of direction.

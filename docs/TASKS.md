@@ -1932,3 +1932,50 @@ the implementer's self-report.
   **Landed** (`fc82460`) — checkbox was stale (still `[ ]`) despite the commit already on the tree;
   corrected per this project's own "trust the tree" rule, backfilled from the commit rather than
   re-done. See `docs/research/terrain-relief-integration.md` for the document itself.
+
+## M12 — Control detection false negatives/positives on real scans (Iteration I5, `docs/iterations/I5-control-detection-false-negatives.md`)
+
+> T097 (OCR crop edge clamp) and T098 (raw-radius consistency filter) touch different functions
+> (`vision/ocr.py::_ocr_crop` vs. `vision/controls.py::_detect_circles`) and are freely parallel.
+> T099 depends on T098 (both touch `_detect_circles`'s per-candidate data; land T098 first so T099
+> doesn't thread the same raw-radius field twice). T100 depends on all three — it measures the
+> combined effect and is the last task.
+
+- [ ] **T097** — OCR crop window slides instead of truncating at the raster edge — paths:
+  `src/rogaine/vision/ocr.py`, `tests/unit/vision/test_ocr.py` — deps: none — DoD: `_ocr_crop`'s
+  `(x0, y0, x1, y1)` window keeps its full configured half-width even when the control sits near
+  the image boundary, by sliding the window rather than clamping-and-shrinking it (falls back to
+  the current shrink behaviour only if the raster itself is smaller than the window); a new test
+  with a control placed near each of the four edges confirms the crop reaches full size; every
+  existing centred-control OCR test stays byte-identical (window unchanged when not near an edge).
+
+- [ ] **T098** — Per-candidate raw-radius consistency filter in `_detect_circles` — paths:
+  `src/rogaine/vision/controls.py`, `tests/unit/vision/test_controls.py` — deps: none — DoD: each
+  Hough candidate's raw fitted radius (computed today, then discarded in favour of the matched
+  scale's nominal `r_mid`, T077/ADR-020) is threaded alongside `r_mid` for this filter only; a
+  candidate whose raw radius is a clear outlier against the winning scale's own accepted-candidate
+  cluster is rejected. `Control.radius_px`/`_ocr_crop` continue to use `r_mid` unchanged — T077's
+  reasoning for keeping crop sizing off the noisy raw fit is untouched. New synthetic test: one
+  true-ring cluster plus a deliberately mis-sized coincidental blob at the same nominal scale —
+  filter rejects the blob, keeps the cluster. Existing `_select_best_scale`/ring-coverage tests
+  (ADR-015) stay green unchanged.
+
+- [ ] **T099** — Per-candidate OCR gate for sub-1.0 scale winners — paths:
+  `src/rogaine/vision/controls.py` — deps: T098 — DoD: `_ocr_gate_sub_base_scale` (T090/ADR-031)
+  changes from keeping/discarding its two whole candidate sets to gating each sub-1.0 candidate
+  individually against its own OCR outcome, keeping only the ones that read a plausible number;
+  the production (`>=1.0`) path is unchanged. Existing ADR-031 real-scan read-rate floors
+  (`kkm-toksovo`, `lembolovo-kkm`, `novo-kavgolovsky-lesopark`) must not regress; new synthetic case
+  with a mixed genuine-control-plus-glyph-false-positive sub-1.0 set proves the genuine one survives
+  and the glyph one does not.
+
+- [ ] **T100** — Confirm the colour heuristic's coverage and measure the combined effect — paths:
+  `tests/unit/vision/test_controls.py` (pinning test only if a gap is found), throwaway
+  `data/maps/_t100_measure.py` (gitignored, same convention as T089/T090's own scripts) — deps:
+  T097, T098, T099 — DoD: confirm `purple_mask`/`ink_hue_ranges` already gate every detection and
+  OCR-crop code path (add a regression test only if an actual gap is found, not speculatively);
+  re-measure false-positive rate and OCR read rate across the owner's real corpus (`data/maps/` +
+  an `ogps-*` sample) before/after T097-T099, recorded in `docs/DECISIONS.md`'s ADR-032 regardless
+  of direction; before/after crops for controls matching the owner's own reported examples sent to
+  the owner for the manual sign-off this milestone's DoD requires (ADR-019 precedent) before this
+  checkbox closes.
