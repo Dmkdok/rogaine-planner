@@ -10,7 +10,7 @@ services:
     volumes:
       - ./:/app
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8000"
     command: ["rogaine", "serve", "--host", "0.0.0.0", "--port", "8000"]
 
   # The suite. CLAUDE.md: this is the only supported way to run tests —
