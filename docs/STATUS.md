@@ -186,13 +186,33 @@ Progress (M11 in `docs/TASKS.md`, T089-T096):
   trusted from the commit message alone. Corpus-wide rate (25.3%) is real but modest — ADR-030's own
   leading remaining suspect (leftover non-digit ink defeating Tesseract's `psm 7`, ADR-023's mode 1,
   never re-tested at `ogps-*` scale) is still open, flagged for the owner/a future iteration rather
-  than silently left undocumented).
-- [x] 5 verification — baseline suites still green, this session's own run: 493 passed exit 0,
-  `ruff check .` clean (2026-09-12, after T090 landed)
-- [ ] 6 review — not yet run against the full M11 diff (T089-T096)
+  than silently left undocumented. **Independent review (below) found 2 real issues in T090 itself,
+  both fixed same session** — a shared-config side effect on hub detection, and no direct unit test
+  for the OCR gate — plus a third proposed fix (tie-break bias) investigated and reverted after
+  `kkm-toksovo` disproved its premise. Final: 499 passed, `ruff check .` clean. Full account:
+  ADR-031's own "Amendment" paragraph, `docs/TASKS.md` T090's entry).
+- [x] 5 verification — baseline suites still green, this session's own run: 499 passed exit 0,
+  `ruff check .` clean (2026-09-12, after T090 + its review fixes)
+- [x] 6 review — scoped `reviewer` subagent, `473c410..HEAD` (the full M11 diff, all 8 tasks).
+  **Verdict: PASS WITH WAIVERS.** No Critical. Two High findings in T090 itself (fixed, see above).
+  Waived as documented follow-up debt, not blocking (same precedent as T088's own review): T093's
+  export-JSON/PNG links keep pointing at the primary route after switching to an alternative, with
+  no indication (Medium); T093's route-switcher rerender drops keyboard focus to `<body>` on every
+  click, defeating Tab navigation (Medium, SPEC's keyboard-operability non-functional line);
+  T095's own before/after time-delta framing corrected in `docs/TASKS.md` (both new cost
+  mechanisms lower `seconds_per_pixel` monotonically, so the time numbers are partly an artifact of
+  the cost-model change itself, not solely the route choice — the geometric claim, +17.5% distance
+  to hug a footpath, is the one the owner's sign-off should be judged on); plus several Low items
+  (T095's `f0fa41f` touching 3 files outside its own declared path list, already disclosed in its
+  own Landed note; a wasted full-raster allocation on the proximity-disabled default path; a
+  double-counting edge case at distance 0, inert while off-by-default; a T092 sticky-flag edge case
+  when a points field is cleared to blank; the pre-existing uncommitted `docker-compose.yml` port
+  change). T091/T092/T094/T095's off-by-default/security/citation claims all independently
+  re-confirmed by the reviewer, not just re-asserted.
 - [ ] 7 closed — blocked on two manual owner sign-offs, neither automatable (ADR-019 precedent):
   T095's before/after route-quality review (crop overlays already sent via `SendUserFile`,
-  awaiting reply) and I3's own still-open T086 visual review (unaffected by I4, tracked separately)
+  corrected time-delta framing above, awaiting reply) and I3's own still-open T086 visual review
+  (unaffected by I4, tracked separately)
 
 ## Iteration I3: viewer UX, scale auto-detection exposure, control-number OCR (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
 

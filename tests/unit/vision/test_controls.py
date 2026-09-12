@@ -519,3 +519,184 @@ class TestHubFoundOnOzeroShchuche:
             f"hub detected at ({hub.x:.1f}, {hub.y:.1f}), {dist:.1f}px from truth "
             f"({true_x}, {true_y})"
         )
+
+
+class TestOcrGateSubBaseScale:
+    """T090/ADR-031 (independent review finding H2): `_ocr_gate_sub_base_scale`'s four branches,
+    driven directly with a stubbed `read_control_numbers` -- its only prior coverage was three
+    real-scan floor tests in `test_ocr.py`, all `skipif`-guarded on gitignored files (ADR-010), so
+    the gate ran unexercised on any machine without the owner's own corpus (CI included). The
+    deferred `from rogaine.vision.ocr import read_control_numbers` inside the function under test
+    (see its own comment on why the import is deferred) re-resolves `rogaine.vision.ocr`'s module
+    attribute on every call, so `monkeypatch.setattr` on that module reaches it with no need to
+    patch `rogaine.vision.controls` itself.
+
+    Each stub is keyed by the exact x-coordinates of the `Control`s it's asked to score -- a plain,
+    deterministic stand-in for "how many numbers this candidate set reads" that needs no real image
+    or OCR call.
+    """
+
+    @staticmethod
+    def _stub_reading(read_counts_by_xs: dict[tuple[float, ...], int]):
+        def stub(image, controls, dpi, config):
+            xs = tuple(c.x for c in controls)
+            n_read = read_counts_by_xs[xs]
+            updated = [
+                c.model_copy(update={"number": (i + 1) if i < n_read else None})
+                for i, c in enumerate(controls)
+            ]
+            return updated, []
+
+        return stub
+
+    def test_sub_base_wins_when_it_reads_strictly_more(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9)]
+        production = [(30.0, 30.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({(30.0,): 0, (10.0, 20.0): 2}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == sub_base
+
+    def test_production_wins_when_it_reads_strictly_more(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9)]
+        production = [(30.0, 30.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({(30.0,): 1, (10.0, 20.0): 0}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == production
+
+    def test_tie_falls_back_to_production_both_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Docstring's own degenerate case: a purely geometric image with no digit ink reads zero
+        on both sides -- must not hand the tie to the unvalidated sub-1.0 set."""
+        sub_base = [(10.0, 10.0, 5.0, 0.9)]
+        production = [(30.0, 30.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module, "read_control_numbers", self._stub_reading({(30.0,): 0, (10.0,): 0})
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == production
+
+    def test_tie_falls_back_to_production_equal_nonzero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sub_base = [(10.0, 10.0, 5.0, 0.9)]
+        production = [(30.0, 30.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module, "read_control_numbers", self._stub_reading({(30.0,): 1, (10.0,): 1})
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == production
+
+    def test_no_production_candidates_returns_sub_base_without_any_ocr_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `>=1.0` entry has any candidate at all -- nothing to gate against, so the sub-1.0 set
+        stands unconditionally, and `read_control_numbers` must never even be called (paying for an
+        OCR pass would be pure waste when there's no alternative to compare against)."""
+        sub_base = [(10.0, 10.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, [])]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        def _unexpected_call(*args, **kwargs):
+            raise AssertionError("read_control_numbers must not be called when no production "
+                                  "candidate set exists")
+
+        monkeypatch.setattr(ocr_module, "read_control_numbers", _unexpected_call)
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == sub_base
+
+
+class TestHubTriangleIgnoresSubBaseScaleRungs:
+    """T090/ADR-031 (independent review finding H1): `_detect_hub_triangle` must not sweep the
+    sub-1.0 rungs (`0.5`/`0.85`) T090 added to `circle_scale_multipliers` for circle detection --
+    there is no measured evidence anywhere in this project's corpus of an undersized hub triangle,
+    and sweeping them anyway shrinks `max_diff`'s absolute tolerance band, which measurably turned a
+    correct "no hub found" into a spurious low-confidence match on a real scan
+    (`history-race-primorsk`, found during independent review). Regression-tested here with a
+    synthetic adversarial contour sized to match only a sub-1.0 window, never a real hub.
+    """
+
+    def test_a_contour_matching_only_a_sub_base_scale_window_is_not_picked_up_as_the_hub(
+        self,
+    ) -> None:
+        from rogaine.vision.controls import _TRIANGLE_SIDE_TO_RADIUS, _detect_hub_triangle
+
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        base_r_min, base_r_max = det.circle_radius_px(dpi)
+        base_r_mid = (base_r_min + base_r_max) / 2.0
+
+        # A triangle whose side length matches the *0.5* window's expected_side exactly (diff=0,
+        # the best possible fit at that rung). With tol=0.35, 0.5's own band is
+        # [0.715, 1.485] * base_r_mid, while 1.0's band is [1.43, 2.97] * base_r_mid -- this side
+        # (1.1 * base_r_mid) sits well outside every `>=1.0` rung's band, no overlap.
+        side = base_r_mid * 0.5 * _TRIANGLE_SIDE_TO_RADIUS
+        size = round(side * 6)
+        cx = cy = size // 2
+        half = side / (3**0.5)
+        pts = np.array(
+            [
+                [cx, cy - half],
+                [cx - side / 2, cy + half / 2],
+                [cx + side / 2, cy + half / 2],
+            ],
+            dtype=np.int32,
+        )
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        cv2.fillPoly(image, [pts], RENDER_SRGB["purple_100"])
+
+        mask = purple_mask(image, config)
+        hub = _detect_hub_triangle(mask, dpi, config)
+
+        assert hub is None, (
+            f"a contour sized for a sub-1.0-only window should not be picked up as the hub, "
+            f"got {hub}"
+        )

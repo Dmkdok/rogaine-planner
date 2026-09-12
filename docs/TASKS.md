@@ -1725,6 +1725,23 @@ the implementer's self-report.
   ADR-023's mode 1, never re-tested at `ogps-*` scale) is still open, flagged for the owner/a future
   iteration rather than silently left undocumented.
 
+  **Independent review (scoped `reviewer` subagent, `473c410..HEAD`) found 2 real issues in T090
+  itself, both fixed and re-verified same session** (499 passed = 493 + 6 new tests, `ruff check .`
+  clean): (1) `_detect_hub_triangle` shared `circle_scale_multipliers` with `_detect_circles`, so
+  the new sub-1.0 rungs fed hub matching with no OCR-style gate to catch a bad one — turned a
+  correct "no hub found" into a spurious hub (confidence 0.298) on `history-race-primorsk`; fixed
+  by sweeping only the `>=1.0` entries for hub matching (no measured evidence of an undersized hub
+  anywhere in this corpus, unlike circles). (2) `_ocr_gate_sub_base_scale` had no direct unit test
+  (only real-scan floor tests, all `skipif`-guarded on gitignored files) — added 5 tests driving
+  all 4 branches with a stubbed `read_control_numbers`. A third proposed fix (bias
+  `_select_best_scale`'s tie-break toward multiplier `1.0`) was investigated and **reverted**:
+  `kkm-toksovo` ties in exactly the flagged way yet its two scales' OCR outcomes differ sharply
+  (1/25 vs 8/25), so the bias would have skipped the gate and silently reverted this task's own
+  headline win back to 4% — ring-coverage ties are not proof of OCR-outcome ties. Full account:
+  ADR-031's own "Amendment" paragraph. Three lower-severity findings from the same review pass
+  (T093's export-links/keyboard-focus bugs, T095's route-time-numbers framing) are outside T090's
+  scope, tracked in `docs/STATUS.md`'s Iteration I4 section rather than fixed here.
+
 - [x] **T091** — Fix `first_digit` points rule to use all digits but the last (ADR-024) — paths:
   `src/rogaine/vision/ocr.py`, `config/default.toml` (comment only), `tests/unit/vision/test_ocr.py`
   — deps: none — DoD: `_apply_points_rule`'s `first_digit` branch computes `number // 10`; existing
@@ -1860,6 +1877,22 @@ the implementer's self-report.
   Separately, the slope retune alone (proximity still off, as shipped) already shows on the
   synthetic e2e fixture: total route time 10786.3s -> 10216.6s (-5.3%), same 6-control
   order/points/score.
+
+  **Correction (independent review of the full M11 diff, after this landed):** the two time-delta
+  numbers above (-26.9%, -5.3%) are not solely evidence of a *better* route — both new mechanisms
+  lower `seconds_per_pixel` monotonically wherever they apply (`k_proximity >= 1.0` everywhere the
+  bonus is enabled; the retuned slope formula's `density**2 <= density` on `[0, 1]`), so route
+  *time* falls under the new cost model regardless of which route is chosen — confirmed directly on
+  the synthetic-fixture case: `order`/`points`/`score`/`solver`/`optimal` are all bit-identical in
+  `tests/e2e/golden_route.json`'s diff, only `total_seconds`/`total_meters` moved, a pure re-pricing
+  of the same route, not a different one. The `pervomayskoe` case genuinely does pick a different,
+  visibly better route (+17.5% distance to bend and hug the footpath) — that geometric claim is
+  real and is what the owner's still-open review gate should be judged on — but the paired "-26.9%
+  time" framing should not be read as independent supporting evidence for the route being better,
+  since a worse route through the same terrain would also read a smaller number under the new cost
+  model than under the old one. Not re-measured with an apples-to-apples fixed cost model (out of
+  this review's scope); flagged here so the owner's sign-off is anchored on the route geometry, not
+  the time delta.
 
   Verified: `docker compose run --rm tests` — 491 passed, 0 failed (14 new: 9 in
   `test_proximity.py`, 2 in `test_field.py`, 3 in `test_contours.py`). `ruff check .` clean.

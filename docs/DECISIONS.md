@@ -1086,9 +1086,10 @@
      runs `read_control_numbers` (unmodified) against both the sub-1.0 candidate set and whatever
      `_select_best_scale` would pick from the >=1.0 (production) subset alone, and keeps whichever
      reads strictly more valid numbers — ties (including both reading zero) fall back to production.
-     Bounded to at most one extra OCR pass, only paid when a sub-1.0 candidate would otherwise be
-     chosen blind. This is exactly ADR-030's own `_t089_h2_apples.py` technique, promoted from a
-     throwaway diagnostic into the shipped code path.
+     Bounded to at most two extra `read_control_numbers` passes (one per candidate set), only paid
+     when a sub-1.0 candidate would otherwise be chosen blind, on top of the pipeline's own later
+     OCR pass over whichever set is finally returned. This is exactly ADR-030's own
+     `_t089_h2_apples.py` technique, promoted from a throwaway diagnostic into the shipped code path.
   3. **Crop-sizing constants** (`_CIRCLE_MASK_RADIUS_FACTOR`/`_CROP_MARGIN_FACTOR`/
      `_MIN_INK_AREA_FACTOR` in `vision/ocr.py`): re-verified per ADR-030 point 3, via
      `data/maps/_t090_crop_sweep.py` sweeping `_CROP_MARGIN_FACTOR` from the shipped `0.6` up to
@@ -1170,3 +1171,52 @@
   "fixed", only measurably better. Flagged for the owner/a future iteration to decide whether it is
   worth another diagnose-then-fix round in the same style as T083/T084 and T089/T090, rather than
   silently left as a documented rate.
+
+  **Amendment, from independent review after this landed:** a scoped `reviewer` subagent pass over
+  the full M11 diff (`473c410..HEAD`) found two real issues in T090 itself, both fixed and
+  independently re-verified this session (499 passed — 493 + 6 new tests, `ruff check .` clean —
+  own run, not trusted from the subagent's report), plus one proposed fix investigated and
+  reverted after it was measurably wrong:
+  1. **Hub (start/finish triangle) detection regression, fixed.** `_detect_hub_triangle` shares
+     `circle_scale_multipliers` with `_detect_circles`, so T090's new `0.5`/`0.85` rungs fed hub
+     matching too, with no OCR-style gate to catch a bad one (a hub carries no digits). Measured:
+     on `history-race-primorsk`, sweeping the widened ladder turned a correct "no hub found" into a
+     spurious hub at confidence 0.298 — the lowest in the owner corpus — because the smaller rungs
+     shrink `max_diff`'s absolute tolerance band enough for an unrelated contour to fit. No map in
+     this project's corpus has ever shown evidence of an undersized hub triangle (unlike circles,
+     ADR-030's H2), so `_detect_hub_triangle` now sweeps only the `>=1.0` entries of
+     `circle_scale_multipliers`, unconditionally. Re-measured across all 14 owner maps: hub output
+     is now bit-identical to the pre-T090 ladder on every map (`history-race-primorsk` back to no
+     hub, `toksovo-zubry`'s confidence back to 0.709 from an incidentally higher 0.838) — the
+     circle-detection side of T090 (the table above) is unaffected, since hub and circle detection
+     use separate functions.
+  2. **`_ocr_gate_sub_base_scale` had no direct unit test, fixed.** Its only prior coverage was the
+     three real-scan floor tests, all `skipif`-guarded on gitignored owner-corpus files (ADR-010) —
+     the gate ran unexercised on any machine without that corpus, CI included. Five new tests in
+     `tests/unit/vision/test_controls.py::TestOcrGateSubBaseScale` drive all four branches directly
+     with a stubbed `read_control_numbers` (the deferred import inside the gate function makes
+     `monkeypatch.setattr` trivial): sub-base wins on strictly more reads, production wins on
+     strictly more reads, both tie cases (zero-zero and equal-nonzero) fall back to production, and
+     no production candidates existing at all returns the sub-base set without ever calling
+     `read_control_numbers` (asserted via a stub that raises if called).
+  3. **Tie-break bias toward multiplier `1.0`, investigated and reverted — not a real fix.**
+     Proposed to stop the gate firing "needlessly" when a sub-1.0 and a `>=1.0` window tie on
+     ring-coverage score (measured on `history-race-primorsk`). Reverted after `kkm-toksovo`
+     falsified the premise: it ties in exactly the same way (`0.85` and `1.0` both score `n=25` at
+     equal bucketed coverage) yet the two scales' *OCR outcomes* are not equivalent — `1.0` reads
+     1/25, `0.85` reads 8/25, the ADR-030 "same ring, differently-sized crop" mechanism applying
+     even when the candidate sets tie on coverage. A tie-break biased toward `1.0` would have picked
+     `1.0` directly, skipping the OCR gate entirely (it only runs when the winner is itself
+     sub-1.0) and silently reverting this task's own headline win back to 4%. Ring-coverage ties
+     are not proof of OCR-outcome ties; `_select_best_scale` keeps its original two-tier score.
+  4. **Cost wording corrected.** "Bounded to at most one extra OCR pass" (both here and in
+     `_detect_circles`'s own docstring) undercounted by one — the gate always runs
+     `read_control_numbers` on *both* candidate sets when it fires (two passes), on top of the
+     pipeline's own later pass over whichever set is returned. Wording fixed in both places; no
+     behaviour change.
+
+  Three lower-severity findings from the same review (viewer export links not following a selected
+  route alternative, T093; keyboard focus lost on every route-switcher rerender, T093; T095's
+  before/after route-*time* numbers being partly an artifact of the cost-model change itself rather
+  than only the route choice, T095) are outside T090's own scope and are tracked separately rather
+  than fixed here — see `docs/STATUS.md`'s Iteration I4 section for how each is being handled.

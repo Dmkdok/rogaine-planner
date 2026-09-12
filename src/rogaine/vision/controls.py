@@ -220,6 +220,20 @@ def _select_best_scale(
     real-scan or adversarial-test failure found), but a genuine design asymmetry worth noting: a
     hub is a single expected symbol, so there is no "many corroborating candidates" signal to
     weigh in the first place, which is why the two functions do not share one selection rule.
+
+    T090/ADR-031 addendum (independent review finding, tried and reverted): a third tie-break tier
+    biasing exact (bucketed coverage, count) ties toward the multiplier nearest `1.0` was proposed
+    to avoid `_ocr_gate_sub_base_scale` firing "needlessly" on a tie -- reverted after measurement
+    disproved its premise. `kkm-toksovo` ties in exactly this way (mult `0.85` and `1.0` both score
+    `n=25` at the same bucketed coverage) yet the two scales' OCR outcomes are *not* equivalent:
+    `1.0` reads 1/25, `0.85` reads 8/25 (the ADR-030/ADR-031 "same ring, differently-sized crop"
+    mechanism -- same physical rings, but `_ocr_crop` sizes its crop from the *matched* radius, and
+    `0.85`'s smaller crop happens to frame the digits better on this map). A tie-break that resolves
+    this tie toward `1.0` skips the gate entirely (since `_detect_circles` only invokes it when the
+    winner is itself sub-1.0) and silently reverts a real, measured win back to a 4% read rate.
+    Ring-coverage ties are therefore not proof of OCR-outcome ties, and this rule is unsafe to
+    apply -- left as the original two-tier score below; the "extra OCR pass on a genuine tie" cost
+    this addendum tried to avoid is the gate's own intended price for catching cases like this one.
     """
     best: list[tuple[float, float, float, float]] = []
     best_score: tuple[int, int] = (-1, -1)
@@ -257,8 +271,9 @@ def _detect_circles(
     (ADR-030 measured both failure modes on real scans: naive widening was a net -24 reads across
     7 owner maps). `_ocr_gate_sub_base_scale` below runs the real OCR outcome against both
     candidate sets and keeps whichever reads strictly more valid numbers, defaulting to the >=1.0
-    (production) winner otherwise -- bounded to at most one extra OCR pass, only paid when a
-    sub-1.0 candidate would otherwise be chosen blind.
+    (production) winner otherwise -- bounded to at most two extra `read_control_numbers` passes
+    (one per candidate set), only paid when a sub-1.0 candidate would otherwise be chosen blind, on
+    top of the pipeline's own later OCR pass over whichever set is finally returned.
     """
     det = config.detector
     base_r_min, base_r_max = det.circle_radius_px(dpi)
@@ -391,8 +406,23 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
     (`diff / max_diff`), not raw pixel `diff` -- `max_diff` itself grows with the multiplier, so
     comparing raw `diff` across scales would bias the choice toward larger scales merely because
     their tolerance band is wider in absolute pixels.
+
+    T090/ADR-031 addendum (independent review finding): only the `>=1.0` entries of
+    `circle_scale_multipliers` are swept here, not the full list. T090 added measured sub-1.0 rungs
+    (`0.5`/`0.85`) for *circles* (ADR-030's H2), gated behind an OCR-outcome check before a
+    sub-base-scale circle candidate is ever trusted (`_ocr_gate_sub_base_scale`) -- but this
+    function has no OCR signal to gate against (a hub carries no digits) and no measured evidence
+    exists anywhere in this project's corpus of a hub triangle drawn smaller than ISOM spec.
+    Sweeping the sub-1.0 rungs here anyway shrinks `max_diff`'s absolute tolerance band, which
+    measurably turned a correct "no hub found" into a spurious low-confidence false match on a real
+    scan (`history-race-primorsk`: no hub -> a hub at confidence 0.298, the lowest in the owner
+    corpus) -- silently starting/finishing a route at an unverified point is worse than the existing
+    "hub not found, add manually" fallback the viewer already handles. Filtering to `>=1.0` here is
+    unconditional, not itself gated, since (unlike circles) there is no cheap post-hoc signal to
+    gate a hub match against.
     """
     det = config.detector
+    hub_multipliers = [m for m in det.circle_scale_multipliers if m >= 1.0]
     base_r_min, base_r_max = det.circle_radius_px(dpi)
     base_r_mid = (base_r_min + base_r_max) / 2.0
     tol = det.circle_diameter_tolerance
@@ -426,7 +456,7 @@ def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Con
 
     best_rel_error: float | None = None
     best_center: np.ndarray | None = None
-    for mult in det.circle_scale_multipliers:
+    for mult in hub_multipliers:
         expected_side = base_r_mid * mult * _TRIANGLE_SIDE_TO_RADIUS
         max_diff = expected_side * tol
         if max_diff <= 0:
