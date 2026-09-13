@@ -241,6 +241,66 @@ class TestOversizedRingsBeatABaseScaleDecoy:
             )
 
 
+class TestAutoPlacementConfidenceFloor:
+    """T105, ADR-033 (I6 item 7): a candidate whose own `_ring_coverage` clears the base
+    `_RING_COVERAGE_MIN` (0.75) but not `_AUTO_PLACEMENT_CONFIDENCE_FLOOR` (0.80) must not be
+    auto-placed as a `Control` -- the owner's own cross-cutting policy request, "skip auto-placing
+    a control the system isn't confident about, rather than risk a false one."
+    """
+
+    def test_a_broken_ring_below_the_floor_is_dropped_not_placed(self) -> None:
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_true = (r_min + r_max) / 2.0  # base scale (multiplier 1.0)
+
+        gap = r_true * 4.0
+        full_centres = [(round(r_true * 2.0 + i * gap), round(r_true * 2.0)) for i in range(2)]
+        broken_centre = (round(full_centres[-1][0] + gap), round(r_true * 2.0))
+
+        width = round(broken_centre[0] + r_true * 2.0)
+        height = round(r_true * 4.0)
+        image = np.full((height, width, 3), 255, dtype=np.uint8)
+        ring_width = max(1, round(r_true * 0.15))
+        for cx, cy in full_centres:
+            cv2.circle(image, (cx, cy), round(r_true), RENDER_SRGB["purple_100"], ring_width)
+        # A ring missing 80 of its 360 degrees: real ink over the remaining 280 degrees, so
+        # `_ring_coverage` measures ~280/360 = 0.778 -- comfortably between the base 0.75 floor
+        # (so it is still a candidate at all) and this task's own 0.80 floor (so it must be
+        # dropped by it).
+        cv2.ellipse(
+            image,
+            broken_centre,
+            (round(r_true), round(r_true)),
+            0,
+            0,
+            280,
+            RENDER_SRGB["purple_100"],
+            ring_width,
+        )
+
+        mask = purple_mask(image, config)
+        candidates = _detect_circles(image, mask, dpi, config)
+
+        assert len(candidates) == len(full_centres), (
+            f"expected only the {len(full_centres)} full rings, not the broken one; "
+            f"got {len(candidates)}: {candidates}"
+        )
+
+        def _dist(ax: float, ay: float, bx: float, by: float) -> float:
+            return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+        assert not any(
+            _dist(broken_centre[0], broken_centre[1], x, y) <= r_true / 4.0
+            for x, y, _r, _ in candidates
+        ), f"broken ring at {broken_centre} was auto-placed despite its own low confidence"
+        for cx, cy in full_centres:
+            assert any(_dist(cx, cy, x, y) <= r_true / 4.0 for x, y, _r, _ in candidates), (
+                f"no candidate near full ring centre ({cx}, {cy}): {candidates}"
+            )
+
+
 class TestSingleScaleSelected:
     """T076, ADR-015: one true ring must not be counted once per `circle_scale_multipliers` entry
     whose scaled window also passes `_ring_coverage` on it -- `_detect_circles` returns exactly one

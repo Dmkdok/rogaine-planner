@@ -124,6 +124,22 @@ _SCALE_TIE_EPS = 0.02
 # is flagged as follow-up, not silently assumed solid (ADR-032's amendment says so explicitly).
 _SUB_BASE_JUNK_UNREAD_FRACTION = 0.85
 
+# T105, ADR-033 (I6 item 7, the owner's own cross-cutting policy request: skip auto-placing a
+# control the system isn't confident about, rather than risk a false one). `_detect_circles`'s
+# final filter drops any candidate whose own `_ring_coverage` sits below this, after every other
+# stage (scale selection, both OCR-outcome gates) has already run. Deliberately conservative,
+# not tuned to any known false positive: measured against the owner's 14-map + 3 named `ogps-*`
+# corpus (524 real detections, `data/maps/_t105_confidence_histogram.py`, gitignored), every single
+# detection below 0.85 confidence was individually cropped and visually confirmed to be a genuine
+# control whose ring-fit is merely imperfect (terrain ink crossing it, print noise) -- this corpus
+# has no known false positive at any confidence below 1.0 for this floor to actually catch yet.
+# 0.80 is chosen as a small, named, accepted cost rather than a measured win: it drops exactly 4 of
+# those 524 real detections (all individually confirmed genuine by crop, 0.76% of the corpus) in
+# exchange for a real floor against a future false positive with a genuinely broken ring (ADR-033's
+# own "small residual risk... in exchange for" framing, decided by the owner in advance of this
+# measurement, not discovered after the fact).
+_AUTO_PLACEMENT_CONFIDENCE_FLOOR = 0.80
+
 
 def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
     """Boolean `(H, W)` mask of pixels inside any of `config.detector`'s configured ink bands, the
@@ -412,7 +428,10 @@ def _detect_circles(
     elif selected_mult is not None:
         selected = _ocr_gate_tied_scales(image, dpi, config, per_multiplier, selected)
 
-    return selected
+    # T105, ADR-033: the final auto-placement confidence floor, after every scale/OCR gate above
+    # has already run -- see _AUTO_PLACEMENT_CONFIDENCE_FLOOR's own comment for what this does and
+    # does not catch on the measured corpus.
+    return [c for c in selected if c[3] >= _AUTO_PLACEMENT_CONFIDENCE_FLOOR]
 
 
 def _ocr_gate_sub_base_scale(
