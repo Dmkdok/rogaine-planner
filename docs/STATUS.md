@@ -59,7 +59,15 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   manual add-control flow). Became **Iteration I6** (M13, T101-T107,
   `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`) — delta intake agreed and impact map
   written this session; **docs amended (SPEC F4/F7/F8/F17, DECISIONS ADR-033, TASKS M13 T101-T107),
-  gate approved by the owner 2026-09-13 («Утверждаю, продолжи»).**
+  gate approved by the owner 2026-09-13 («Утверждаю, продолжи»).** **2026-09-13, next session
+  (context-limit handoff): T103 and T106 found already landed on the tree** (`0c5f1f7`/`fe863b3`,
+  `774f10c`/`b1f2e06`) **but their own docs bookkeeping was never written** — the landing session ran
+  out of budget first. Backfilled per trust-the-tree; T103's own landing had verified only in an
+  isolated worktree with no `data/maps/`, so its real-corpus floors had never actually run against
+  the main tree — doing so this session found 3 floors regressed (a long-standing club-mascot-logo
+  false positive T103 now correctly excludes, not a real regression), fixed
+  (`b91677a`). **T101 and T102 landed** (`55f0d86`, `dc0fb1c`) — see their own `docs/TASKS.md`
+  entries for the full diagnosis/fix/measurement account. 518 passed, `ruff check .` clean.
 
 ## Baseline I6
 `docker compose run --rm tests` — 513 passed, exit 0 (own run, not piped through `tail`); `ruff
@@ -177,7 +185,12 @@ Progress (M13 in `docs/TASKS.md`, T101-T107):
   independent)
 - [x] 3 docs amended (SPEC F4/F7/F8/F17 extended, DECISIONS ADR-033, TASKS M13 T101-T107)
 - [x] GATE — approved by the owner 2026-09-13 («Утверждаю, продолжи»)
-- [ ] 4 implementation
+- [ ] 4 implementation — **4/7 tasks landed: T101 (`55f0d86`), T102 (`dc0fb1c`), T103 (`0c5f1f7`/
+  `fe863b3`, fix `b91677a`), T106 (`774f10c`/`b1f2e06`)** — see each task's own `docs/TASKS.md` entry
+  for the full diagnosis/fix/measurement account (T103/T106 were landed by the previous, budget-
+  interrupted session and backfilled here per trust-the-tree; T103's own fix this session came from
+  actually running its real-corpus floors against the main tree for the first time). **T104, T105,
+  T107 not yet started.** 518 passed, `ruff check .` clean (this session's own run).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed

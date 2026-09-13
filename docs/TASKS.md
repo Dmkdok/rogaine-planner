@@ -2042,23 +2042,79 @@ the implementer's self-report.
 > add-control flow). T101 is independent (own file, `vision/palette.py`) and freely parallel with
 > everything else.
 
-- [ ] **T101** — Fix real-scan water/river misclassification — paths: `src/rogaine/vision/palette.py`,
+- [x] **T101** — Fix real-scan water/river misclassification — paths: `src/rogaine/vision/palette.py`,
   `tests/unit/vision/test_segment.py`, possibly `config/default.toml` — deps: none — DoD: diagnose
   (against `data/maps/ogps-6802_4a769f64b455f9b4675552284c3681b1`) why this map's river ink does not
   land in `water_uncrossable`'s configured Lab band before designing a fix (ADR-026 precedent);
   `rogaine plan` on this map no longer routes through the river; a known crossable ditch/shallow
   watercourse on the same map stays passable; every existing synthetic-fixture IoU floor
   (`test_segment.py`) unchanged; a new real-scan classification test pins the fixed behaviour,
-  skipped when the gitignored scan is absent (ADR-010 convention).
+  skipped when the gitignored scan is absent (ADR-010 convention). **Landed.** Diagnosed first
+  (`data/maps/_t101_diagnose.py`, gitignored): the river's ink is not outside the configured Lab
+  band at all — `classify_labels`'s per-pixel nearest-shade choice fragments one continuous,
+  bank-lined river into thousands of tiny `water_uncrossable` islands (largest single fragment
+  341px) inside an otherwise `water_shallow` blob, nowhere near enough to block a route. Fix:
+  `_consolidate_banked_water` (new, `palette.py`) promotes a whole connected water blob to
+  `water_uncrossable` once >=30% of its own boundary ring sits within 2px of `road`-shaded
+  (`black_100`) ink — the one signal `config/default.toml` already documents as distinguishing the
+  two shades ("emphasised by a black bank line") — vectorised via `scipy.ndimage` (~0.4s vs. a
+  measured ~120s per-component Python loop on this 3107x3278 scan). A hatched/screened marsh with
+  no such border is untouched by construction (measured: a bbox at the marsh's own location stays
+  93% `water_shallow`, wu=200/ws=2825). `rogaine plan` verified end to end (`data/maps/_t101_plan_
+  before`/`_after`, gitignored): before, a solved route crossed the river at 7px of measured
+  overlap near control 58; after, 0px. Pinned as a deterministic structural check instead
+  (`GridGraph.block_passable` at the river's own deepest interior point is `False`) rather than a
+  full solve — `solve_heuristic`'s real wall-clock time budget made its own tour non-reproducible
+  run-to-run (measured: 3 identical runs gave 89/59/162px of incidental overlap even before this
+  distinction), an unusable regression signal; same precedent as T103's own out-of-bounds
+  confirmation (checked at the mechanism, not by solving). New
+  `TestBankedWaterConsolidationOnRealScan` (2 cases) in `test_segment.py`; every existing IoU/
+  grid-ink floor unchanged. 518 passed (together with T102, T103's own fix), `ruff check .` clean.
 
-- [ ] **T102** — Fix missing OCR reads on `ogps-6802` controls 42/53/72 — paths:
+- [x] **T102** — Fix missing OCR reads on `ogps-6802` controls 42/53/72 — paths:
   `src/rogaine/vision/ocr.py`, `tests/unit/vision/test_ocr.py` — deps: none — DoD: diagnose which
   known real-scan OCR failure mode (ADR-023's leftover-ink/ring-erasure families) or new mechanism
   applies to these three controls before changing `_ocr_crop`; a new `TestRealScanReadRateFloor`
   case for this map with 42/53/72 (or a documented subset) reading correctly; every existing
   `TestRealScanReadRateFloor` floor re-run and unchanged or improved, never silently dropped.
+  **Landed, documented subset.** Diagnosed each of the three individually by cropping
+  (`data/maps/_t102_inspect_unread.py`, gitignored) — three different, unrelated root causes, not
+  one shared bug: **72** — a contour-line/mark fragment survived `_strip_thin_ink`'s area floor and
+  sat 43px (~1.2x digit height) above the real digits, a genuine new mechanism (leftover-ink
+  clusters), not one of ADR-023's two named families. **42** and **53** — both crops are already
+  clean (no stray ink); Tesseract itself reads "42" at 0% confidence and misreads "5" as "9" ("93")
+  at 41% respectively — a confidence-calibration and a character-confusion problem, neither an
+  ink-masking issue, out of this task's scope (documented, not silently dropped, per the DoD's own
+  "or a documented subset" clause). Fix: `_keep_largest_ink_cluster` (new, `ocr.py`) keeps only the
+  tightest dilation-connected group of remaining ink (a control's own digits are always one such
+  group), dropping a farther, unrelated leftover blob. `_INK_CLUSTER_GAP_FACTOR=0.5` (digit
+  heights) swept 0.0/0.3/0.4/0.5/0.65/0.8/1.0 against the synthetic fixture and every existing
+  real-scan floor (`data/maps/_t102_sweep.py`, gitignored) — every value from 0.3 to 1.0 left every
+  floor unchanged or improved. **One real finding, guarded before landing:** an early version
+  (winner = largest group, no further check) turned a pre-existing wrong read on `kkm-toksovo`
+  control 13 (a stray unerased-ring artifact discarded correctly, but the true number's own leading
+  digit was separately clipped by the crop window) from a safe "no digits found" into a confidently
+  wrong short number ("2" of a true "72") — found by a per-control before/after diff
+  (`data/maps/_t102_diff_check.py`) and a visual crop, not assumed. Fixed by discarding the winning
+  cluster outright when it both had real competition (more than one group existed) and touches the
+  crop's own edge — narrow enough that it does not touch the many real scans where a full,
+  correctly-captured number legitimately sits close to the margin with nothing to compete against
+  (a blanket "reject any edge-touching cluster" was tried first and rejected: it cost ~25
+  previously-correct reads across the owner corpus for this one avoided wrong guess). This guard
+  incidentally also caught two more pre-existing wrong reads elsewhere (`pervomayskoe` control 14
+  read "5" of a true "35"; `kkm-toksovo` control 10 read "3" of a longer number) — both now
+  correctly flagged unread instead (ADR-009: never a guess) — and, on the synthetic fixture, fixed
+  the one control the module's own docstring had documented as a known unreadable limitation since
+  T021 (`id=8`, truth 83, purple out-of-bounds hatching inside the crop margin) — now reads
+  correctly like every other control; `TestPointsRule`'s two "unreadable" cases and
+  `TestReadsNumbersOnFixture`'s boundary-control case were re-pointed at a directly-constructed
+  blank-ink crop instead of depending on that now-fixed incidental fixture noise. New
+  `test_ogps_6802_control_72_reads_correctly` in `TestRealScanReadRateFloor` (circles==35, n_read
+  >=30, control at (1175, 2475) == 72); `pervomayskoe`/`novo-kavgolovsky-lesopark`/`kkm-toksovo`/
+  `lembolovo-kkm` floors all re-verified, values unchanged, actual counts documented per-map (some
+  moved down slightly from a wrong-read correction, all still comfortably above their own floor).
 
-- [ ] **T103** — Exclude the ISOM 709 out-of-bounds symbol from control detection and confirm it
+- [x] **T103** — Exclude the ISOM 709 out-of-bounds symbol from control detection and confirm it
   stays impassable in routing — paths: `src/rogaine/vision/controls.py`, possibly a new dependency
   on `vision/palette.py`'s terrain labels, `tests/unit/vision/test_controls.py` — deps: none — DoD:
   diagnose the symbol's actual rendering on `data/maps/ogps-7302_5d8c290224a04f49e2c95484d2fbaf92`
@@ -2068,7 +2124,27 @@ the implementer's self-report.
   and all real circles still found; `ogps-7302`'s own circle count drops from dozens of false
   positives to the map's true control count; confirm (no code change expected) that routing already
   excludes `out_of_bounds` once correctly classified — `cost/graph.py`'s existing
-  `strict_impassable` path, not a new mechanism.
+  `strict_impassable` path, not a new mechanism. **Landed** (`0c5f1f7`/`fe863b3`, checkbox backfilled
+  per trust-the-tree — the landing session ran out of budget before its own docs bookkeeping).
+  Diagnosed on `ogps-7302`: ISOM 709 renders as dense diagonal cross-hatch in the same purple ink as
+  a 703 ring, not a solid fill, so `classify_palette`'s `out_of_bounds` mask (hatch-line pixels
+  only) can't bound it; `_ring_coverage`'s circumference check alone can't reject it either (hatch
+  density saturates it to 1.000). Fix: `_interior_ink_fraction` samples a disc well inside the
+  fitted circle, clear of its own ring stroke — a real ring's interior is bare (measured
+  0.000-0.099), a hatch-crossing false fit still has ink there (measured 0.622-0.844) — rejecting
+  above 0.3. `ogps-7302` candidate count 65 -> 35, hub still found, routing confirmed unaffected
+  (`strict_impassable`, no code change). New synthetic `TestOutOfBoundsHatchExcluded`. **Landed in
+  an isolated worktree with no `data/maps/` (gitignored real scans), so its own 503-passed/
+  11-skipped verification never ran the real-corpus `TestRealScanReadRateFloor` suite** — merging to
+  the main tree and actually running it (this session) found the per-candidate interior-ink filter
+  also, correctly, excludes a long-standing false positive on 3 unrelated maps: a club mascot logo
+  (a running figure, printed in two colour bands both inside `purple_mask`'s hue range) that fit a
+  spurious ring on `novo-kavgolovsky-lesopark`/`kkm-toksovo`/`lembolovo-kkm`, confirmed by visual
+  crop (`data/maps/_t103_crop_dropped.py`, gitignored) — `interior_ink_fraction` measured 1.0 on
+  every instance, far past the 0.3 threshold. Not a regression: these were never real controls, just
+  uncaught by any earlier discriminant; their circle-count floors moved down by exactly the false
+  positives removed (23->21, 25->24, 22->21) with the reason documented inline, `n_read` (true
+  positives) unchanged throughout (fix commit `b91677a`).
 
 - [ ] **T104** — Extend OCR to read a control's number when printed in a different colour from its
   own ring — paths: `src/rogaine/vision/ocr.py` — deps: T102 (same function, `_ocr_crop`'s masking
@@ -2090,7 +2166,7 @@ the implementer's self-report.
   never a silent regression; a new synthetic test with a deliberately marginal false-positive
   candidate confirms it is dropped, not auto-placed.
 
-- [ ] **T106** — Calibration tool active-state UX and click-vs-drag fix — paths:
+- [x] **T106** — Calibration tool active-state UX and click-vs-drag fix — paths:
   `src/rogaine/web/static/app.js` (`initMapViewport`'s `pointerdown` handler, `setMode`,
   `setCalibrationPoint`), `src/rogaine/web/static/style.css` — deps: none — DoD: while `calibrate`
   mode is armed, a pointer-down-move-up gesture (a drag) pans the map instead of placing or
@@ -2099,6 +2175,15 @@ the implementer's self-report.
   `button[aria-pressed="true"]` accent colour already used for ordinary primary actions elsewhere
   (e.g. a red/warning treatment), so the user cannot mistake it for a normal button; a new
   `tests/e2e/test_viewer.py` case exercises both the drag-pans and click-places behaviours.
+  **Landed** (`774f10c`/`b1f2e06`, checkbox backfilled per trust-the-tree — same interrupted-session
+  gap as T103). New `CLICK_DRAG_THRESHOLD_PX` + `beginArmedPointerGesture` helper in
+  `initMapViewport`'s `pointerdown` handler distinguish a genuine click from a pan drag while
+  `calibrate` mode is armed, so panning never places or corrupts a calibration point; the armed
+  state gets a distinct danger-toned affordance (button + map outline) beyond the existing
+  `aria-pressed` accent. New e2e case covers both drag-pans and click-places. Landed in an isolated
+  worktree (503 passed, 11 skipped, no `data/maps/`); re-verified against the main tree this session
+  as part of the full-suite run below — JS/e2e change, unaffected by the real-corpus vision floors
+  T103 collided with.
 
 - [ ] **T107** — Manual add-control click-to-place flow — paths:
   `src/rogaine/web/static/app.js` (`add-control-btn`'s click handler) — deps: T106 (reuses its fixed
