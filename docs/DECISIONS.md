@@ -1340,3 +1340,40 @@
   measurement (not committed, same convention as T089/T090's own scripts). `Control.radius_px`,
   `_ocr_crop`, `_select_best_scale`, and `_ocr_gate_sub_base_scale` are all unaffected — none of
   their behaviour or reasoning (T077/ADR-020, ADR-015, ADR-031) changes.
+
+- **Amendment, 2026-09-13 — T099 landed, generalised one branch beyond its own DoD's letter.**
+  `_ocr_gate_sub_base_scale` now probes each sub-1.0 candidate's own crop individually and keeps
+  only the ones that read a plausible number, comparing that survivor count against the production
+  side's own aggregate read count exactly as before. Beyond the DoD as written, the per-candidate
+  probe now also runs when no `>=1.0` candidate exists at all to compare against — T090's version
+  returned the whole unfiltered sub-1.0 set unconditionally in that branch, treating an OCR pass
+  there as pure waste with nothing to compare against. That reasoning held for T090's own scope
+  (choosing between two sets), but leaves exactly item 4's failure mode unguarded: a map whose only
+  Hough hits are sub-1.0 (e.g. a cover page with no real controls, only small round glyph loops)
+  never reaches the comparison branch at all, so the false positives inside it would ride straight
+  through. Recorded here as a deliberate, reasoned departure from the literal DoD, not a silent
+  scope change — same category as I5's own "designed all four fixes now" departure from ADR-026's
+  precedent, just one level down.
+
+  A real, explicit trade-off this filter accepts, worth naming rather than leaving implicit: a
+  genuine sub-1.0 control whose specific printed number happens to be illegible (faded ink, a torn
+  scan corner) is indistinguishable, from inside this function, from a glyph coincidence that was
+  never a control at all — both read `None` from their crop — so both are now dropped from the
+  returned detections entirely, rather than surfacing the illegible one as a flagged, unread control
+  per SPEC F8's general contrast ("emitted with null points and flagged, never silently guessed").
+  This gate's own narrow scope keeps the blast radius small: it only ever fires on the already-
+  gated sub-1.0 path (ADR-031), never on the production (`>=1.0`) detection path, where a genuinely
+  illegible real control is still surfaced and flagged exactly as SPEC F8 requires.
+
+  Measured against the 3 real-scan floors ADR-031 established: `novo-kavgolovsky-lesopark` circle
+  count moved 23→16, `kkm-toksovo` 25→8, `lembolovo-kkm` 22→13 — in every case the dropped
+  candidates were exactly the ones that were never contributing a successful read in the first
+  place, so each map's *absolute* `n_read` is unchanged (16, 8, 13 respectively — now 100% of a
+  smaller detected set, not a reduced count). The existing `n_read >=` floors did not need to move;
+  only the exact circle-count assertions did (`tests/unit/vision/test_ocr.py`). Two new unit tests
+  in `TestOcrGateSubBaseScale` cover the mixed genuine-plus-glyph case and the now-gated
+  no-production branch; the 4 pre-existing branch tests are unchanged and still pass unmodified,
+  since every sub-1.0 candidate in each of those stubbed scenarios uniformly reads or doesn't (so
+  per-candidate filtering changes nothing about which side wins there) — itself the regression
+  proof that T099 left T090's own already-covered branches undisturbed. 506 passed, `ruff check .`
+  clean.

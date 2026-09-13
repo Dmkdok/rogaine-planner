@@ -162,9 +162,16 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
   and measured unsafe (stripped genuine detections on all 3 of `kkm-toksovo`/`lembolovo-kkm`/
   `novo-kavgolovsky-lesopark`'s own read-rate floors, and failed its own synthetic decoy test) —
   full account: `docs/DECISIONS.md` ADR-032's amendment, `docs/TASKS.md` T098's own entry. Reverted
-  cleanly, tree back to 505 passed / `ruff check .` clean before proceeding. **T099 next** (per-
-  candidate OCR gate for sub-1.0 scale winners — no longer blocked on T098's raw-radius field,
-  which was never shipped), then **T100** (measurement + owner sign-off evidence).
+  cleanly, tree back to 505 passed / `ruff check .` clean before proceeding. **T099 landed**
+  (`a0f6d59`) — `_ocr_gate_sub_base_scale` now probes each sub-1.0 candidate's own crop
+  individually and keeps only the ones that read a plausible number (generalised one branch beyond
+  its own DoD's letter — the no-production branch now gates too, closing item 4's cover-page/legend
+  false-positive path even with no production side to compare against, recorded as a deliberate
+  departure in ADR-032's own amendment). Measured: the 3 real-scan floors' circle counts dropped
+  (23→16, 25→8, 22→13) but each map's absolute `n_read` is unchanged (16, 8, 13) — only the
+  never-successful candidates were dropped, so the existing `n_read >=` floors didn't need to move.
+  506 passed, `ruff check .` clean. **T100 next** (confirm colour-heuristic coverage, measure the
+  combined effect corpus-wide, send the owner before/after evidence for sign-off).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed

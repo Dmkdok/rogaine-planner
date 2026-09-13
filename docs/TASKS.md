@@ -1979,7 +1979,7 @@ the implementer's self-report.
   that legitimately sit near the same edge. Same precedent as T080 (measured, not speculative;
   closed with no code change) — full account: `docs/DECISIONS.md` ADR-032's amendment.
 
-- [ ] **T099** — Per-candidate OCR gate for sub-1.0 scale winners — paths:
+- [x] **T099** — Per-candidate OCR gate for sub-1.0 scale winners — paths:
   `src/rogaine/vision/controls.py` — deps: none (T098 closed with no code change; the per-candidate
   data shape T099 works with is unaffected) — DoD: `_ocr_gate_sub_base_scale` (T090/ADR-031)
   changes from keeping/discarding its two whole candidate sets to gating each sub-1.0 candidate
@@ -1988,6 +1988,17 @@ the implementer's self-report.
   (`kkm-toksovo`, `lembolovo-kkm`, `novo-kavgolovsky-lesopark`) must not regress; new synthetic case
   with a mixed genuine-control-plus-glyph-false-positive sub-1.0 set proves the genuine one survives
   and the glyph one does not.
+  **Landed** (`a0f6d59`). Also generalised beyond the DoD's letter, per this session's own
+  reasoning (recorded, not silently expanded): the per-candidate probe now runs even when no
+  `>=1.0` candidate exists to compare against (T090's version returned the whole unfiltered sub-1.0
+  set unconditionally there, skipping OCR as pure waste) — a map whose only Hough hits are sub-1.0
+  (e.g. a cover page with no real controls) is exactly item 4's unguarded case, so leaving that
+  branch untouched would have left it open. Measured against the 3 real-scan floors: circle counts
+  dropped (`novo-kavgolovsky-lesopark` 23→16, `kkm-toksovo` 25→8, `lembolovo-kkm` 22→13) but each
+  map's absolute `n_read` is unchanged (16, 8, 13) — the dropped candidates were exactly the ones
+  never contributing a successful read, so the existing `n_read >=` floors did not need to move,
+  only the exact circle-count assertions (updated in `tests/unit/vision/test_ocr.py`). 506 passed,
+  `ruff check .` clean.
 
 - [ ] **T100** — Confirm the colour heuristic's coverage and measure the combined effect — paths:
   `tests/unit/vision/test_controls.py` (pinning test only if a gap is found), throwaway
