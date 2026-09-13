@@ -500,15 +500,23 @@ class TestRealScanReadRateFloor:
         # that to 16 (30% of the 23 unread); the owner's T100 sign-off found real controls among
         # those dropped elsewhere in this same corpus, so T099 was amended to only filter a
         # junk-dominated set (>85% unread) -- this map's 30% unread stays well under that line, so
-        # its count is back to 23 (ADR-032's amendment).
-        assert len(circles) == 23, f"expected 23 detected circles, got {len(circles)}"
+        # its count was back to 23 (ADR-032's amendment).
+        # T103: both of the "extra" 2 circles in that 23 were the same false positive -- the club
+        # mascot logo (a running figure printed in two different colour bands, both inside
+        # `purple_mask`'s hue range) fitting a spurious ring, confirmed by visual crop. T103's
+        # interior-ink discriminant correctly excludes both (measured: interior_ink_fraction=1.0,
+        # far past its 0.3 threshold) -- 23 -> 21. Not a regression: these were never real controls,
+        # just uncaught by any earlier discriminant, and `n_read` below (a true-positive count) is
+        # unchanged.
+        assert len(circles) == 21, f"expected 21 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # T083 baseline (ADR-023): 0/21. T084 measured: 6/21. T090/ADR-031 measured: 16/23 -- this
-        # absolute count is unchanged by every later amendment, only the total circle count moved.
-        assert n_read >= 13, f"novo-kavgolovsky-lesopark read {n_read}/23 numbers, expected >= 13"
+        # absolute count is unchanged by every later amendment (including T103's), only the total
+        # circle count moved.
+        assert n_read >= 13, f"novo-kavgolovsky-lesopark read {n_read}/21 numbers, expected >= 13"
 
     @pytest.mark.skipif(
         not _KKM_TOKSOVO_PATH.is_file(),
@@ -522,23 +530,29 @@ class TestRealScanReadRateFloor:
         this is the very map where the owner's own T100 sign-off found several of those 17 "dropped"
         candidates (91, 92, 72, 52) to be real, legible, correctly-positioned controls Tesseract
         simply couldn't read, not false positives. T099 was amended to only filter a set that looks
-        junk-dominated (>85% unread); 68% stays under that line, so the count is back to 25, with
+        junk-dominated (>85% unread); 68% stays under that line, so the count was back to 25, with
         the 17 unread ones surfacing flagged downstream like any other unread control (ADR-032's
         amendment).
+
+        T103: one of those 25 was the same club-mascot-logo false positive found on
+        novo-kavgolovsky-lesopark/lembolovo-kkm (confirmed by visual crop) -- T103's interior-ink
+        discriminant correctly excludes it (interior_ink_fraction=1.0, threshold 0.3), 25 -> 24. Not
+        a regression: `n_read` (true positives only) is unchanged.
         """
         cfg = default_config()
         dpi = resolve_dpi(_KKM_TOKSOVO_PATH, user_dpi=None)
         image = load_raster(_KKM_TOKSOVO_PATH)
         detections = detect_controls(image, dpi, cfg)
         circles = [c for c in detections if not c.is_hub]
-        assert len(circles) == 25, f"expected 25 detected circles, got {len(circles)}"
+        assert len(circles) == 24, f"expected 24 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 1/25. T090/ADR-031 measured: 8/25 -- this
-        # absolute count is unchanged by every later amendment, only the total circle count moved.
-        assert n_read >= 6, f"kkm-toksovo read {n_read}/25 numbers, expected >= 6"
+        # absolute count is unchanged by every later amendment (including T103's), only the total
+        # circle count moved.
+        assert n_read >= 6, f"kkm-toksovo read {n_read}/24 numbers, expected >= 6"
 
     @pytest.mark.skipif(
         not _LEMBOLOVO_KKM_PATH.is_file(),
@@ -549,18 +563,24 @@ class TestRealScanReadRateFloor:
         base-scale-only ladder did (20 -> 22 circles). T099's first version dropped the circle count
         from 22 to 13 (41% of the 22 unread); amended to only filter a junk-dominated set (>85%
         unread) after the owner's T100 sign-off found real controls being dropped elsewhere in this
-        corpus -- 41% stays under that line, so the count is back to 22 (ADR-032's amendment).
+        corpus -- 41% stays under that line, so the count was back to 22 (ADR-032's amendment).
+
+        T103: one of those 22 was the same club-mascot-logo false positive found on the other two
+        maps above (confirmed by visual crop) -- T103's interior-ink discriminant correctly excludes
+        it (interior_ink_fraction=1.0, threshold 0.3), 22 -> 21. Not a regression: `n_read` (true
+        positives only) is unchanged.
         """
         cfg = default_config()
         dpi = resolve_dpi(_LEMBOLOVO_KKM_PATH, user_dpi=None)
         image = load_raster(_LEMBOLOVO_KKM_PATH)
         detections = detect_controls(image, dpi, cfg)
         circles = [c for c in detections if not c.is_hub]
-        assert len(circles) == 22, f"expected 22 detected circles, got {len(circles)}"
+        assert len(circles) == 21, f"expected 21 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 7/20. T090/ADR-031 measured: 13/22 -- this
-        # absolute count is unchanged by every later amendment, only the total circle count moved.
-        assert n_read >= 10, f"lembolovo-kkm read {n_read}/22 numbers, expected >= 10"
+        # absolute count is unchanged by every later amendment (including T103's), only the total
+        # circle count moved.
+        assert n_read >= 10, f"lembolovo-kkm read {n_read}/21 numbers, expected >= 10"
