@@ -674,3 +674,74 @@ class TestRouteAlternativesSwitcher:
 
         expect(page.locator("#route-switcher")).to_be_hidden()
         assert page.locator("#route-switcher").inner_html() == ""
+
+
+class TestCalibrationToolArmedState:
+    """T106 (F17, I6): the calibration-line tool (`#calib-start-btn`, `state.mode = "calibrate"`)
+    used to place/overwrite a calibration point on the plain `pointerdown` that starts *any* map
+    gesture -- so panning the map while the tool was armed corrupted the calibration line instead
+    of panning. Only upload is needed here (no scale apply/detect/plan): `loadMapPreview` already
+    calls `view.fit()` once the map preview image loads, which is all `screenToMap`/`panBy` need.
+
+    `view.panBy` (`view.js`) is a plain unclamped `panX += dx`, so a real drag is provable without
+    reading any internal JS state: click the same screen point again after a drag and the mapped
+    coordinates must differ (proving the view moved), whereas an unmoved click maps to the same
+    point every time.
+    """
+
+    def test_drag_pans_without_placing_point_click_places_one(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.check("#scale-mode-calibrate")
+        page.click("#calib-start-btn")
+
+        # --- Armed-state affordance: distinct from an ordinary `aria-pressed` button (T106) ------
+        expect(page.locator("#calib-start-btn")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#map-viewport")).to_have_class(re.compile(r"\bmode-calibrate\b"))
+
+        box = page.locator("#map-canvas").bounding_box()
+        assert box is not None
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+
+        # --- A genuine click (no meaningful movement) places a calibration point -----------------
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.up()
+        expect(page.locator("#calib-x1")).not_to_have_value("")
+        expect(page.locator("#calib-x2")).to_have_value("")
+        x1_before = page.input_value("#calib-x1")
+        y1_before = page.input_value("#calib-y1")
+
+        # --- A drag (well past the click/drag threshold) pans the map instead of placing or
+        # overwriting a calibration point: the single point placed above must survive untouched
+        # and no second point appears ------------------------------------------------------------
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 120, cy + 60, steps=10)
+        page.mouse.up()
+        assert page.input_value("#calib-x1") == x1_before
+        assert page.input_value("#calib-y1") == y1_before
+        expect(page.locator("#calib-x2")).to_have_value("")
+
+        # --- Proof the drag actually panned the view (not merely a no-op): clicking the exact
+        # same screen point again now lands the *second* calibration point (state.calibration had
+        # only one point) at map coordinates that differ from the first click's, since the same
+        # screen pixel now maps elsewhere on the (unclamped) panned view ---------------------------
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.up()
+        expect(page.locator("#calib-x2")).not_to_have_value("")
+        assert (page.input_value("#calib-x2"), page.input_value("#calib-y2")) != (
+            x1_before,
+            y1_before,
+        )

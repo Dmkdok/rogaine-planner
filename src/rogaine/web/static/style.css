@@ -244,6 +244,21 @@ button[aria-pressed="true"] {
 .map-viewport.mode-calibrate {
   cursor: crosshair;
 }
+/* T106: the calibration tool's "armed" state needs an affordance beyond the shared
+   `button[aria-pressed="true"]` accent (used by ordinary primary actions too, e.g.
+   `toggle-add-mode-btn`) -- reusing the existing danger tokens (already the calibration
+   line/points' own colour, see `.calib-line`/`.calib-point` below) makes both the button and the
+   map itself read as "about to place/overwrite a point", not just "an option is selected". */
+#calib-start-btn[aria-pressed="true"] {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+  font-weight: 600;
+}
+.map-viewport.mode-calibrate {
+  outline: 2px solid var(--danger);
+  outline-offset: -2px;
+}
 
 #map-canvas {
   position: absolute;

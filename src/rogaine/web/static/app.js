@@ -1097,17 +1097,63 @@ function startPan(e) {
   canvas.addEventListener("pointerup", onUp);
 }
 
+// Pixel distance (pointerdown to pointerup) below which a map-canvas gesture counts as a click
+// rather than a drag. Keeps a small hand tremor from missing a placement while any real pan
+// gesture still reads as a pan (T106).
+const CLICK_DRAG_THRESHOLD_PX = 5;
+
+/** Tracks a pointer gesture on the map canvas for an "armed" placement tool (currently
+ * `calibrate`; reusable by a future one-shot mode such as T107's add-control panel button): while
+ * cumulative movement stays under CLICK_DRAG_THRESHOLD_PX the gesture is a click, and `onClick`
+ * fires once on pointerup with the map coordinates (already clamped to the map bounds); once
+ * movement crosses the threshold the gesture behaves exactly like `startPan` instead -- the view
+ * pans and `onClick` never fires. This is what stops a drag-to-pan gesture from placing or
+ * corrupting a point while a tool is armed (SPEC F17).
+ *
+ * A future caller that needs "place one point, then return to idle" (T107) should pass an
+ * `onClick` that finishes by calling `setMode("idle")` -- no second pointer-handling path needed.
+ */
+function beginArmedPointerGesture(e, onClick) {
+  const canvas = els.mapCanvas;
+  canvas.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let lastX = startX;
+  let lastY = startY;
+  let dragging = false;
+  function onMove(ev) {
+    if (!dragging) {
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < CLICK_DRAG_THRESHOLD_PX) return;
+      dragging = true;
+    }
+    view.panBy(ev.clientX - lastX, ev.clientY - lastY);
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+    redraw();
+  }
+  function onUp(ev) {
+    canvas.removeEventListener("pointermove", onMove);
+    canvas.removeEventListener("pointerup", onUp);
+    if (dragging) return;
+    const rect = els.mapViewport.getBoundingClientRect();
+    const { x, y } = view.screenToMap(ev.clientX - rect.left, ev.clientY - rect.top);
+    onClick(clamp(x, 0, view.mapWidth || x), clamp(y, 0, view.mapHeight || y));
+  }
+  canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+}
+
 function initMapViewport() {
   els.mapCanvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    if (state.mode === "calibrate") {
+      beginArmedPointerGesture(e, setCalibrationPoint);
+      return;
+    }
     const rect = els.mapViewport.getBoundingClientRect();
     const { x, y } = view.screenToMap(e.clientX - rect.left, e.clientY - rect.top);
     if (state.mode === "add") {
       addControlAt(clamp(x, 0, view.mapWidth || x), clamp(y, 0, view.mapHeight || y));
-      return;
-    }
-    if (state.mode === "calibrate") {
-      setCalibrationPoint(clamp(x, 0, view.mapWidth || x), clamp(y, 0, view.mapHeight || y));
       return;
     }
     startPan(e);
