@@ -286,6 +286,95 @@ class TestSingleScaleSelected:
         )
 
 
+class TestOutOfBoundsHatchExcluded:
+    """T103, SPEC F7's ISOM 709 exclusion clause. ISOM 709 (out of bounds) is printed in the same
+    purple ink as the 703 control circle, as a dense diagonal cross-hatch rather than a ring.
+    `_ring_coverage` alone does not reject it: measured directly on a real scan
+    (`data/maps/ogps-7302_5d8c290224a04f49e2c95484d2fbaf92`), the hatch's own crossing density let
+    dozens of spurious Hough fits saturate `_ring_coverage` to as high as 1.000, dragging that map's
+    raw circle count from its true ~35 controls up to 65. The hatch block below reproduces that
+    same failure mode synthetically rather than merely asserting the fix in the abstract: its line
+    spacing/thickness (as a fraction of `r_mid`) is set from that same real scan's own measured
+    hatch pitch (a horizontal scanline through its out-of-bounds polygon), and with
+    `_INTERIOR_INK_MAX` neutralised this exact synthetic block reproduces the real failure (7
+    spurious in-block candidates) -- so a regression that silences `_interior_ink_fraction` again
+    would fail this test, not just the real scan nobody runs in CI (ADR-010: gitignored).
+    """
+
+    def test_hatch_block_yields_no_candidates_while_real_circles_still_found(self) -> None:
+        dpi = 200.0
+        config = default_config()
+        det = config.detector
+        r_min, r_max = det.circle_radius_px(dpi)
+        r_mid = (r_min + r_max) / 2.0
+
+        block_side = round(r_mid * 4.5)
+        margin = round(r_mid * 2.0)
+        size = block_side + margin * 2 + round(r_mid * 10)
+        block_x0, block_y0 = margin, margin
+        block_x1, block_y1 = block_x0 + block_side, block_y0 + block_side
+
+        # Spacing/thickness ratios measured against the real out-of-bounds hatch on
+        # `ogps-7302_5d8c290224a04f49e2c95484d2fbaf92` (a horizontal scanline through it: ~6-7px
+        # ink runs separated by ~2-3px gaps, at that map's own r_mid of ~34.5px).
+        hatch_thickness = max(1, round(r_mid * 0.19))
+        hatch_spacing = max(2, round(r_mid * 0.28))
+        purple = RENDER_SRGB["purple_100"]
+
+        # Drawn on a separate canvas and copied in only within the block's own bounding box --
+        # `cv2.line` does not clip to an arbitrary rectangle, and an uncropped diagonal hatch would
+        # bleed well past the intended block and contaminate the true circles placed just outside
+        # it below.
+        hatch_canvas = np.full((size, size, 3), 255, dtype=np.uint8)
+        for offset in range(-block_side, block_side, hatch_spacing):
+            cv2.line(
+                hatch_canvas,
+                (block_x0 + offset, block_y0),
+                (block_x0 + offset + block_side, block_y1),
+                purple,
+                hatch_thickness,
+            )
+            cv2.line(
+                hatch_canvas,
+                (block_x1 - offset, block_y0),
+                (block_x1 - offset - block_side, block_y1),
+                purple,
+                hatch_thickness,
+            )
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        image[block_y0:block_y1, block_x0:block_x1] = hatch_canvas[
+            block_y0:block_y1, block_x0:block_x1
+        ]
+
+        true_centres = [
+            (block_x1 + round(r_mid * 3.0), block_y0 + round(r_mid * 1.5)),
+            (block_x0 + round(r_mid * 1.5), block_y1 + round(r_mid * 3.0)),
+        ]
+        ring_width = max(1, round(r_mid * 0.15))
+        for cx, cy in true_centres:
+            cv2.circle(image, (cx, cy), round(r_mid), purple, ring_width)
+
+        mask = purple_mask(image, config)
+        candidates = _detect_circles(image, mask, dpi, config)
+
+        in_block = [
+            (x, y)
+            for x, y, _r, _conf in candidates
+            if block_x0 <= x <= block_x1 and block_y0 <= y <= block_y1
+        ]
+        assert in_block == [], f"spurious candidate(s) inside the out-of-bounds block: {in_block}"
+
+        assert len(candidates) == len(true_centres), (
+            f"expected exactly the {len(true_centres)} real circles, got {len(candidates)}: "
+            f"{candidates}"
+        )
+        for cx, cy in true_centres:
+            assert any(
+                ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 <= r_mid / 4.0
+                for x, y, _r, _conf in candidates
+            ), f"no candidate near true ring centre ({cx}, {cy}): {candidates}"
+
+
 class TestRadiusThreadedThroughDetection:
     """T077, ADR-020: `_detect_circles` widened its candidate tuples from `(x, y, coverage)` to
     `(x, y, r, coverage)` so `detect_controls` can carry the matched scale's nominal radius into
