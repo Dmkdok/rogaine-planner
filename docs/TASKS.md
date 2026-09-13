@@ -2183,7 +2183,7 @@ the implementer's self-report.
   guess. `TestRealScanReadRateFloor::test_ogps_6802_control_72_reads_correctly` renamed/updated to
   `test_ogps_6802_named_controls`, pinning all three controls' new (still correct) outcome.
 
-- [ ] **T105** — Confidence-gated auto-placement floor — paths: `src/rogaine/vision/controls.py`
+- [x] **T105** — Confidence-gated auto-placement floor — paths: `src/rogaine/vision/controls.py`
   (`_detect_circles`'s final candidate filter) — deps: T103 (land after the forbidden-symbol
   exclusion so the corpus measurement below is not contaminated by those false positives); informally
   sequenced after T102/T104 (an OCR fix changes which candidates are worth keeping) — DoD: pick a
@@ -2193,7 +2193,21 @@ the implementer's self-report.
   method) recorded in `docs/DECISIONS.md` regardless of direction; every existing circle-count floor
   (`TestRealScanReadRateFloor` et al.) re-verified — any that must move is a named, measured change,
   never a silent regression; a new synthetic test with a deliberately marginal false-positive
-  candidate confirms it is dropped, not auto-placed.
+  candidate confirms it is dropped, not auto-placed. **Landed (ADR-035).** Measured the owner's
+  14-map corpus plus the three named `ogps-*` maps (524 real detections) before picking a value:
+  the confidence (`_ring_coverage`) distribution has no natural gap — 88% at [0.99,1.0), the rest
+  spread smoothly down to 0.764, every one below 0.85 individually cropped and visually confirmed
+  a genuine control (imperfect ring-fit from terrain ink/print noise), not a false positive. No
+  known false positive exists in this corpus below 1.0 confidence for a floor to actually catch.
+  `_AUTO_PLACEMENT_CONFIDENCE_FLOOR = 0.80` chosen as a small, named, accepted cost (per ADR-033's
+  own advance risk acceptance) rather than a measured win: drops exactly 4/524 (0.76%) real
+  detections, all confirmed genuine, none on the owner's most-inspected maps
+  (`kkm-*`/`toksovo-*`/`pervomayskoe`/`ogps-6802`/`ogps-7302`/`ogps-8078`/`michurinskoe`/
+  `ozero-shchuche`/`grid-lines-red-controls` all unaffected). New `TestAutoPlacementConfidenceFloor`
+  (a synthetic ring missing 80/360 degrees, coverage ~0.778 — clears the base 0.75
+  `_RING_COVERAGE_MIN` but not this floor — confirmed dropped alongside genuine full rings kept).
+  519 passed (518 + this task's own test), `ruff check .` clean; every existing circle-count floor
+  unchanged (the 4 dropped detections are not on any pinned-floor map).
 
 - [x] **T106** — Calibration tool active-state UX and click-vs-drag fix — paths:
   `src/rogaine/web/static/app.js` (`initMapViewport`'s `pointerdown` handler, `setMode`,

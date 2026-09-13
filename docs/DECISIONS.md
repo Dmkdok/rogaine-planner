@@ -37,6 +37,7 @@
 | 032 | Real-scan control detection: OCR crop windows slide instead of truncating at the raster edge; a per-candidate raw-radius consistency filter and a per-candidate sub-1.0 OCR gate replace their set-level predecessors | accepted |
 | 033 | I6's detection-gap items are diagnosis-first (ADR-026 precedent); the low-confidence auto-placement floor is chosen and shipped without an intermediate owner review step | accepted |
 | 034 | T104's real cause was not a two-colour print style but a `_select_best_scale` tie-break gap; `_ocr_gate_tied_scales` resolves an exact tie among >=1.0 multipliers by OCR outcome, the same principle as ADR-031's sub-1.0 gate | accepted |
+| 035 | T105's auto-placement confidence floor (0.80) is a named, accepted cost, not a measured win — every sub-0.85 detection in the measured corpus is a confirmed genuine control the floor does not need to catch | accepted |
 
 ---
 
@@ -1582,3 +1583,41 @@ style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR ou
   96% confidence) at the cost of 72 itself reading only a truncated "7" at 0% confidence — refused
   safely (ADR-009), not a wrong guess, and not a regression: 2 of 3 named controls fixed instead of
   1, on a net-positive map (32→33 total reads).
+
+## ADR-035 — T105's auto-placement confidence floor is a named, accepted cost, not a measured win
+- Date: 2026-09-13
+- Status: accepted
+- Context: I6 item 7, the owner's own cross-cutting policy request — "skip auto-placing a control
+  the system isn't confident about, rather than risk a false one" — filed with no specific map,
+  unlike T101-T104. ADR-033 already committed to shipping this directly (no intermediate owner
+  review), "accepting the small residual risk of an overly cautious floor... in exchange for
+  skipping that review round." `_detect_circles`'s only per-candidate signal at its final-filter
+  point is `_ring_coverage` (T103's `_interior_ink_fraction` is already boolean pass/fail by then,
+  not carried forward as a score) — measured across the owner's 14-map corpus plus the three named
+  `ogps-*` maps (524 real detections, `data/maps/_t105_confidence_histogram.py`, gitignored), this
+  distribution has no natural gap: 88% sit at [0.99, 1.0), and the remaining 12% spread smoothly
+  down to 0.764 with no cluster suggesting "these are false positives." Every one of the 4
+  detections below 0.80 (and, spot-checked further, several more below 0.85) was individually
+  cropped and visually confirmed to be a genuine control whose ring-fit is merely imperfect —
+  terrain ink crossing the ring, print/scan noise, not a spurious fit. This corpus currently has no
+  known false positive at any confidence below 1.0 for a coverage-based floor to actually catch.
+- Decision: `_AUTO_PLACEMENT_CONFIDENCE_FLOOR = 0.80` (new, `vision/controls.py`), applied as
+  `_detect_circles`'s last step, after both OCR-outcome gates. Chosen as a small, explicitly named
+  cost rather than a measured win: it drops exactly 4 of 524 real corpus detections (0.76%), all
+  four individually confirmed genuine by crop. Not tuned against any known false positive because
+  none exists in the measured corpus — the floor exists as a defensive measure against a future
+  map with a genuinely broken/spurious ring fit, per the owner's own explicit advance acceptance of
+  this trade-off (ADR-033), not because this measurement found one. A synthetic regression test
+  (`TestAutoPlacementConfidenceFloor`) constructs a ring deliberately missing 80 of 360 degrees
+  (measured coverage ~0.778 — clears the base 0.75 `_RING_COVERAGE_MIN` so it is a candidate at
+  all, but not this floor) alongside genuine full rings, and confirms only the broken one is
+  dropped.
+- Consequences: on the current corpus, this floor has zero measured benefit and a small, disclosed
+  cost (4 real detections, all on `history-race-2024-michurinskoe` x2, `history-race-primorsk`,
+  `treugolnoe` — none of the owner's own most-inspected maps, `kkm-*`/`toksovo-*`/`pervomayskoe`/
+  `ogps-6802`/`ogps-7302`/`ogps-8078`, lose anything). If a future real map's own spot-check finds
+  this floor dropped a genuine control the owner wanted placed, that is new evidence for retuning
+  or removing it, not a defect in this decision — the trade was made with the risk named up front.
+  Full suite: 519 passed (518 + this task's own new test), `ruff check .` clean; every existing
+  `TestRealScanReadRateFloor`/circle-count floor re-verified unchanged (this floor's own 4 dropped
+  detections are not on any of those specific pinned maps).
