@@ -49,7 +49,7 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   **2026-09-12, same session: new owner bug report** — control numbers still unread on many real
   scans despite being clearly legible, plus spurious tiny detections in cover-page/legend text.
   Became **Iteration I5** (M12, T097-T100, `docs/iterations/I5-control-detection-false-negatives.md`)
-  — delta written, **gate pending** — see "Iteration I5" below.
+  — delta written, **gate approved 2026-09-12** («Утверждаю, продолжи») — see "Iteration I5" below.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -129,7 +129,7 @@ hard block — but if a future session sees the same error, know that subagent t
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
 
-## Iteration I5: control-circle/number false negatives and false positives on real scans (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
+## Iteration I5: control-circle/number false negatives and false positives on real scans (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
 
 Owner bug report, in-chat 2026-09-12, with two annotated screenshots (crops from real
 `ogps-*`-harvested maps — the owner tested broadly across that corpus, not one named file) showing
@@ -155,8 +155,16 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
   `docs/iterations/I5-control-detection-false-negatives.md`
 - [x] 2 impact map written — same file
 - [x] 3 docs amended (SPEC F7/F8 acceptance extended, DECISIONS ADR-032, TASKS M12 T097-T100)
-- [ ] GATE — pending owner approval
-- [ ] 4 implementation
+- [x] GATE — approved by the owner 2026-09-12 («Утверждаю, продолжи»)
+- [ ] 4 implementation — **T097 landed** (`c0ae26d`) — `_ocr_crop`'s window now slides along an
+  axis to stay in-bounds instead of shrinking, 5 new edge-adjacent-control tests, 505 passed.
+  **T098 closed with no code change** — a median+MAD raw-radius outlier filter was built, tried,
+  and measured unsafe (stripped genuine detections on all 3 of `kkm-toksovo`/`lembolovo-kkm`/
+  `novo-kavgolovsky-lesopark`'s own read-rate floors, and failed its own synthetic decoy test) —
+  full account: `docs/DECISIONS.md` ADR-032's amendment, `docs/TASKS.md` T098's own entry. Reverted
+  cleanly, tree back to 505 passed / `ruff check .` clean before proceeding. **T099 next** (per-
+  candidate OCR gate for sub-1.0 scale winners — no longer blocked on T098's raw-radius field,
+  which was never shipped), then **T100** (measurement + owner sign-off evidence).
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed

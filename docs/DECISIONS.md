@@ -1300,3 +1300,43 @@
   same raw-radius field twice). Acceptance is the owner's manual spot-check of example controls
   (ADR-019 precedent, same as T082/T086/T095) — no numeric corpus-wide floor required for this
   iteration's gate, though T100's own measurement is recorded regardless of direction.
+
+- **Amendment, 2026-09-13 — T098 closed with no code change, measured unsafe.** A per-candidate
+  filter was built exactly as decided above: `_detect_circles` threaded each Hough candidate's raw
+  fitted radius alongside `r_mid` as a 5th internal tuple element (stripped back off before
+  returning, so every caller's `(x, y, r, coverage)` shape stayed unchanged), and
+  `_reject_raw_radius_outliers` scored the winning scale's own cluster by a median + median-
+  absolute-deviation modified z-score (threshold 3.5, the standard Iglewicz & Hoaglin robust cutoff),
+  with a synthetic regression test (one true-ring cluster plus a deliberately mis-sized coincidental
+  filled blob at the same nominal scale).
+
+  Both the synthetic test and the full suite failed. The synthetic test itself rejected a *genuine*
+  ring, not the decoy — one true ring's own raw Hough fit landed far enough from the cluster's
+  median to trip the same 3.5 threshold meant to catch the decoy. Against the real corpus, the same
+  mechanism stripped already-validated genuine detections from all 3 of the sub-1.0-scale read-rate
+  floor tests (ADR-031): `kkm-toksovo` 25→21 circles, `lembolovo-kkm` 22→20, and
+  `novo-kavgolovsky-lesopark` 23→13 (its own floor test's exact failure output — the worst hit, more
+  than a third of its real controls stripped as "outliers").
+
+  Root cause, measured, not a threshold that just needed retuning: for a given
+  `circle_scale_multipliers` entry, Hough's own `minRadius`/`maxRadius` are already
+  `r_mid × (1 ∓ circle_diameter_tolerance)` (`config.py::circle_radius_px`, tolerance `0.35` in
+  `config/default.toml`) — so *every* raw candidate Hough can return for that multiplier is already
+  confined to `[0.65, 1.35] × r_mid` by construction, before any filter runs. Measuring the actual
+  raw-radius/`r_mid` ratios of the winning scale's own accepted cluster across 5 real maps
+  (`kkm-toksovo`, `lembolovo-kkm`, `novo-kavgolovsky-lesopark`, `grid-lines-red-controls`,
+  `ozero-shchuche`) found genuine controls routinely sitting anywhere across that entire admissible
+  band (observed ratios 0.663-1.333, i.e. essentially edge to edge). There is no room inside an
+  already-narrow, already-enforced window for a *further* per-candidate statistical cutoff to
+  separate "clear outlier" from "genuine control near the window's own edge" — any threshold tight
+  enough to reject a hypothetical coincidental blob would, and measurably did, also reject real
+  controls that legitimately land near the same edge.
+
+  No known real-corpus false positive of item 2's originally-hypothesised shape (a same-scale,
+  same-`r_mid` coincidental ink blob, e.g. inside a bold digit glyph) was ever actually observed to
+  motivate this filter in the first place — the gap was inferred from code inspection, not
+  reproduced. Closed with no code change, same precedent as T080 (measured, not speculative); full
+  before/after counts and the exact `raw/r_mid` ratio tables live in this session's own throwaway
+  measurement (not committed, same convention as T089/T090's own scripts). `Control.radius_px`,
+  `_ocr_crop`, `_select_best_scale`, and `_ocr_gate_sub_base_scale` are all unaffected — none of
+  their behaviour or reasoning (T077/ADR-020, ADR-015, ADR-031) changes.

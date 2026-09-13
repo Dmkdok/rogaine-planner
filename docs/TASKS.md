@@ -1940,16 +1940,21 @@ the implementer's self-report.
 > T099 depends on T098 (both touch `_detect_circles`'s per-candidate data; land T098 first so T099
 > doesn't thread the same raw-radius field twice). T100 depends on all three — it measures the
 > combined effect and is the last task.
+>
+> **T098 closed with no code change** (see its own entry below — measured unsafe on real scans),
+> so T099's stated dependency on it never materializes; T099 proceeds directly against the
+> pre-existing `(x, y, r, coverage)` 4-tuple shape.
 
-- [ ] **T097** — OCR crop window slides instead of truncating at the raster edge — paths:
+- [x] **T097** — OCR crop window slides instead of truncating at the raster edge — paths:
   `src/rogaine/vision/ocr.py`, `tests/unit/vision/test_ocr.py` — deps: none — DoD: `_ocr_crop`'s
   `(x0, y0, x1, y1)` window keeps its full configured half-width even when the control sits near
   the image boundary, by sliding the window rather than clamping-and-shrinking it (falls back to
   the current shrink behaviour only if the raster itself is smaller than the window); a new test
   with a control placed near each of the four edges confirms the crop reaches full size; every
   existing centred-control OCR test stays byte-identical (window unchanged when not near an edge).
+  **Landed** (`c0ae26d`) — 5 new edge-adjacent-control tests, 505 passed overall (500 baseline + 5).
 
-- [ ] **T098** — Per-candidate raw-radius consistency filter in `_detect_circles` — paths:
+- [x] **T098** — Per-candidate raw-radius consistency filter in `_detect_circles` — paths:
   `src/rogaine/vision/controls.py`, `tests/unit/vision/test_controls.py` — deps: none — DoD: each
   Hough candidate's raw fitted radius (computed today, then discarded in favour of the matched
   scale's nominal `r_mid`, T077/ADR-020) is threaded alongside `r_mid` for this filter only; a
@@ -1959,9 +1964,24 @@ the implementer's self-report.
   true-ring cluster plus a deliberately mis-sized coincidental blob at the same nominal scale —
   filter rejects the blob, keeps the cluster. Existing `_select_best_scale`/ring-coverage tests
   (ADR-015) stay green unchanged.
+  **Closed, no code change — measured unsafe, not shipped.** A median+MAD modified-z-score filter
+  on the raw radius was built and tried; it stripped genuine, already-validated detections on all
+  3 of the real-scan read-rate floor tests measured (`kkm-toksovo` 25→21 circles, `lembolovo-kkm`
+  22→20, `novo-kavgolovsky-lesopark` 23→13 — its own floor test's exact failure output) and failed
+  its own synthetic decoy test (rejected a genuine ring, not the decoy). Root cause is structural,
+  not a threshold-tuning miss: Hough's
+  `minRadius`/`maxRadius` for a given multiplier are already `r_mid*(1∓circle_diameter_tolerance)`
+  (`config.py::circle_radius_px`, tolerance `0.35`), so *every* raw candidate Hough can return for
+  that multiplier already sits inside `[0.65, 1.35]×r_mid` by construction — there is no wider
+  range for an outlier to occupy. Measured real raw/r_mid ratios on the 5 maps checked span
+  0.663-1.333, i.e. genuine detections already routinely use the *entire* admissible band; no
+  threshold inside that band can reject a "clear outlier" without also rejecting real controls
+  that legitimately sit near the same edge. Same precedent as T080 (measured, not speculative;
+  closed with no code change) — full account: `docs/DECISIONS.md` ADR-032's amendment.
 
 - [ ] **T099** — Per-candidate OCR gate for sub-1.0 scale winners — paths:
-  `src/rogaine/vision/controls.py` — deps: T098 — DoD: `_ocr_gate_sub_base_scale` (T090/ADR-031)
+  `src/rogaine/vision/controls.py` — deps: none (T098 closed with no code change; the per-candidate
+  data shape T099 works with is unaffected) — DoD: `_ocr_gate_sub_base_scale` (T090/ADR-031)
   changes from keeping/discarding its two whole candidate sets to gating each sub-1.0 candidate
   individually against its own OCR outcome, keeping only the ones that read a plausible number;
   the production (`>=1.0`) path is unchanged. Existing ADR-031 real-scan read-rate floors
