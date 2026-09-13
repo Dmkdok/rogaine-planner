@@ -49,10 +49,11 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   **2026-09-12, same session: new owner bug report** — control numbers still unread on many real
   scans despite being clearly legible, plus spurious tiny detections in cover-page/legend text.
   Became **Iteration I5** (M12, T097-T100, `docs/iterations/I5-control-detection-false-negatives.md`)
-  — delta written, **gate approved 2026-09-12** («Утверждаю, продолжи»). **All 4 tasks landed
-  2026-09-13** (T097, T099 — amended once after the owner's own T100 sign-off found its first
-  version too aggressive — T098 closed with no code change, T100 measured). 509 passed,
-  `ruff check .` clean. Independent review (Phase 6) not yet run — see "Iteration I5" below.
+  — delta written, **gate approved 2026-09-12** («Утверждаю, продолжи»). **All 4 tasks landed and
+  closed 2026-09-13** (T097, T099 — amended once after the owner's own T100 sign-off found its
+  first version too aggressive — T098 closed with no code change, T100 measured). Independent
+  review PASS WITH WAIVERS (1 High + 3 Medium fixed same session). **M12 complete** — 513 passed,
+  `ruff check .` clean. See "Iteration I5" below for the full account.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -132,7 +133,7 @@ hard block — but if a future session sees the same error, know that subagent t
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
 
-## Iteration I5: control-circle/number false negatives and false positives on real scans (in progress, branch `iteration/I2-vision-recognition-fix`, continued)
+## Iteration I5: control-circle/number false negatives and false positives on real scans (closed, branch `iteration/I2-vision-recognition-fix`, continued)
 
 Owner bug report, in-chat 2026-09-12, with two annotated screenshots (crops from real
 `ogps-*`-harvested maps — the owner tested broadly across that corpus, not one named file) showing
@@ -187,8 +188,25 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
   owner via `SendUserFile`. 509 passed, `ruff check .` clean.
 - [x] 5 verification green, baseline suites still green — **509 passed, exit 0, `ruff check .`
   clean** (2026-09-13, this session's own run, after T099's amendment)
-- [ ] 6 review
-- [ ] 7 closed
+- [x] 6 review — scoped `reviewer` subagent, `989c08f..HEAD` (the full M12 diff, all 4 tasks).
+  **Verdict: PASS WITH WAIVERS.** No Critical. One High (`docs/SPEC.md` F7's row still described
+  T098's raw-radius outlier filter after T098 closed with no code change — a stale requirement
+  pointing at a mechanism never shipped) and three Medium (the junk-fraction boundary: code used
+  strict `>`, three prose descriptions said "at or above"; F8's row didn't name T099's own
+  junk-dominated exception to "never silently guessed"; the no-production + all-unread +
+  junk-dominated path returned `[]` with no test pinning it as deliberate) — all four fixed same
+  session (`8d6a6e6`/`fc0e5f3`). Two Low also fixed: `_slide_window`'s shrink-fallback condition was
+  one off from its own docstring ("wider than" vs. the code's `>=`), needlessly shrinking an
+  exact-fit window; a stray docstring line-wrap. Three Low waived as documented, not blocking: an
+  unreachable off-raster-centre edge case, one extra OCR pass on the no-production branch
+  (deliberate), informational notes. Reviewer independently re-ran the full suite and `ruff check .`
+  itself rather than trusting commit messages. Re-verified after fixes: 513 passed, `ruff check .`
+  clean. Full account: `docs/DECISIONS.md` ADR-032's own review-fix amendment.
+- [x] 7 closed — all of I5's exit criteria met (T097/T099 landed with evidence and passing tests,
+  T098 closed with measured evidence, full suite green, T100's measurement recorded in ADR-032
+  regardless of direction, owner spot-check/sign-off recorded — the owner's own review of the
+  before/after evidence directly shaped T099's final design, a stronger form of sign-off than a
+  simple approval). M12 milestone complete.
 
 ## Iteration I4: OCR scale-invariance, points auto-fill, viewer route alternatives, route-choice quality, relief prep (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
 
