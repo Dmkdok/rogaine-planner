@@ -49,7 +49,10 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   **2026-09-12, same session: new owner bug report** — control numbers still unread on many real
   scans despite being clearly legible, plus spurious tiny detections in cover-page/legend text.
   Became **Iteration I5** (M12, T097-T100, `docs/iterations/I5-control-detection-false-negatives.md`)
-  — delta written, **gate approved 2026-09-12** («Утверждаю, продолжи») — see "Iteration I5" below.
+  — delta written, **gate approved 2026-09-12** («Утверждаю, продолжи»). **All 4 tasks landed
+  2026-09-13** (T097, T099 — amended once after the owner's own T100 sign-off found its first
+  version too aggressive — T098 closed with no code change, T100 measured). 509 passed,
+  `ruff check .` clean. Independent review (Phase 6) not yet run — see "Iteration I5" below.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -156,31 +159,30 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
 - [x] 2 impact map written — same file
 - [x] 3 docs amended (SPEC F7/F8 acceptance extended, DECISIONS ADR-032, TASKS M12 T097-T100)
 - [x] GATE — approved by the owner 2026-09-12 («Утверждаю, продолжи»)
-- [ ] 4 implementation — **T097 landed** (`c0ae26d`) — `_ocr_crop`'s window now slides along an
-  axis to stay in-bounds instead of shrinking, 5 new edge-adjacent-control tests, 505 passed.
-  **T098 closed with no code change** — a median+MAD raw-radius outlier filter was built, tried,
-  and measured unsafe (stripped genuine detections on all 3 of `kkm-toksovo`/`lembolovo-kkm`/
-  `novo-kavgolovsky-lesopark`'s own read-rate floors, and failed its own synthetic decoy test) —
-  full account: `docs/DECISIONS.md` ADR-032's amendment, `docs/TASKS.md` T098's own entry. Reverted
-  cleanly, tree back to 505 passed / `ruff check .` clean before proceeding. **T099 landed**
-  (`a0f6d59`) — `_ocr_gate_sub_base_scale` now probes each sub-1.0 candidate's own crop
-  individually and keeps only the ones that read a plausible number (generalised one branch beyond
-  its own DoD's letter — the no-production branch now gates too, closing item 4's cover-page/legend
-  false-positive path even with no production side to compare against, recorded as a deliberate
-  departure in ADR-032's own amendment). Measured: the 3 real-scan floors' circle counts dropped
-  (23→16, 25→8, 22→13) but each map's absolute `n_read` is unchanged (16, 8, 13) — only the
-  never-successful candidates were dropped, so the existing `n_read >=` floors didn't need to move.
-  506 passed, `ruff check .` clean. **T100 measured** — colour-heuristic coverage confirmed (no gap).
-  Corpus-wide: owner's 14 maps circles 420→387 (-7.9%), reads 228→229 (+1); 40-map `ogps-*` sample
-  circles 1877→1526 (-18.7%), reads 528→527 (-1, noise). Visual spot-check found a real,
-  map-dependent trade-off, not a clean win everywhere: `ogps-3771` cleanly drops 213 coincidental
-  false positives (a pink-hatched "no-crossing zone" texture) with zero real controls affected, but
-  the owner's own `kkm-toksovo` also silently drops 4+ confirmed real, legible controls (91/92/72/52)
-  that Tesseract never read — before T099 these still appeared flagged-unread; now they vanish
-  entirely. Full account: ADR-032's amendment, `docs/TASKS.md` T100's entry. Before/after crops sent
-  via `SendUserFile`. **Milestone gated on the owner's decision** (keep T099's drop-if-unread
-  behaviour, or amend it to flag instead) before T100/M12 can close.
-- [ ] 5 verification
+- [x] 4 implementation — all four tasks resolved. **T097 landed** (`c0ae26d`) — `_ocr_crop`'s
+  window now slides along an axis to stay in-bounds instead of shrinking, 5 new edge-adjacent-
+  control tests. **T098 closed with no code change** — a median+MAD raw-radius outlier filter was
+  built, tried, and measured unsafe (stripped genuine detections on all 3 of `kkm-toksovo`/
+  `lembolovo-kkm`/`novo-kavgolovsky-lesopark`'s own read-rate floors, and failed its own synthetic
+  decoy test); reverted cleanly before proceeding. **T099 landed** (`a0f6d59`), **then amended**
+  (`f4846cf`) after T100's own visual spot-check found the first version too aggressive (see
+  below). **T100 measured, and drove T099's amendment.** First-pass measurement found a real,
+  map-dependent trade-off, not a clean win everywhere: `ogps-3771` cleanly dropped 213 coincidental
+  false positives (a pink-hatched "no-crossing zone" ink texture) with zero real controls affected,
+  but the owner's own `kkm-toksovo` also silently dropped 4+ confirmed real, legible controls
+  (91/92/72/52) that Tesseract never read — before T099 these still appeared flagged-unread, after
+  they vanished entirely. Put to the owner as 3 options (keep / fully revert / a junk-fraction
+  heuristic, explicitly flagged as calibrated against only 2 points); **owner chose the
+  heuristic** — `_ocr_gate_sub_base_scale` now only filters to the reading candidates when a
+  sub-1.0 set's unread fraction exceeds 85% (`_SUB_BASE_JUNK_UNREAD_FRACTION`), otherwise keeps the
+  whole set flagged (T090's original behaviour). Final re-measurement: owner's 14-map corpus
+  circles 420→420 (net 0), reads 228→229 (+1, T097's own contribution), rate 54.3%→54.5%; 40-map
+  `ogps-*` sample circles 1877→1629 (-13.2%), reads 528→527 (-1, noise); `ogps-3771`'s own clean win
+  confirmed unchanged at 17/17. Full account: `docs/DECISIONS.md` ADR-032's two amendments,
+  `docs/TASKS.md` T098/T099/T100's own entries. Before/after crops and the resolution sent to the
+  owner via `SendUserFile`. 509 passed, `ruff check .` clean.
+- [x] 5 verification green, baseline suites still green — **509 passed, exit 0, `ruff check .`
+  clean** (2026-09-13, this session's own run, after T099's amendment)
 - [ ] 6 review
 - [ ] 7 closed
 

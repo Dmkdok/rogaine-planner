@@ -1988,19 +1988,29 @@ the implementer's self-report.
   (`kkm-toksovo`, `lembolovo-kkm`, `novo-kavgolovsky-lesopark`) must not regress; new synthetic case
   with a mixed genuine-control-plus-glyph-false-positive sub-1.0 set proves the genuine one survives
   and the glyph one does not.
-  **Landed** (`a0f6d59`). Also generalised beyond the DoD's letter, per this session's own
-  reasoning (recorded, not silently expanded): the per-candidate probe now runs even when no
-  `>=1.0` candidate exists to compare against (T090's version returned the whole unfiltered sub-1.0
-  set unconditionally there, skipping OCR as pure waste) — a map whose only Hough hits are sub-1.0
-  (e.g. a cover page with no real controls) is exactly item 4's unguarded case, so leaving that
-  branch untouched would have left it open. Measured against the 3 real-scan floors: circle counts
-  dropped (`novo-kavgolovsky-lesopark` 23→16, `kkm-toksovo` 25→8, `lembolovo-kkm` 22→13) but each
-  map's absolute `n_read` is unchanged (16, 8, 13) — the dropped candidates were exactly the ones
-  never contributing a successful read, so the existing `n_read >=` floors did not need to move,
-  only the exact circle-count assertions (updated in `tests/unit/vision/test_ocr.py`). 506 passed,
-  `ruff check .` clean.
+  **Landed** (`a0f6d59`), **then amended same session after the owner's T100 sign-off found it too
+  aggressive.** First version also generalised beyond the DoD's letter (per-candidate probe running
+  even with no `>=1.0` candidate to compare against, closing item 4's cover-page/legend-text gap
+  even without a production alternative) and measured clean against the 3 ADR-031 real-scan floors
+  (circle counts dropped, absolute `n_read` unchanged in every case). But T100's own visual
+  spot-check (not just the aggregate counts) found this first version silently dropped confirmed
+  real, legible, correctly-positioned controls (91, 92, 72, 52 on `kkm-toksovo`) that Tesseract
+  simply never read — before T099 these still appeared detected-but-unread (flagged); after, they
+  vanished entirely, an F8-spirit regression the aggregate floor numbers alone did not surface.
+  **Amended** (ADR-032's own amendment): `_ocr_gate_sub_base_scale` now only filters down to the
+  reading candidates when the sub-1.0 set looks junk-dominated (`_SUB_BASE_JUNK_UNREAD_FRACTION =
+  0.85`, the owner's own chosen resolution among 3 options put to them, explicitly accepting this
+  threshold is calibrated against only 2 real points); below that fraction the whole set is kept,
+  flagged unread like any production-scale detection. Re-verified: owner's 14-map corpus circles
+  420→420 (net 0 — none of the 14 crosses the 85% line), reads 228→229 (+1, T097's own
+  contribution), rate 54.3%→54.5%; 40-map `ogps-*` sample circles 1877→1629 (-13.2%), reads 528→527
+  (-1, noise); `ogps-3771`'s own clean win (213 pink-hatching false positives removed) confirmed
+  unchanged at 17/17. Two stale unit tests replaced with four exercising both sides of the
+  junk-fraction line; the 3 ADR-031 floor tests' `len(circles) ==` assertions reverted to their
+  T090 values (25, 22, 23) — `n_read >=` floors untouched throughout, since the absolute
+  successful-read count never changed. 509 passed, `ruff check .` clean.
 
-- [ ] **T100** — Confirm the colour heuristic's coverage and measure the combined effect — paths:
+- [x] **T100** — Confirm the colour heuristic's coverage and measure the combined effect — paths:
   `tests/unit/vision/test_controls.py` (pinning test only if a gap is found), throwaway
   `data/maps/_t100_measure.py` (gitignored, same convention as T089/T090's own scripts) — deps:
   T097, T098, T099 — DoD: confirm `purple_mask`/`ink_hue_ranges` already gate every detection and
@@ -2010,17 +2020,13 @@ the implementer's self-report.
   of direction; before/after crops for controls matching the owner's own reported examples sent to
   the owner for the manual sign-off this milestone's DoD requires (ADR-019 precedent) before this
   checkbox closes.
-  **Measurement done, colour-heuristic coverage confirmed (no gap, no speculative test added) —
-  checkbox left open pending the owner's decision on a real trade-off this measurement surfaced.**
-  Corpus-wide: owner's 14 maps 420→387 circles (-7.9%), reads 228→229 (+1), rate 54.3%→59.2%; 40
-  `ogps-*` sample 1877→1526 circles (-18.7%), reads 528→527 (-1, noise), rate 28.1%→34.5%. Visual
-  spot-check (not just aggregate counts) found T099 behaves very differently on different maps:
-  `ogps-3771_...` is a clean win (230→17 circles, a confirmed pink-hatched "no-crossing zone" ink
-  texture in the same colour family generating hundreds of coincidental false positives, every real
-  control unaffected) but the owner's own `kkm-toksovo` is not (25→8 circles; controls 91/92/72/52
-  confirmed by eye as real, legible, correctly-positioned controls that Tesseract simply never read
-  at this map's print style — now silently absent from the output instead of appearing
-  detected-but-unread as they did before T099). Full account, including the exact question put to
-  the owner: `docs/DECISIONS.md` ADR-032's own amendment. Before/after crops sent via
-  `SendUserFile`. **Awaiting the owner's decision** (keep T099 as landed, or amend it to flag
-  rather than drop unread sub-1.0 candidates) before this checkbox and the milestone can close.
+  **Done.** Colour-heuristic coverage confirmed (no gap, no speculative test added). First
+  measurement pass (T099's first version) found a real trade-off — `ogps-3771` cleanly dropped 213
+  pink-hatching false positives, but the owner's own `kkm-toksovo` also silently dropped confirmed
+  real, legible controls (91/92/72/52) — put to the owner as 3 options (keep / fully revert / a
+  junk-fraction heuristic); **owner chose the heuristic**, T099 amended accordingly (own entry
+  above, ADR-032's amendment). Final re-measurement after the amendment: owner's 14-map corpus
+  circles 420→420 (net 0), reads 228→229 (+1, T097's own contribution), rate 54.3%→54.5%; 40-map
+  `ogps-*` sample circles 1877→1629 (-13.2%), reads 528→527 (-1, noise); `ogps-3771`'s own clean win
+  confirmed unchanged at 17/17. Before/after crops and the amendment's own resolution sent to the
+  owner via `SendUserFile`. Full account: `docs/DECISIONS.md` ADR-032's amendments.

@@ -1437,3 +1437,39 @@
   recorded as a real, reproduced flip rather than a visually dramatic "digit was chopped off" story
   — Tesseract's own layout analysis is evidently sensitive to a smaller margin change than a human
   eye would guess, not fully root-caused pixel-by-pixel here.
+
+  **Resolution, same session — owner chose to amend T099 rather than keep or fully revert it.**
+  Put to the owner as three options (keep T099's drop-if-unread; fully revert to T090's whole-set
+  behaviour, which would also bring back `ogps-3771`'s 213 false positives as flagged-unread since
+  the mechanism cannot tell them apart from a genuine illegible control; or a junk-fraction
+  heuristic, explicitly flagged as calibrated against only 2 real points, not corpus-validated) —
+  the owner picked the heuristic. Implemented as `_SUB_BASE_JUNK_UNREAD_FRACTION = 0.85`: below it,
+  `_ocr_gate_sub_base_scale` keeps the whole sub-1.0 set when it beats production (T090's original
+  behaviour — real controls stay visible, flagged unread downstream like any production-scale
+  detection); at or above it, only the reading candidates survive (T099's original behaviour). Both
+  calibration points sit clear of the line (`kkm-toksovo` 68% unread, kept whole; `ogps-3771` 93%
+  unread, filtered) with meaningful margin either side, though only 2 points.
+
+  Re-verified against the full real corpus, not assumed from the two calibration maps alone:
+  **owner's 14-map corpus** circles 420→420 (net 0 — `kkm-toksovo`/`lembolovo-kkm`/
+  `novo-kavgolovsky-lesopark` all revert to their T090 counts, none of the 14 crosses the 85% line),
+  reads 228→229 (+1, T097's own contribution — `history-race-primorsk`), rate 54.3%→54.5%. **The
+  40-map `ogps-*` sample**: circles 1877→1629 (-13.2%, versus T099 first version's -18.7% — some of
+  that reduction was `kkm-toksovo`-style real controls that have now been restored), reads 528→527
+  (-1, unchanged, noise-level), rate 28.1%→32.4%. `ogps-3771` itself confirmed unchanged at 17/17
+  (100%) — the amendment did not undo its own clean win. Three existing unit tests in
+  `TestOcrGateSubBaseScale` needed no change (their candidates are uniformly all-read or all-unread,
+  so which side of the junk-fraction line does not affect the outcome); two whose premise was
+  T099's unconditional per-candidate filtering were replaced with four that exercise both sides of
+  the line, with and without a production side to compare against. The three ADR-031 real-scan
+  floor tests (`kkm-toksovo`, `lembolovo-kkm`, `novo-kavgolovsky-lesopark`) had their `len(circles)
+  ==` assertions reverted to their T090 values (25, 22, 23) — `n_read >=` floors were never touched,
+  since the absolute successful-read count never changed across any version of this gate. 509
+  passed, `ruff check .` clean.
+
+  **What is explicitly not done here, named rather than silently skipped:** the 0.85 threshold is
+  not validated against the wider corpus (only the 2 maps that motivated it), so a map with, say,
+  70-84% unread and a genuinely junk-dominated set (or 86-95% unread with mostly real, illegible
+  controls) would get the untested side of this heuristic. Flagged as follow-up corpus-wide
+  validation, not silently assumed solid — the owner made this trade explicitly, informed of the
+  gap, rather than the session picking a number and moving on.
