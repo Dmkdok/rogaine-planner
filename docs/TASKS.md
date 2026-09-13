@@ -2030,3 +2030,81 @@ the implementer's self-report.
   `ogps-*` sample circles 1877→1629 (-13.2%), reads 528→527 (-1, noise); `ogps-3771`'s own clean win
   confirmed unchanged at 17/17. Before/after crops and the amendment's own resolution sent to the
   owner via `SendUserFile`. Full account: `docs/DECISIONS.md` ADR-032's amendments.
+
+## M13 — Real-map detection gaps and viewer UX (Iteration I6, `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`)
+
+> T103 before T105 (both touch `vision/controls.py`'s `_detect_circles` candidate list — T103 must
+> remove the forbidden-symbol false positives before T105's confidence floor is measured against a
+> clean corpus). T102 before T104 (both touch `vision/ocr.py::_ocr_crop`'s masking step — T102 fixes
+> the general real-scan OCR miss first, T104 extends the resulting mechanism to a second ink
+> colour). T106 before T107 (both touch `app.js`'s pointer/mode machinery — T106 fixes the shared
+> click-vs-drag distinction and active-state affordance, T107 reuses it for the panel's single-shot
+> add-control flow). T101 is independent (own file, `vision/palette.py`) and freely parallel with
+> everything else.
+
+- [ ] **T101** — Fix real-scan water/river misclassification — paths: `src/rogaine/vision/palette.py`,
+  `tests/unit/vision/test_segment.py`, possibly `config/default.toml` — deps: none — DoD: diagnose
+  (against `data/maps/ogps-6802_4a769f64b455f9b4675552284c3681b1`) why this map's river ink does not
+  land in `water_uncrossable`'s configured Lab band before designing a fix (ADR-026 precedent);
+  `rogaine plan` on this map no longer routes through the river; a known crossable ditch/shallow
+  watercourse on the same map stays passable; every existing synthetic-fixture IoU floor
+  (`test_segment.py`) unchanged; a new real-scan classification test pins the fixed behaviour,
+  skipped when the gitignored scan is absent (ADR-010 convention).
+
+- [ ] **T102** — Fix missing OCR reads on `ogps-6802` controls 42/53/72 — paths:
+  `src/rogaine/vision/ocr.py`, `tests/unit/vision/test_ocr.py` — deps: none — DoD: diagnose which
+  known real-scan OCR failure mode (ADR-023's leftover-ink/ring-erasure families) or new mechanism
+  applies to these three controls before changing `_ocr_crop`; a new `TestRealScanReadRateFloor`
+  case for this map with 42/53/72 (or a documented subset) reading correctly; every existing
+  `TestRealScanReadRateFloor` floor re-run and unchanged or improved, never silently dropped.
+
+- [ ] **T103** — Exclude the ISOM 709 out-of-bounds symbol from control detection and confirm it
+  stays impassable in routing — paths: `src/rogaine/vision/controls.py`, possibly a new dependency
+  on `vision/palette.py`'s terrain labels, `tests/unit/vision/test_controls.py` — deps: none — DoD:
+  diagnose the symbol's actual rendering on `data/maps/ogps-7302_5d8c290224a04f49e2c95484d2fbaf92`
+  (solid fill vs. hatch) before choosing between reusing `classify_palette`'s `out_of_bounds` mask
+  as an exclusion region and a dedicated shape discriminator; a new synthetic test (an
+  `out_of_bounds` block plus real control circles) shows zero spurious candidates inside the block
+  and all real circles still found; `ogps-7302`'s own circle count drops from dozens of false
+  positives to the map's true control count; confirm (no code change expected) that routing already
+  excludes `out_of_bounds` once correctly classified — `cost/graph.py`'s existing
+  `strict_impassable` path, not a new mechanism.
+
+- [ ] **T104** — Extend OCR to read a control's number when printed in a different colour from its
+  own ring — paths: `src/rogaine/vision/ocr.py` — deps: T102 (same function, `_ocr_crop`'s masking
+  step; land T102 first) — DoD: diagnose `data/maps/ogps-8078_8295c94963b2c249d6f4d94fd0c35fa1`'s
+  exact two-colour print style before widening the crop's ink mask; the widening must not reintroduce
+  contour-line bleed into the crop (ADR-023's own past failure mode — its regression test must stay
+  green); a new `TestRealScanReadRateFloor` case for `ogps-8078` with previously-unread numbers now
+  reading; existing floors unchanged or improved.
+
+- [ ] **T105** — Confidence-gated auto-placement floor — paths: `src/rogaine/vision/controls.py`
+  (`_detect_circles`'s final candidate filter) — deps: T103 (land after the forbidden-symbol
+  exclusion so the corpus measurement below is not contaminated by those false positives); informally
+  sequenced after T102/T104 (an OCR fix changes which candidates are worth keeping) — DoD: pick a
+  conservative, corpus-measured confidence floor (ADR-033: shipped directly, no intermediate owner
+  review step) below which a candidate is dropped rather than auto-placed as a `Control`; corpus-wide
+  before/after circle-count measurement (owner's 14-map corpus + an `ogps-*` sample, T099/T100's own
+  method) recorded in `docs/DECISIONS.md` regardless of direction; every existing circle-count floor
+  (`TestRealScanReadRateFloor` et al.) re-verified — any that must move is a named, measured change,
+  never a silent regression; a new synthetic test with a deliberately marginal false-positive
+  candidate confirms it is dropped, not auto-placed.
+
+- [ ] **T106** — Calibration tool active-state UX and click-vs-drag fix — paths:
+  `src/rogaine/web/static/app.js` (`initMapViewport`'s `pointerdown` handler, `setMode`,
+  `setCalibrationPoint`), `src/rogaine/web/static/style.css` — deps: none — DoD: while `calibrate`
+  mode is armed, a pointer-down-move-up gesture (a drag) pans the map instead of placing or
+  overwriting a calibration point — only a genuine click (no meaningful movement between down and
+  up) places one; the armed state gets a visibly distinct affordance beyond the existing
+  `button[aria-pressed="true"]` accent colour already used for ordinary primary actions elsewhere
+  (e.g. a red/warning treatment), so the user cannot mistake it for a normal button; a new
+  `tests/e2e/test_viewer.py` case exercises both the drag-pans and click-places behaviours.
+
+- [ ] **T107** — Manual add-control click-to-place flow — paths:
+  `src/rogaine/web/static/app.js` (`add-control-btn`'s click handler) — deps: T106 (reuses its fixed
+  pointer/mode machinery rather than duplicating a second path) — DoD: clicking "Добавить контроль"
+  arms add-mode without placing anything; the next map click places the control exactly there (not
+  the view centre); placement immediately returns the tool to idle so the map is draggable again,
+  matching the calibration-line tool's own click-to-place flow; the existing `toggle-add-mode-btn`
+  multi-placement flow is untouched; a new `tests/e2e/test_viewer.py` case covers click-to-place plus
+  the immediate return to idle.

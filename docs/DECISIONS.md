@@ -35,6 +35,7 @@
 | 030 | T089 diagnosis: H1 (DPI/calibration) unsupported by the corpus; H2 (missing sub-1.0 circle-scale multipliers) is real for some maps but the ring-coverage scorer can't safely act on it alone | accepted |
 | 031 | T090 fixes H2 with measured sub-1.0 `circle_scale_multipliers` rungs gated behind an OCR-outcome check; OCR crop-sizing constants are re-verified and left unchanged (no clean win found) | accepted |
 | 032 | Real-scan control detection: OCR crop windows slide instead of truncating at the raster edge; a per-candidate raw-radius consistency filter and a per-candidate sub-1.0 OCR gate replace their set-level predecessors | accepted |
+| 033 | I6's detection-gap items are diagnosis-first (ADR-026 precedent); the low-confidence auto-placement floor is chosen and shipped without an intermediate owner review step | accepted |
 
 ---
 
@@ -1495,3 +1496,33 @@
   a raw user coordinate, on this path); one extra `read_control_numbers` pass now paid on the
   no-production branch (deliberate, already documented above); a stray docstring line-wrap (fixed
   anyway, cheap). Re-verified after fixes: 513 passed, `ruff check .` clean.
+
+## ADR-033 — I6's detection-gap items are diagnosis-first; the low-confidence auto-placement floor ships without an intermediate owner review step
+- Date: 2026-09-13
+- Status: accepted
+- Context: I6's delta intake (`docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`) bundles
+  seven owner-reported items across three real maps plus two viewer UX complaints. Four of the
+  seven (river/lake misclassification, two missing-OCR cases, the forbidden-area symbol) are
+  real-scan failures whose exact mechanism is not yet confirmed by measurement — the same situation
+  ADR-026 named for T089, and the same situation that produced two real, non-obvious findings there
+  (T089/ADR-030's H1/H2 split) rather than a guessed fix. A fifth item asks for a new
+  confidence-gated auto-placement floor in `vision/controls.py` — conceptually adjacent to
+  T099/T100's own confidence-style heuristic (`_SUB_BASE_JUNK_UNREAD_FRACTION`), which the owner's
+  own T100 sign-off showed can silently drop genuine, legible controls if picked too aggressively
+  and not checked against the real corpus.
+- Decision: (1) Items 1, 2, 4 and 6 (`T101`, `T102`, `T103`, `T104`) are diagnosed against their own
+  named real map before any fix is designed, mirroring ADR-026/T089 — each task's own entry in
+  `docs/TASKS.md` records what was actually measured, not what was assumed going in. (2) Item 7
+  (`T105`)'s confidence floor is picked directly from a conservative, corpus-measured value and
+  shipped in the same session — the owner explicitly chose this over T099/T100's precedent of
+  presenting a before/after trade-off for sign-off first, accepting the small residual risk of an
+  overly cautious floor (dropping a few more borderline-but-real detections than a tuned value
+  would) in exchange for skipping that review round. The corpus-wide before/after count is still
+  measured and recorded (same method as T099/T100), just not gated on owner approval before landing.
+- Consequences: T101-T104 may each take longer than a single fix-and-test cycle (diagnosis first,
+  same as T089's two-hypothesis split), and their `docs/TASKS.md` entries must record the measured
+  root cause even when it differs from this document's own preliminary guesses (see the iteration
+  doc's "Diagnosis-first items" section). T105's floor is not owner-validated the way T099/T100's
+  final value was — if the corpus-wide measurement later shows it was too aggressive on some other
+  map, that becomes a fresh owner report and a new iteration, not a defect in this decision; the
+  trade-off was made with the risk named up front, not discovered after the fact.

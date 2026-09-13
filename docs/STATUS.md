@@ -54,6 +54,18 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   first version too aggressive — T098 closed with no code change, T100 measured). Independent
   review PASS WITH WAIVERS (1 High + 3 Medium fixed same session). **M12 complete** — 513 passed,
   `ruff check .` clean. See "Iteration I5" below for the full account.
+  **2026-09-13, same session: new owner bug report** — a spot-check across three more real maps
+  (`ogps-6802`, `ogps-7302`, `ogps-8078`) plus two viewer UX complaints (calibration tool active-state,
+  manual add-control flow). Became **Iteration I6** (M13, T101-T107,
+  `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`) — delta intake agreed and impact map
+  written this session; **docs amended (SPEC F4/F7/F8/F17, DECISIONS ADR-033, TASKS M13 T101-T107),
+  gate approved by the owner 2026-09-13 («Утверждаю, продолжи»).**
+
+## Baseline I6
+`docker compose run --rm tests` — 513 passed, exit 0 (own run, not piped through `tail`); `ruff
+check .` clean (run inside the `tests` container — `docker compose run --rm app ruff check .` fails,
+the `app` image has no `ruff` on `PATH`, use `tests`). 2026-09-13, branch
+`iteration/I2-vision-recognition-fix` @ `ba27ff1`, tree clean.
 
 ## Baseline I2
 `docker compose run --rm tests` — 447 passed, exit 0; `ruff check .` clean. 2026-09-05, branch
@@ -132,6 +144,44 @@ subagent call in that session succeeded normally, so this looks transient/interm
 hard block — but if a future session sees the same error, know that subagent tool calls can fail
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
+
+## Iteration I6: real-map detection gaps and viewer UX (gate approved, implementation starting, branch `iteration/I2-vision-recognition-fix`, continued)
+
+Owner report, in-chat 2026-09-13, with one annotated screenshot: a spot-check across three more
+real maps surfaced a river-crossing routing bug and two missing-OCR cases (`ogps-6802`), a forbidden
+-area (ISOM 709) symbol misdetected as dozens of controls (`ogps-7302`), and an unusual two-colour
+ring/number print style whose numbers go unread despite every circle being found correctly
+(`ogps-8078`); plus two viewer UX complaints (the calibration tool's active-state is unclear enough
+that panning while armed can corrupt an already-placed line; manually adding a control drops a pin
+immediately instead of click-to-place like the calibration line) and one cross-cutting policy
+request (skip auto-placing a control the system isn't confident about, rather than risk a false
+one). Full intake + impact map:
+`docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`. New ADR: ADR-033 (four items are
+diagnosis-first, ADR-026 precedent; the confidence-gated auto-placement floor ships without an
+intermediate owner review step, the owner's own choice over T099/T100's precedent). SPEC F4/F7/F8/
+F17 acceptance text extended, no new requirement ids, no renumbering.
+
+Explicitly out of scope, owner's own words: `ogps-6802` carries an unrelated, pre-existing
+annotation artifact (someone overlaid a circled path on top of one trail) — not a detection defect,
+no task touches it.
+
+Progress (M13 in `docs/TASKS.md`, T101-T107):
+- [x] 0 baseline recorded — `docker compose run --rm tests` 513 passed, exit 0; `ruff check .`
+  clean; 2026-09-13, tree clean (see "Baseline I6" above)
+- [x] 1 delta intake agreed (in / out / deferred) — all 7 items taken in one milestone (owner's own
+  choice over splitting into two rounds); item 7's confidence floor shipped conservative and direct,
+  no intermediate review step (owner's own choice) — both recorded in
+  `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`
+- [x] 2 impact map written — same file (per-item touches/SPEC/coverage/blast-radius/regression-proof
+  table, plus ordering constraints: T103 before T105, T102 before T104, T106 before T107, T101
+  independent)
+- [x] 3 docs amended (SPEC F4/F7/F8/F17 extended, DECISIONS ADR-033, TASKS M13 T101-T107)
+- [x] GATE — approved by the owner 2026-09-13 («Утверждаю, продолжи»)
+- [ ] 4 implementation
+- [ ] 5 verification
+- [ ] 6 review
+- [ ] 7 closed
+- [ ] 8 deploy (optional, not yet decided)
 
 ## Iteration I5: control-circle/number false negatives and false positives on real scans (closed, branch `iteration/I2-vision-recognition-fix`, continued)
 
