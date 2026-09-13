@@ -536,13 +536,16 @@ class TestOcrGateSubBaseScale:
     or OCR call; `_stub_reading` marks the first *n_read* controls (in the order passed in) as read,
     the rest as unread.
 
-    T099/ADR-032 generalised the sub-1.0 side from a whole-set comparison to a per-candidate one --
-    the first four tests below happen to keep the same overall pass/fail outcome as T090's original
-    version (every sub-1.0 candidate in them either all read or all don't, so per-candidate
-    filtering changes nothing about which side wins), which is itself the regression proof that
-    T099 didn't disturb T090's own already-covered branches. The last two tests are T099's own new
-    coverage: a mixed genuine-plus-glyph-false-positive set, and the no-production branch which now
-    also gates instead of standing unconditionally.
+    T099/ADR-032 generalised the sub-1.0 side from a whole-set comparison to a per-candidate one,
+    then this same amendment (after the owner's own T100 sign-off found the first version too
+    aggressive -- see the function's own docstring) narrowed that to a junk-fraction condition:
+    below `_SUB_BASE_JUNK_UNREAD_FRACTION` unread, the whole set is kept (T090's original
+    behaviour); at or above it, only the reading candidates survive (T099's original behaviour).
+    The first four tests below happen to keep the same overall pass/fail outcome under either rule
+    (every sub-1.0 candidate in them either all reads or all doesn't, so which rule applies changes
+    nothing about which side wins) -- itself the regression proof that neither amendment disturbed
+    T090's own already-covered branches. The remaining tests cover the junk-fraction line itself,
+    on both sides of it, with and without a production side to compare against.
     """
 
     @staticmethod
@@ -638,17 +641,15 @@ class TestOcrGateSubBaseScale:
         )
         assert result == production
 
-    def test_no_production_candidates_still_gates_sub_base_per_candidate(
+    def test_no_production_candidates_below_junk_fraction_keeps_whole_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """T099/ADR-032: no `>=1.0` entry has any candidate at all -- nothing to compare against --
-        but the per-candidate probe still runs and still filters, unlike T090's original version
-        (which returned the whole unfiltered sub-1.0 set unconditionally here, paying no OCR cost).
-        A map whose only Hough hits are sub-1.0 (e.g. a cover page with no real controls, only small
-        round glyph loops) is exactly the case this gate must not leave unguarded. Only one
-        `read_control_numbers` call happens (there is nothing on the production side to probe) --
-        the stub dict below has no key for a production call, so an unexpected second call raises
-        `KeyError` and fails the test loudly.
+        """No `>=1.0` entry has any candidate at all -- nothing to compare against -- but the
+        per-candidate probe still runs (needed for the junk-fraction check regardless). Here only
+        1 of 2 candidates reads (50% unread, below `_SUB_BASE_JUNK_UNREAD_FRACTION`), so the set is
+        not junk-dominated and the whole thing is kept -- T090's original "nothing to compare
+        against, sub-1.0 stands" behaviour, now reached via the fraction check rather than
+        unconditionally.
         """
         sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9)]
         per_multiplier = [(0.5, sub_base), (1.0, [])]
@@ -656,8 +657,6 @@ class TestOcrGateSubBaseScale:
         import rogaine.vision.ocr as ocr_module
         from rogaine.vision.controls import _ocr_gate_sub_base_scale
 
-        # Only the first candidate reads a plausible number; the second (e.g. a glyph loop) does
-        # not.
         monkeypatch.setattr(
             ocr_module, "read_control_numbers", self._stub_reading({(10.0, 20.0): 1})
         )
@@ -665,17 +664,43 @@ class TestOcrGateSubBaseScale:
         result = _ocr_gate_sub_base_scale(
             np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
         )
-        assert result == [sub_base[0]]
+        assert result == sub_base
 
-    def test_mixed_genuine_and_glyph_false_positive_keeps_only_the_genuine_reads(
+    def test_no_production_candidates_above_junk_fraction_filters_to_the_reads(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """T099/ADR-032's own motivating case: two genuine sub-1.0 controls (both read a plausible
-        number) plus one coincidental glyph false positive (reads nothing) all cleared
-        `_ring_coverage` at the same winning sub-1.0 scale -- T090's set-level gate would have kept
-        all three, since the set's aggregate count (2) could still beat production. The
-        per-candidate gate drops exactly the one that doesn't read, keeps the two that do, and that
-        filtered set still wins against a weaker production side.
+        """Same "nothing to compare against" shape, but with 9 of 10 candidates unread (90%,
+        above `_SUB_BASE_JUNK_UNREAD_FRACTION`) -- a map whose only Hough hits are sub-1.0 junk
+        (e.g. a cover page with no real controls, only small round glyph loops) is exactly the case
+        this must not leave unguarded even with no production alternative, so only the one reading
+        candidate survives.
+        """
+        sub_base = [(float(i * 10), float(i * 10), 5.0, 0.9) for i in range(10)]
+        per_multiplier = [(0.5, sub_base), (1.0, [])]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({tuple(c[0] for c in sub_base): 1}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == [sub_base[0]]
+
+    def test_below_junk_fraction_keeps_the_illegible_ones_flagged_not_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T100's own real finding on `kkm-toksovo` (ADR-032's amendment): a genuine control whose
+        specific number Tesseract can't read must not silently vanish from the output the way T099's
+        first version made it -- it stays in the returned set (flagged unread downstream, exactly
+        like a production-scale detection would be) as long as the set as a whole doesn't look
+        junk-dominated. Two of three candidates unread (67%, below the 85% line) plus a weaker
+        production side: the whole 3-candidate set wins and is returned unfiltered.
         """
         sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9), (30.0, 30.0, 5.0, 0.9)]
         production = [(40.0, 40.0, 5.0, 0.9)]
@@ -684,19 +709,68 @@ class TestOcrGateSubBaseScale:
         import rogaine.vision.ocr as ocr_module
         from rogaine.vision.controls import _ocr_gate_sub_base_scale
 
-        # xs order matches `_controls_for`'s enumeration order: the two genuine controls (10, 20)
-        # read, the glyph false positive (30) does not -- `_stub_reading` marks the first n_read
-        # entries as read, so it is listed last.
         monkeypatch.setattr(
             ocr_module,
             "read_control_numbers",
-            self._stub_reading({(10.0, 20.0, 30.0): 2, (40.0,): 1}),
+            self._stub_reading({(10.0, 20.0, 30.0): 1, (40.0,): 0}),
         )
 
         result = _ocr_gate_sub_base_scale(
             np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
         )
-        assert result == [sub_base[0], sub_base[1]]
+        assert result == sub_base
+
+    def test_above_junk_fraction_drops_the_non_reading_candidates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T100's own real finding on `ogps-3771` (ADR-032's amendment): a set overwhelmingly
+        dominated by coincidental ink-texture false positives (a pink-hatched "no-crossing zone",
+        in the real case) should still be filtered down to its few genuine reads, not returned
+        whole. 9 of 10 candidates unread (90%, above the 85% line) plus a weaker production side:
+        only the reading candidate survives, and that filtered result still beats production.
+        """
+        sub_base = [(float(i * 10), float(i * 10), 5.0, 0.9) for i in range(10)]
+        production = [(999.0, 999.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({tuple(c[0] for c in sub_base): 1, (999.0,): 0}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == [sub_base[0]]
+
+    def test_above_junk_fraction_still_falls_back_to_production_if_filtered_reads_no_better(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Junk-dominated (90% unread) does not override the production comparison itself -- if the
+        few surviving sub-1.0 reads don't actually beat production, production still wins, same as
+        the non-junk-fraction tie-break above.
+        """
+        sub_base = [(float(i * 10), float(i * 10), 5.0, 0.9) for i in range(10)]
+        production = [(999.0, 999.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({tuple(c[0] for c in sub_base): 1, (999.0,): 1}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == production
 
 
 class TestHubTriangleIgnoresSubBaseScaleRungs:

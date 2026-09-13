@@ -97,6 +97,16 @@ _RING_COVERAGE_MIN = 0.75
 # count tie-break gets a say.
 _SCALE_TIE_EPS = 0.02
 
+# `_ocr_gate_sub_base_scale`'s (T099, amended per the owner's T100 sign-off, ADR-032) junk-fraction
+# line: a sub-1.0 candidate set with more than this fraction reading no plausible number is assumed
+# junk-dominated and filtered down to only the candidates that do read; below it, the whole set is
+# kept (flagged unread, as any production-scale detection already would be). Provisional, measured
+# against only 2 real points -- `kkm-toksovo` (0.68, real controls Tesseract couldn't read, must NOT
+# filter) and `ogps-3771_0da0ae4ad426ed5d03089615dbe38a1f` (0.93, a pink-hatched "no-crossing zone"
+# ink texture, must filter) -- comfortably between the two but not corpus-validated; a wider sweep
+# is flagged as follow-up, not silently assumed solid (ADR-032's amendment says so explicitly).
+_SUB_BASE_JUNK_UNREAD_FRACTION = 0.85
+
 
 def purple_mask(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
     """Boolean `(H, W)` mask of pixels inside any of `config.detector`'s configured ink bands, the
@@ -270,12 +280,13 @@ def _detect_circles(
     sweep-order tie against its own sub-1.0 window, or from a small false-positive ink cluster
     (ADR-030 measured both failure modes on real scans: naive widening was a net -24 reads across
     7 owner maps). `_ocr_gate_sub_base_scale` below probes the real OCR outcome of each sub-1.0
-    candidate individually (T099/ADR-032: a set-level comparison let a same-scale glyph false
-    positive, e.g. a round loop inside a bold digit label, ride along inside a winning sub-1.0 set
-    alongside genuine controls) and compares the surviving count against the >=1.0 (production)
-    side's own aggregate read count, defaulting to production otherwise -- bounded to at most two
-    `read_control_numbers` passes (one per candidate set), only paid when a sub-1.0 candidate would
-    otherwise be chosen blind, on top of the pipeline's own later OCR pass over whichever set is
+    candidate individually and compares the surviving count against the >=1.0 (production) side's
+    own aggregate read count, defaulting to production otherwise -- see its own docstring for why
+    the set is only *filtered* down to the reading candidates when it looks junk-dominated (T099,
+    then amended per the owner's own T100 sign-off, ADR-032), and kept whole (flagged unread) when
+    it doesn't. Bounded to at most two `read_control_numbers` passes (one per candidate set), only
+    paid when a sub-1.0 candidate would otherwise be chosen blind, on top of the pipeline's own
+    later OCR pass over whichever set is
     finally returned.
     """
     det = config.detector
@@ -338,36 +349,43 @@ def _ocr_gate_sub_base_scale(
     per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]],
     sub_base_candidates: list[tuple[float, float, float, float]],
 ) -> list[tuple[float, float, float, float]]:
-    """T090/ADR-031 H2 gate, generalised per-candidate by T099/ADR-032: `_select_best_scale`'s
-    ring-coverage-only score is not enough to trust a sub-1.0 winner. `_ring_coverage` saturates at
-    1.0 for any solid ink blob, not only a genuine ring (`_select_best_scale`'s own docstring), and
-    a smaller sub-1.0 search window is exactly the size a round loop inside a bold digit/letter
-    glyph (a title, a course-number label) can also fill -- a real, previously unguarded false-
-    positive path when such a glyph coincidence is *not* on a map with no real controls at all
-    (which the production-comparison path below still catches) but sits *alongside* genuine sub-1.0
-    controls on the same map.
+    """T090/ADR-031 H2 gate; per-candidate probing added by T099, then narrowed to a junk-fraction
+    condition by this same amendment after the owner's own T100 sign-off found T099's first version
+    too aggressive (ADR-032's amendment). `_select_best_scale`'s ring-coverage-only score is not
+    enough to trust a sub-1.0 winner: `_ring_coverage` saturates at 1.0 for any solid ink blob, not
+    only a genuine ring, and a smaller sub-1.0 search window is exactly the size a round loop inside
+    a coincidental ink texture (a bold glyph, a hatching crossing) can also fill.
 
     T090's original version compared two whole candidate *sets* by aggregate valid-read count and
-    kept one entirely -- so a few genuine sub-1.0 controls mixed with several glyph false positives
-    could still let the false positives ride along as part of the winning set. Fixed by probing
-    each sub-1.0 candidate's *own* crop individually and keeping only the ones that read a
-    plausible number, before ever comparing to the production side. A candidate that is a genuine
-    control but whose specific number happens to be illegible is indistinguishable, from inside
-    this function, from a glyph coincidence that never was a control -- both read `None` -- so this
-    gate trades "an illegible-but-real sub-1.0 control is silently dropped instead of surfaced as
-    flagged-unreadable" for "a same-scale glyph false positive no longer survives just because
-    enough real neighbours carried the set's own aggregate count." That trade only ever applies on
-    the already-narrow, already-gated sub-1.0 path (T090); the production (`>=1.0`) side is
-    unchanged, both in how it is computed and in that it is still returned as a whole, unfiltered
-    set when it wins.
+    kept one entirely. T099 (first version) instead probed each sub-1.0 candidate's own crop and
+    kept only the ones that read a plausible number -- but a candidate that is a genuine control
+    whose specific number is illegible reads exactly the same `None` a coincidental ink blob does,
+    so that filter cannot tell them apart. Measured on real scans (T100): on
+    `ogps-3771_0da0ae4ad426ed5d03089615dbe38a1f` this was a clean win (a pink-hatched "no-crossing
+    zone" ink texture generates hundreds of false positives, 213/230 unread, filtering them out
+    cost nothing real). On the owner's own `kkm-toksovo` it was not: 17/25 unread, but several of
+    those 17 are confirmed-by-eye real, legible, correctly-positioned controls (91, 92, 72, 52) that
+    Tesseract simply never read at this map's print style -- filtering silently dropped them from
+    the output entirely, instead of surfacing them flagged-unread the way every production-scale
+    (`>=1.0`) detection already does.
 
-    Comparison against production: the filtered sub-1.0 set's own size (every survivor read
-    something, by construction) versus production's aggregate valid-read count, same tie-break as
-    before -- ties, including both sides at zero, fall back to production, never to a sub-1.0 set
-    that reads no better. Unlike T090's version, this now runs the per-candidate probe even when no
-    `>=1.0` candidate exists at all to compare against: a map whose *only* Hough hits are sub-1.0
-    (e.g. a cover page with no real controls, only small round glyph loops) is exactly the
-    unguarded case above, and skipping the probe there would leave it wide open.
+    Resolution, the owner's own choice: gate the *filtering itself* on how unread-dominated the
+    sub-1.0 set looks, rather than always filtering or never filtering. Below
+    `_SUB_BASE_JUNK_UNREAD_FRACTION` unread, the set is assumed mostly real and returned whole
+    (T090's original behaviour: real controls stay visible even when illegible, flagged downstream
+    like any other unread control) if it beats production's own read count. At or above that
+    fraction, the set is assumed junk-dominated and only the candidates that actually read survive
+    (T099's original behaviour) -- `ogps-3771` (93% unread) crosses this line, `kkm-toksovo` (68%
+    unread) does not. The threshold itself is provisional, calibrated against only these 2 measured
+    points (ADR-032's amendment says so explicitly) -- a corpus-wide validation is flagged as
+    follow-up, not silently assumed solid.
+
+    Comparison against production is otherwise unchanged in shape from T090: same tie-break (ties,
+    including both sides at zero, fall back to production, never to a sub-1.0 result that reads no
+    better), same "no `>=1.0` candidate at all -> nothing to compare against" fallback (still probed
+    per-candidate first, since the junk-fraction check needs the per-candidate outcome regardless of
+    whether a comparison side exists -- a map whose only Hough hits are sub-1.0 junk is exactly the
+    case this must not leave unguarded even with no production alternative).
     """
     # Deferred import: `vision.ocr` imports `purple_mask` from this module at load time, so a
     # module-level import here would be circular.
@@ -391,19 +409,25 @@ def _ocr_gate_sub_base_scale(
         for cand, updated_control in zip(sub_base_candidates, sub_updated, strict=True)
         if updated_control.number is not None
     ]
+    sub_read_count = len(filtered_sub)
+    n_sub = len(sub_base_candidates)
+    unread_fraction = (n_sub - sub_read_count) / n_sub if n_sub else 0.0
+    junk_dominated = unread_fraction > _SUB_BASE_JUNK_UNREAD_FRACTION
 
     production_candidates = _select_best_scale(
         [(mult, candidates) for mult, candidates in per_multiplier if mult >= 1.0]
     )
     if not production_candidates:
-        return filtered_sub
+        return filtered_sub if junk_dominated else sub_base_candidates
 
     prod_updated, _flags = read_control_numbers(
         image, _controls_for(production_candidates), dpi, config
     )
     prod_ok = sum(1 for c in prod_updated if c.number is not None)
 
-    return filtered_sub if len(filtered_sub) > prod_ok else production_candidates
+    if sub_read_count <= prod_ok:
+        return production_candidates
+    return filtered_sub if junk_dominated else sub_base_candidates
 
 
 def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Control | None:
