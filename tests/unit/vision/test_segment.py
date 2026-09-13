@@ -17,6 +17,8 @@ from scipy.sparse.csgraph import connected_components
 from rogaine.config import default_config
 from rogaine.cost.field import compute_cost_field
 from rogaine.cost.graph import build_grid_graph
+from rogaine.io.raster import load_raster, resolve_dpi
+from rogaine.io.scale import mpp_from_dpi
 from rogaine.models import TERRAIN_ORDER, TerrainClass, TerrainMap, terrain_label
 from rogaine.vision.contours import contour_density
 from rogaine.vision.linear import extract_linear_features
@@ -35,6 +37,18 @@ from rogaine.vision.segment import (
 #: `test_controls.py` -- gitignored per ADR-010, present only on machines the owner handed it to.
 _REAL_SCAN_DIR = Path(__file__).resolve().parents[3] / "data" / "maps" / "grid-lines-red-controls"
 _REAL_SCAN_PATH = _REAL_SCAN_DIR / "map.jpeg"
+
+#: T101 (I6, `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`): same skip-if-absent
+#: convention, a different real scan whose river fragments into thousands of tiny
+#: `water_uncrossable` islands inside an otherwise `water_shallow` blob (see
+#: `_consolidate_banked_water`'s own docstring in `vision/palette.py` for the measured mechanism).
+_OGPS_6802_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "maps"
+    / "ogps-6802_4a769f64b455f9b4675552284c3681b1"
+)
+_OGPS_6802_PATH = _OGPS_6802_DIR / "map.jpg"
 
 # Same list, same reason as `test_palette.py`'s `AREA_CLASSES`: the 11 ISOM area classes with a
 # unique shade -- the ones a colour classifier alone should nail on the clean fixture render.
@@ -252,6 +266,89 @@ class TestGridInkOnRealScan:
 
         assert post_n < pre_n / 5, f"post-fix components {post_n} not far below pre-fix {pre_n}"
         assert post_giant >= 0.99, f"post-fix giant component only {post_giant:.3f} of all nodes"
+
+
+class TestBankedWaterConsolidationOnRealScan:
+    """T101, SPEC F4 (I6): on `ogps-6802`, the printed river's ink sits close enough to both
+    `water_shallow`/`water_uncrossable` shades (and to real scan noise) that `classify_labels`'s
+    per-pixel nearest-shade choice fragments one continuous, bank-lined river into thousands of
+    tiny `water_uncrossable` islands inside an otherwise `water_shallow` (passable) blob -- not
+    nearly enough of it to block a route (`docs/DECISIONS.md` ADR-033 measured this directly: the
+    river's largest single fragment was 341px against a river thousands of pixels long).
+    `_consolidate_banked_water` promotes a whole water blob once its own boundary is
+    substantially bank-lined; this pins that it does so for the real river without swallowing a
+    real hatched/screened marsh nearby that has no such bank line.
+    """
+
+    @pytest.mark.skipif(
+        not _OGPS_6802_PATH.is_file(),
+        reason="data/maps/ogps-6802.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_river_core_uncrossable_marsh_stays_shallow(self) -> None:
+        # No meta.toml dpi trusted here (`calibration_source = "assumed_default"`, ADR-016) --
+        # `resolve_dpi`'s own probe/fallback, matching what a real `rogaine plan` invocation
+        # without `--dpi` actually resolves (same convention as `test_ocr.py`'s own maps without a
+        # measured meta.toml).
+        dpi = resolve_dpi(_OGPS_6802_PATH, user_dpi=None)
+        image = load_raster(_OGPS_6802_PATH, dpi=dpi)
+        cfg = default_config()
+        labels = classify_palette(normalize(image), cfg)
+
+        wu = terrain_label(TerrainClass.WATER_UNCROSSABLE)
+        ws = terrain_label(TerrainClass.WATER_SHALLOW)
+
+        # Measured: (948, 1597) is the fragmented river's own deepest interior point (max
+        # distance from its pre-fix boundary, `cv2.distanceTransform`) -- a small box centred on
+        # it sits entirely inside the river's true width, clear of the bank on every side.
+        river_core = labels[1592:1602, 943:953]
+        assert (river_core == wu).all(), (
+            f"river core not fully water_uncrossable: "
+            f"wu={int((river_core == wu).sum())}/{river_core.size}"
+        )
+
+        # Measured: this bbox holds a hatched/screened marsh with no adjacent black bank line
+        # (visually confirmed crop) -- `_consolidate_banked_water` must not bulk-promote it just
+        # because it is a water-shaded blob near other bank-lined water elsewhere on the map.
+        marsh = labels[1950:2200, 2350:2700]
+        marsh_wu = int((marsh == wu).sum())
+        marsh_ws = int((marsh == ws).sum())
+        assert marsh_ws > 10 * marsh_wu, (
+            f"marsh over-promoted: wu={marsh_wu} ws={marsh_ws}, expected mostly shallow"
+        )
+
+    @pytest.mark.skipif(
+        not _OGPS_6802_PATH.is_file(),
+        reason="data/maps/ogps-6802.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_river_core_is_impassable_in_the_routing_graph(self) -> None:
+        """DoD: `rogaine plan` on this map no longer routes through the river -- checked at the
+        actual mechanism the solver relies on (same precedent as T103's own out-of-bounds
+        confirmation) rather than by solving a full route: `solve_heuristic`'s GRASP search has a
+        real wall-clock time budget (`RunConfig.heuristic_time_budget_s`), so which specific tour
+        it returns is not itself deterministic run-to-run (measured: 3 identical runs produced
+        89px/59px/162px of incidental route-line overlap with unrelated map ink even before this
+        distinction, an unusable regression signal). `GridGraph.block_passable` is the
+        deterministic ground truth `_build_edges` actually reads: a block with no passable pixel
+        gets no edge at all under `strict_impassable` (the config default), so no route -- of any
+        quality, found by any solver -- can ever cross it. The DoD's own fallback text agrees
+        ("confirm ... no code change expected") once the terrain is classified correctly.
+        """
+        dpi = resolve_dpi(_OGPS_6802_PATH, user_dpi=None)
+        image = load_raster(_OGPS_6802_PATH, dpi=dpi)
+        cfg = default_config()
+        assert cfg.graph.strict_impassable, "test assumes the strict_impassable default"
+
+        terrain_map = segment(image, dpi, meters_per_pixel=mpp_from_dpi(dpi, 20000), config=cfg)
+        cost_field = compute_cost_field(terrain_map, base_speed_mps=2.0, config=cfg)
+        graph = build_grid_graph(cost_field, cfg)
+
+        # Measured: (948, 1597) is the fragmented river's own deepest interior point (max
+        # distance from its pre-fix boundary) -- solidly inside the river's true width on every
+        # side, so its containing block cannot pick up a passable neighbour pixel.
+        block_row, block_col = 1597 // graph.downsample, 948 // graph.downsample
+        assert not graph.block_passable[block_row, block_col], (
+            "river core block is passable in the routing graph -- a route could still cross it"
+        )
 
 
 class TestIouReportOnFixture:

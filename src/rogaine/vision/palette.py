@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from scipy import ndimage
 from skimage.color import rgb2lab
 
 from rogaine.config import AppConfig, default_config
@@ -183,13 +184,84 @@ def fill_unknown(labels: np.ndarray, radius: int) -> np.ndarray:
     return filled
 
 
+def _consolidate_banked_water(
+    labels: np.ndarray, border_radius: int = 2, min_bank_fraction: float = 0.3
+) -> np.ndarray:
+    """Promote a whole connected water blob to ``water_uncrossable`` when its own boundary is
+    substantially bank-lined (T101, F4).
+
+    On a real scan, printed ``blue_70`` (``water_shallow``) and ``blue_100`` (``water_uncrossable``)
+    ink can land close enough together in CIELAB -- and close enough to real halftone/JPEG noise --
+    that :func:`classify_labels`'s per-pixel nearest-shade choice flips almost at random along a
+    river's own width, fragmenting one continuous uncrossable body of water into thousands of tiny
+    ``water_uncrossable`` islands inside an otherwise ``water_shallow`` (passable) blob: measured on
+    ``data/maps/ogps-6802_4a769f64b455f9b4675552284c3681b1``, individual core-fill pixels of the
+    river sit only 5-10 CIELAB units from *both* shades (the two shades are themselves just ~14
+    apart), and the river's largest single ``water_uncrossable`` fragment was 341 px against a
+    river thousands of pixels long -- nowhere near enough to block a route.
+
+    Rather than move the ``blue_70``/``blue_100`` decision boundary itself (which this same scan's
+    other, legitimately shallow, hatched/screened water shows would just as readily swallow a real
+    ``water_shallow`` feature -- its core ink sits in the very same ambiguous neighbourhood), this
+    uses the one signal ``config/default.toml`` already documents as what actually distinguishes
+    them on a real map: ``water_uncrossable``'s own note that it is "emphasised by a black bank
+    line". For each connected component of ``water_shallow | water_uncrossable``, if at least
+    ``min_bank_fraction`` of *its own boundary ring* (not its interior) lies within
+    ``border_radius`` px of ``black_100``-shaded ink (the ``road`` label, per the shared-shade
+    convention above) -- i.e. the component is actually bank-lined, not just incidentally near a
+    stray bit of black ink -- the whole component becomes ``water_uncrossable``; every pixel of a
+    component that fails this check keeps whatever :func:`classify_labels` already gave it. A
+    hatched/screened shallow pond or marsh with no such border is untouched by construction: its
+    boundary simply has no adjacent bank-line ink to measure.
+
+    Vectorised with :func:`scipy.ndimage.sum` keyed by component id rather than a Python loop over
+    components -- a real scan can fragment into several thousand of them, and a per-component
+    Python loop measured ~120s on one 3107x3278 scan alone versus ~0.4s vectorised.
+    """
+    wu = terrain_label(TerrainClass.WATER_UNCROSSABLE)
+    ws = terrain_label(TerrainClass.WATER_SHALLOW)
+    road = terrain_label(TerrainClass.ROAD)
+
+    water = (labels == wu) | (labels == ws)
+    if not water.any():
+        return labels
+
+    eroded = cv2.erode(water.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    boundary = water & ~eroded
+
+    ksize = 2 * border_radius + 1
+    bank_nearby = (
+        cv2.dilate((labels == road).astype(np.uint8), np.ones((ksize, ksize), np.uint8)) > 0
+    )
+
+    components, n = ndimage.label(water, structure=np.ones((3, 3)))
+    if n == 0:
+        return labels
+
+    index = np.arange(1, n + 1)
+    boundary_count = ndimage.sum(boundary, components, index=index)
+    banked_count = ndimage.sum(boundary & bank_nearby, components, index=index)
+    fraction = np.divide(
+        banked_count, boundary_count, out=np.zeros_like(banked_count), where=boundary_count > 0
+    )
+
+    promote = np.zeros(n + 1, dtype=bool)
+    promote[index] = fraction >= min_bank_fraction
+
+    out = labels.copy()
+    out[promote[components] & (labels == ws)] = wu
+    return out
+
+
 def classify_palette(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
     """Classify *image* into ISOM terrain classes and fill in ``unknown`` (T013, F4).
 
-    :func:`classify_labels` then :func:`fill_unknown`, using ``config.palette.unknown_fill_radius``.
-    Returns an ``(H, W)`` uint8 array indexed by ``TERRAIN_ORDER`` — directly usable as
-    :class:`rogaine.models.TerrainMap`'s ``labels``.
+    :func:`classify_labels`, then :func:`_consolidate_banked_water` (T101) to make a genuinely
+    bank-lined water body solidly ``water_uncrossable``, then :func:`fill_unknown` using
+    ``config.palette.unknown_fill_radius``. Returns an ``(H, W)`` uint8 array indexed by
+    ``TERRAIN_ORDER`` — directly usable as :class:`rogaine.models.TerrainMap`'s ``labels``.
     """
     cfg = config or default_config()
     labels = classify_labels(image, cfg)
+    labels = _consolidate_banked_water(labels)
     return fill_unknown(labels, cfg.palette.unknown_fill_radius)
