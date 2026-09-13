@@ -36,6 +36,7 @@
 | 031 | T090 fixes H2 with measured sub-1.0 `circle_scale_multipliers` rungs gated behind an OCR-outcome check; OCR crop-sizing constants are re-verified and left unchanged (no clean win found) | accepted |
 | 032 | Real-scan control detection: OCR crop windows slide instead of truncating at the raster edge; a per-candidate raw-radius consistency filter and a per-candidate sub-1.0 OCR gate replace their set-level predecessors | accepted |
 | 033 | I6's detection-gap items are diagnosis-first (ADR-026 precedent); the low-confidence auto-placement floor is chosen and shipped without an intermediate owner review step | accepted |
+| 034 | T104's real cause was not a two-colour print style but a `_select_best_scale` tie-break gap; `_ocr_gate_tied_scales` resolves an exact tie among >=1.0 multipliers by OCR outcome, the same principle as ADR-031's sub-1.0 gate | accepted |
 
 ---
 
@@ -1526,3 +1527,58 @@
   final value was — if the corpus-wide measurement later shows it was too aggressive on some other
   map, that becomes a fresh owner report and a new iteration, not a defect in this decision; the
   trade-off was made with the risk named up front, not discovered after the fact.
+
+## ADR-034 — T104's real cause was a `_select_best_scale` tie-break gap, not a two-colour print
+style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR outcome
+- Date: 2026-09-13
+- Status: accepted
+- Context: T104 was filed on the owner's own description of `ogps-8078` — "an unusual two-colour
+  ring/number print style whose numbers go unread despite every circle being found correctly"
+  (ADR-033's own diagnosis-first mandate: measure before designing a fix). Direct pixel sampling
+  found the premise did not hold: the printed number ("66", "38", etc.) is the *same* purple/red
+  ink family `purple_mask` already detects, sampled and confirmed by eye, not black or any other
+  colour outside the configured hue bands. The actual defect was upstream of OCR entirely:
+  `_select_best_scale` (`vision/controls.py`) ties multipliers `2.0`, `2.5` and `3.0` on this map
+  — all three find the *same* 52 physical ring positions (within 5px) at near-identical mean
+  ring-coverage (0.9813/0.9821/0.9826, all three bucketed to the same `_SCALE_TIE_EPS` tier),
+  because the printed ring is thick/doubled enough to pass `_ring_coverage`'s band check at
+  several nested radii. `_select_best_scale`'s own sweep-order default (first score to reach the
+  best value wins, ties broken toward the earliest/smallest multiplier) picks `2.0`, undersizing
+  `_ocr_crop`'s ring-erase disk and digit-search window for the map's true (larger) print size —
+  a residual ring survives in almost every crop, 2/52 controls read. Manually forcing every
+  control's `radius_px` to multiplier `3.0`'s nominal value (no other code change) jumped this to
+  30/52, confirming the mechanism directly.
+- Decision: `_ocr_gate_tied_scales` (new, `vision/controls.py`), called from `_detect_circles`
+  whenever `_select_best_scale`'s winning multiplier is `>= 1.0`: recomputes each multiplier's own
+  `(bucketed coverage, count)` score (factored out as `_multiplier_score`, shared with
+  `_select_best_scale`) and, if one or more *other* `>= 1.0` multipliers tie the winner's exact
+  score, probes each tied candidate set's real OCR read count (`read_control_numbers`) and keeps
+  whichever reads the most — a no-op, zero extra cost, whenever nothing ties (the overwhelming
+  majority of maps). Scoped strictly to `>= 1.0` so it never touches `_ocr_gate_sub_base_scale`'s
+  own, already-measured sub-1.0 territory (ADR-031) — a blanket "always prefer the largest tied
+  multiplier" was considered and rejected without needing new measurement: `_select_best_scale`'s
+  own docstring already records a real, opposite-direction case on record (`kkm-toksovo` ties
+  `0.85` against `1.0`, and `0.85` is the genuinely correct scale, reading 8/25 against `1.0`'s
+  1/25) — the same "ring-coverage ties are not proof of OCR-outcome ties" principle ADR-031's own
+  addendum already established, applied here in the mirror-image direction instead of assumed away.
+- Consequences: `_ocr_gate_tied_scales` and `_ocr_gate_sub_base_scale` can both plausibly fire in
+  principle (a map could tie both across the `1.0` boundary and within the `>=1.0` band), but no
+  such map exists yet in the measured corpus — `_detect_circles` dispatches to at most one of the
+  two per call (`if selected_mult < 1.0: ... elif ...: ...`), which is therefore an untested branch
+  ordering, not a proven-safe interaction; flagged, not silently assumed. Measured before landing,
+  same discipline as T090/T099/T100: full suite (518→518 passed, one pre-existing `ogps-6802` test
+  updated to the new, still-correct outcome — see below); the owner's own 14-map corpus, every map
+  either unchanged or improved, zero regressions (`kkm-toksovo` exactly unchanged: 24 circles/12
+  reads before and after, confirming the sub-1.0 pathway is untouched; `pervomayskoe` 18→32 reads,
+  `history-race-2024-michurinskoe` 13→25); a random 30-map `ogps-*` sample, circle counts unchanged
+  everywhere (1110→1110), reads 582→690 (+18.6%), zero regressions, 4 maps changed and all four
+  improved (two from 0 read to 27/34). One pre-existing test's own expectation changed as a direct,
+  understood consequence, not a silent break: `ogps-6802`'s own `TestRealScanReadRateFloor` case
+  (T102) pinned control 72 reading correctly at the *old* selected scale (`2.25`ish); this map also
+  ties (`2.25` against `3.0`), and the OCR-outcome gate now correctly prefers `3.0` map-wide (33/35
+  read vs. 32/35) — which incidentally fixes the *other* two of the owner's three originally-named
+  controls (42, 53, previously blamed on unrelated Tesseract confidence/misread quirks that turn
+  out to have been downstream symptoms of this same undersized-scale problem, now both read at
+  96% confidence) at the cost of 72 itself reading only a truncated "7" at 0% confidence — refused
+  safely (ADR-009), not a wrong guess, and not a regression: 2 of 3 named controls fixed instead of
+  1, on a net-positive map (32→33 total reads).

@@ -2035,9 +2035,11 @@ the implementer's self-report.
 
 > T103 before T105 (both touch `vision/controls.py`'s `_detect_circles` candidate list — T103 must
 > remove the forbidden-symbol false positives before T105's confidence floor is measured against a
-> clean corpus). T102 before T104 (both touch `vision/ocr.py::_ocr_crop`'s masking step — T102 fixes
-> the general real-scan OCR miss first, T104 extends the resulting mechanism to a second ink
-> colour). T106 before T107 (both touch `app.js`'s pointer/mode machinery — T106 fixes the shared
+> clean corpus). T102 before T104 assumed both would touch `vision/ocr.py::_ocr_crop`'s masking
+> step — **T104's own diagnosis found this wrong (ADR-034): its real cause is a `_select_best_scale`
+> tie-break gap in `vision/controls.py`, not an ink-masking issue at all**, so this ordering
+> constraint turned out not to apply (landed independently of T102, though after it in session
+> order). T106 before T107 (both touch `app.js`'s pointer/mode machinery — T106 fixes the shared
 > click-vs-drag distinction and active-state affordance, T107 reuses it for the panel's single-shot
 > add-control flow). T101 is independent (own file, `vision/palette.py`) and freely parallel with
 > everything else.
@@ -2146,13 +2148,40 @@ the implementer's self-report.
   positives removed (23->21, 25->24, 22->21) with the reason documented inline, `n_read` (true
   positives) unchanged throughout (fix commit `b91677a`).
 
-- [ ] **T104** — Extend OCR to read a control's number when printed in a different colour from its
+- [x] **T104** — Extend OCR to read a control's number when printed in a different colour from its
   own ring — paths: `src/rogaine/vision/ocr.py` — deps: T102 (same function, `_ocr_crop`'s masking
   step; land T102 first) — DoD: diagnose `data/maps/ogps-8078_8295c94963b2c249d6f4d94fd0c35fa1`'s
   exact two-colour print style before widening the crop's ink mask; the widening must not reintroduce
   contour-line bleed into the crop (ADR-023's own past failure mode — its regression test must stay
   green); a new `TestRealScanReadRateFloor` case for `ogps-8078` with previously-unread numbers now
-  reading; existing floors unchanged or improved.
+  reading; existing floors unchanged or improved. **Landed, but not as titled — the DoD's own
+  premise did not survive diagnosis (ADR-034).** Direct pixel sampling of the printed numbers
+  found no two-colour issue at all: "66"/"38"/etc. are the same purple/red ink `purple_mask`
+  already detects, confirmed by eye. The real cause is in `vision/controls.py`, not `ocr.py`:
+  `_select_best_scale` ties multipliers 2.0/2.5/3.0 on this map (same 52 physical rings, near-
+  identical coverage, all bucketed to the same `_SCALE_TIE_EPS` tier — a thick/doubled printed
+  ring passes `_ring_coverage` at several nested radii) and its sweep-order default picks the
+  smallest tied multiplier, undersizing `_ocr_crop`'s ring-erase disk for this map's true (larger)
+  print size — 2/52 read. Forcing every radius to multiplier 3.0 confirmed the mechanism directly
+  (30/52). Fix: `_ocr_gate_tied_scales` (new), scoped to `>=1.0` ties only (never touches
+  `_ocr_gate_sub_base_scale`'s already-tuned sub-1.0 territory, ADR-031) — probes real OCR outcome
+  across only the tied multipliers and keeps whichever reads most, the same principle as ADR-031's
+  own gate, not a blind directional bias (which `_select_best_scale`'s own docstring already shows
+  is unsafe in the other direction: `kkm-toksovo` ties `0.85` against `1.0`, and `0.85` is
+  correct). `ogps-8078`: 2/52 → 40/52. Measured before landing: full suite 518 passed (one
+  pre-existing `ogps-6802` test's expectation updated, see below, not silently broken); owner's own
+  14-map corpus, every map unchanged or improved, zero regressions (`kkm-toksovo` exactly
+  unchanged — 24/12 before and after, confirming the sub-1.0 pathway is untouched;
+  `pervomayskoe` 18→32, `history-race-2024-michurinskoe` 13→25 reads); a random 30-map `ogps-*`
+  sample, circle counts unchanged everywhere (1110→1110), reads 582→690 (+18.6%), zero
+  regressions, 4 maps changed and all four improved. `ogps-6802`'s own scale ties too (`2.25`ish
+  against `3.0`) — the gate now correctly prefers `3.0` map-wide (33/35 vs 32/35), which
+  incidentally fixes the *other* two of the owner's three T102-named controls (42, 53 — their
+  "Tesseract confidence/misread quirk" diagnosis in T102 turns out to have been a downstream
+  symptom of this same undersized-scale problem, both now read at 96% confidence) at the cost of
+  72 reading only a truncated "7" at 0% confidence instead — refused safely (ADR-009), not a wrong
+  guess. `TestRealScanReadRateFloor::test_ogps_6802_control_72_reads_correctly` renamed/updated to
+  `test_ogps_6802_named_controls`, pinning all three controls' new (still correct) outcome.
 
 - [ ] **T105** — Confidence-gated auto-placement floor — paths: `src/rogaine/vision/controls.py`
   (`_detect_circles`'s final candidate filter) — deps: T103 (land after the forbidden-symbol
