@@ -196,7 +196,7 @@ def _slide_window(lo: float, hi: float, max_dim: int) -> tuple[int, int]:
     x0 = round(lo)
     x1 = round(hi)
     width = x1 - x0
-    if width >= max_dim:
+    if width > max_dim:
         return max(0, x0), min(max_dim, x1)
     if x0 < 0:
         x1 -= x0

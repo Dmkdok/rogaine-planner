@@ -157,7 +157,11 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
 - [x] 1 delta intake agreed (in / out / deferred) —
   `docs/iterations/I5-control-detection-false-negatives.md`
 - [x] 2 impact map written — same file
-- [x] 3 docs amended (SPEC F7/F8 acceptance extended, DECISIONS ADR-032, TASKS M12 T097-T100)
+- [x] 3 docs amended (SPEC F7/F8 acceptance extended, DECISIONS ADR-032, TASKS M12 T097-T100).
+  **F7's extension was withdrawn 2026-09-13** (review finding H1) — the raw-radius outlier filter
+  it described was T098, which closed with no code change (measured unsafe); F7 now describes that
+  correctly instead of a mechanism that was never shipped. F8's extension stands, amended to name
+  T099's own junk-fraction exception explicitly.
 - [x] GATE — approved by the owner 2026-09-12 («Утверждаю, продолжи»)
 - [x] 4 implementation — all four tasks resolved. **T097 landed** (`c0ae26d`) — `_ocr_crop`'s
   window now slides along an axis to stay in-bounds instead of shrinking, 5 new edge-adjacent-

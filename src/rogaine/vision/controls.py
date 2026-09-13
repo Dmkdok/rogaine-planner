@@ -286,8 +286,7 @@ def _detect_circles(
     then amended per the owner's own T100 sign-off, ADR-032), and kept whole (flagged unread) when
     it doesn't. Bounded to at most two `read_control_numbers` passes (one per candidate set), only
     paid when a sub-1.0 candidate would otherwise be chosen blind, on top of the pipeline's own
-    later OCR pass over whichever set is
-    finally returned.
+    later OCR pass over whichever set is finally returned.
     """
     det = config.detector
     base_r_min, base_r_max = det.circle_radius_px(dpi)
@@ -373,19 +372,23 @@ def _ocr_gate_sub_base_scale(
     sub-1.0 set looks, rather than always filtering or never filtering. Below
     `_SUB_BASE_JUNK_UNREAD_FRACTION` unread, the set is assumed mostly real and returned whole
     (T090's original behaviour: real controls stay visible even when illegible, flagged downstream
-    like any other unread control) if it beats production's own read count. At or above that
-    fraction, the set is assumed junk-dominated and only the candidates that actually read survive
-    (T099's original behaviour) -- `ogps-3771` (93% unread) crosses this line, `kkm-toksovo` (68%
-    unread) does not. The threshold itself is provisional, calibrated against only these 2 measured
-    points (ADR-032's amendment says so explicitly) -- a corpus-wide validation is flagged as
-    follow-up, not silently assumed solid.
+    like any other unread control) if it beats production's own read count. Strictly more than that
+    fraction unread, the set is assumed junk-dominated and only the candidates that actually read
+    survive (T099's original behaviour) -- `ogps-3771` (93% unread) crosses this line, `kkm-toksovo`
+    (68% unread) does not; a set landing exactly on the line is treated as not-yet-junk (kept
+    whole), matching `_SUB_BASE_JUNK_UNREAD_FRACTION`'s own "more than" wording. The threshold is
+    provisional, calibrated against only these 2 measured points (ADR-032's amendment says so
+    explicitly) -- a corpus-wide validation is flagged as follow-up, not silently assumed solid.
 
     Comparison against production is otherwise unchanged in shape from T090: same tie-break (ties,
     including both sides at zero, fall back to production, never to a sub-1.0 result that reads no
     better), same "no `>=1.0` candidate at all -> nothing to compare against" fallback (still probed
     per-candidate first, since the junk-fraction check needs the per-candidate outcome regardless of
     whether a comparison side exists -- a map whose only Hough hits are sub-1.0 junk is exactly the
-    case this must not leave unguarded even with no production alternative).
+    case this must not leave unguarded even with no production alternative; if every candidate is
+    unread and the fraction crosses the junk line, this returns an empty list rather than a whole
+    set of unread candidates -- deliberate, see `TestOcrGateSubBaseScale`'s own coverage of this
+    exact case).
     """
     # Deferred import: `vision.ocr` imports `purple_mask` from this module at load time, so a
     # module-level import here would be circular.

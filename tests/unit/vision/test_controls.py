@@ -539,8 +539,8 @@ class TestOcrGateSubBaseScale:
     T099/ADR-032 generalised the sub-1.0 side from a whole-set comparison to a per-candidate one,
     then this same amendment (after the owner's own T100 sign-off found the first version too
     aggressive -- see the function's own docstring) narrowed that to a junk-fraction condition:
-    below `_SUB_BASE_JUNK_UNREAD_FRACTION` unread, the whole set is kept (T090's original
-    behaviour); at or above it, only the reading candidates survive (T099's original behaviour).
+    at or below `_SUB_BASE_JUNK_UNREAD_FRACTION` unread, the whole set is kept (T090's original
+    behaviour); strictly above it, only the reading candidates survive (T099's original behaviour).
     The first four tests below happen to keep the same overall pass/fail outcome under either rule
     (every sub-1.0 candidate in them either all reads or all doesn't, so which rule applies changes
     nothing about which side wins) -- itself the regression proof that neither amendment disturbed
@@ -771,6 +771,59 @@ class TestOcrGateSubBaseScale:
             np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
         )
         assert result == production
+
+    def test_exactly_at_the_junk_fraction_line_is_not_junk_dominated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Boundary case (review finding M2): 17 of 20 candidates unread is exactly 85% --
+        `_SUB_BASE_JUNK_UNREAD_FRACTION` itself -- which must land on the "keep whole" side, per
+        the constant's own "more than this fraction" wording (`_ocr_gate_sub_base_scale`'s
+        docstring: "strictly more than that fraction unread ... assumed junk-dominated"). A set
+        landing exactly on the line is treated as not-yet-junk.
+        """
+        sub_base = [(float(i * 10), float(i * 10), 5.0, 0.9) for i in range(20)]
+        production = [(999.0, 999.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            # 3 of 20 read -> 17/20 = 0.85 exactly unread.
+            self._stub_reading({tuple(c[0] for c in sub_base): 3, (999.0,): 0}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == sub_base
+
+    def test_no_production_all_unread_and_junk_dominated_returns_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review finding M4: with no production side to fall back to and every sub-1.0 candidate
+        unread (100%, above the junk line), the deliberate result is an empty list -- a map whose
+        only Hough hits are entirely unread junk (e.g. a cover page with no real controls at all)
+        contributes nothing, rather than surfacing a whole page of unread false positives.
+        """
+        sub_base = [(float(i * 10), float(i * 10), 5.0, 0.9) for i in range(10)]
+        per_multiplier = [(0.5, sub_base), (1.0, [])]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({tuple(c[0] for c in sub_base): 0}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == []
 
 
 class TestHubTriangleIgnoresSubBaseScaleRungs:

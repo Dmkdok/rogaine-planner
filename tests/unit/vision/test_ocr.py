@@ -175,6 +175,43 @@ class TestCropWindowSlidesNearEdges:
         expected_h = expected_w
         assert crop.shape[:2] == (expected_h, expected_w)
 
+    def test_window_exactly_fitting_the_raster_slides_to_full_size_not_shrunk(self) -> None:
+        """Review finding L1: the shrink fallback must trigger only when the configured window is
+        strictly wider than the raster on that axis -- a window that fits *exactly* after sliding
+        must still get the full slide, not the shrink path. `radius_px=30` gives a 204px window; a
+        204px-wide raster with the control 2px from the left edge is the exact-fit boundary."""
+        cfg = default_config()
+        dpi = 300.0
+        control = Control(id=1, x=2.0, y=102.0, radius_px=30.0)
+        half = control.radius_px * (
+            1.0 + cfg.detector.number_search_radius + _CROP_MARGIN_FACTOR
+        )
+        window = round(2 * half)
+        image = np.zeros((204, window, 3), dtype=np.uint8)
+
+        crop = _ocr_crop(image, control, dpi, cfg)
+
+        assert crop.shape[1] == window, (
+            f"expected the full {window}px window (exact fit via sliding), got {crop.shape[1]}px "
+            "-- the shrink fallback fired when it should not have"
+        )
+
+    def test_window_wider_than_the_raster_falls_back_to_shrinking(self) -> None:
+        """The one case sliding genuinely cannot fix: the configured window is wider than the
+        raster itself on that axis. Falls back to the pre-T097 clamp-and-shrink behaviour --
+        the crop is bounded by the raster, not by the (unreachable) full window."""
+        cfg = default_config()
+        dpi = 300.0
+        image = np.zeros((50, 50, 3), dtype=np.uint8)
+        control = Control(id=1, x=25.0, y=25.0, radius_px=30.0)  # window (204px) > raster (50px)
+
+        crop = _ocr_crop(image, control, dpi, cfg)
+
+        assert crop.shape[:2] == (50, 50), (
+            f"expected the shrink fallback to bound the crop to the 50x50 raster, got "
+            f"{crop.shape[:2]}"
+        )
+
 
 class TestReadsNumbersOnFixture:
     def test_at_least_eleven_of_twelve_controls_read_correctly(

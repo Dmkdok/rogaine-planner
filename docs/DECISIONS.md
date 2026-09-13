@@ -1443,12 +1443,13 @@
   behaviour, which would also bring back `ogps-3771`'s 213 false positives as flagged-unread since
   the mechanism cannot tell them apart from a genuine illegible control; or a junk-fraction
   heuristic, explicitly flagged as calibrated against only 2 real points, not corpus-validated) —
-  the owner picked the heuristic. Implemented as `_SUB_BASE_JUNK_UNREAD_FRACTION = 0.85`: below it,
-  `_ocr_gate_sub_base_scale` keeps the whole sub-1.0 set when it beats production (T090's original
-  behaviour — real controls stay visible, flagged unread downstream like any production-scale
-  detection); at or above it, only the reading candidates survive (T099's original behaviour). Both
-  calibration points sit clear of the line (`kkm-toksovo` 68% unread, kept whole; `ogps-3771` 93%
-  unread, filtered) with meaningful margin either side, though only 2 points.
+  the owner picked the heuristic. Implemented as `_SUB_BASE_JUNK_UNREAD_FRACTION = 0.85`: at or
+  below it, `_ocr_gate_sub_base_scale` keeps the whole sub-1.0 set when it beats production (T090's
+  original behaviour — real controls stay visible, flagged unread downstream like any
+  production-scale detection); strictly above it, only the reading candidates survive (T099's
+  original behaviour). Both calibration points sit clear of the line (`kkm-toksovo` 68% unread,
+  kept whole; `ogps-3771` 93% unread, filtered) with meaningful margin either side, though only 2
+  points; a boundary test at exactly 0.85 pins the "kept whole" side (review finding M2).
 
   Re-verified against the full real corpus, not assumed from the two calibration maps alone:
   **owner's 14-map corpus** circles 420→420 (net 0 — `kkm-toksovo`/`lembolovo-kkm`/
@@ -1473,3 +1474,24 @@
   controls) would get the untested side of this heuristic. Flagged as follow-up corpus-wide
   validation, not silently assumed solid — the owner made this trade explicitly, informed of the
   gap, rather than the session picking a number and moving on.
+
+  **Independent review (`989c08f..HEAD`, the full M12 diff), then fixed same session.** Verdict:
+  PASS WITH WAIVERS. One High (`docs/SPEC.md` F7's row still described T098's raw-radius outlier
+  filter after T098 closed with no code change — a stale requirement pointing at a mechanism never
+  shipped) and three Medium (the junk-fraction boundary: code used strict `>`, three prose
+  descriptions said "at or above" — picked `>` as the standard, per the constant's own "more than"
+  wording, and corrected the prose plus added a boundary test at exactly 0.85; F8's row didn't name
+  the sub-1.0 junk-dominated exception to its own "never silently guessed" line; the no-production +
+  all-unread + junk-dominated path returns `[]` with no test pinning it as deliberate). All four
+  fixed in the same session: `docs/SPEC.md` F7 reverted to describe what actually shipped, F8
+  amended with the exception; `_ocr_gate_sub_base_scale`'s docstring and `TestOcrGateSubBaseScale`'s
+  class docstring corrected to "strictly above"; two new tests added (exact-0.85 boundary; empty-list
+  result with no production and 100% unread). Also fixed two Low findings: `_slide_window`
+  (`vision/ocr.py`) used `width >= max_dim` for its shrink-fallback condition, one off from its own
+  docstring's "wider than" — a window that fit *exactly* after sliding was needlessly shrunk; fixed
+  to `>`, with two new tests (exact-fit slides to full size; genuinely-too-wide still falls back to
+  shrinking). Three Low findings were accepted as documented, not fixed: an unreachable off-raster-
+  centre edge case in `_slide_window` (every real caller feeds `detect_controls`/Hough output, never
+  a raw user coordinate, on this path); one extra `read_control_numbers` pass now paid on the
+  no-production branch (deliberate, already documented above); a stray docstring line-wrap (fixed
+  anyway, cheap). Re-verified after fixes: 513 passed, `ruff check .` clean.
