@@ -89,6 +89,23 @@ _TRIANGLE_APPROX_EPS_FRACTIONS = (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10)
 _RING_COVERAGE_BAND_FRACTION = 1.0 / 8.0
 _RING_COVERAGE_MIN = 0.75
 
+# T103, SPEC F7 (ISOM 709 "out of bounds" exclusion, I6). ISOM 709 is printed in the same purple ink
+# as the 703 control circle, as a dense diagonal cross-hatch rather than a ring -- the module
+# docstring's own T020 finding already knew hatch crossings could fit a spurious circle, but assumed
+# `_ring_coverage`'s circumference check alone would reject them, true on the synthetic fixture
+# (false fits there scored 0.500-0.682, below `_RING_COVERAGE_MIN`). Measured directly on a real
+# scan (`data/maps/ogps-7302_5d8c290224a04f49e2c95484d2fbaf92`), that does not hold: the hatch's own
+# crossing density lets dozens of spurious fits saturate `_ring_coverage` to as high as 1.000,
+# indistinguishable from a true ring on the circumference check alone. What the hatch case does not
+# share with a true ring is a clean interior -- a real 703 ring's inside is bare background, while a
+# hatch-covered "ring" still has ink well inside the fitted circle, because the hatch keeps crossing
+# through it. `_interior_ink_fraction` samples exactly that, at a radius safely clear of the fitted
+# ring's own stroke; true/false separation measured on that same scan: true ring interiors scored
+# 0.000-0.099, hatch-crossing false fits scored 0.622-0.844 -- comfortable margin either side of the
+# threshold below.
+_INTERIOR_RADIUS_FRACTION = 0.5
+_INTERIOR_INK_MAX = 0.3
+
 # `_select_best_scale`'s (T076, ADR-015) mean-coverage bucket width. Coarse enough that the real
 # scan's two false-prone scales (mean 0.8806, 0.9394) fall in different buckets from the true
 # scale (0.9943) and so still lose outright on coverage alone, but coarse enough that scales whose
@@ -182,6 +199,30 @@ def _ring_coverage(mask: np.ndarray, cx: float, cy: float, r: float, band: float
         valid = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
         hit[valid] |= mask[ys[valid], xs[valid]]
     return float(hit.sum()) / n
+
+
+def _interior_ink_fraction(mask: np.ndarray, cx: float, cy: float, r: float, frac: float) -> float:
+    """Fraction of ink pixels in a filled disc well inside a fitted circle's own radius (T103).
+
+    `_ring_coverage` only ever samples the ring's own circumference band; it has no way to see
+    that a real ISOM 703 ring's interior is bare background, while a Hough fit whose circle
+    happens to sit over dense ISOM 709 cross-hatching still has ink well inside it, because the
+    hatch keeps crossing through the middle too. *frac* (`_INTERIOR_RADIUS_FRACTION`) keeps the
+    sampled disc's own edge, at radius `r * frac`, clear of the fitted ring's stroke so a genuine
+    ring is never penalised for its own ink.
+    """
+    h, w = mask.shape
+    rr = r * frac
+    x0, x1 = max(0, int(cx - rr)), min(w, int(cx + rr) + 1)
+    y0, y1 = max(0, int(cy - rr)), min(h, int(cy + rr) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return 0.0
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    inside = (xx - cx) ** 2 + (yy - cy) ** 2 <= rr * rr
+    total = int(inside.sum())
+    if total == 0:
+        return 0.0
+    return float(mask[y0:y1, x0:x1][inside].sum()) / total
 
 
 def _select_best_scale(
@@ -317,7 +358,20 @@ def _detect_circles(
             band = r_mid * _RING_COVERAGE_BAND_FRACTION
             for x, y, r in raw[0]:
                 coverage = _ring_coverage(mask, float(x), float(y), float(r), band)
-                if coverage >= _RING_COVERAGE_MIN:
+                if coverage < _RING_COVERAGE_MIN:
+                    continue
+                # T103: reject a fit whose circumference reads as a ring but whose interior is not
+                # actually clear -- the signature of ISOM 709's out-of-bounds cross-hatch rather
+                # than a genuine 703 ring (see the constant block above `_interior_ink_fraction` for
+                # the measured true/false separation). Checked here, before a candidate ever reaches
+                # `per_multiplier`/`_select_best_scale`, so a hatch-dense area cannot out-vote a
+                # real scale's candidates on count, and so every later stage in this pipeline --
+                # `_ocr_gate_sub_base_scale` above and T105's own confidence-floor filter, still to
+                # come -- sees a candidate corpus already clear of this false-positive family.
+                interior = _interior_ink_fraction(
+                    mask, float(x), float(y), float(r), _INTERIOR_RADIUS_FRACTION
+                )
+                if interior <= _INTERIOR_INK_MAX:
                     # r_mid (this multiplier's nominal radius), not Hough's own per-candidate `r`:
                     # measured against the clean fixture (T077/ADR-020), Hough's raw fit jitters
                     # +-10% around r_mid even at the base scale, and `_ocr_crop`'s crop-margin
