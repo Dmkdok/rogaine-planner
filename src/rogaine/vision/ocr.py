@@ -71,8 +71,9 @@ re-tuning blind -- the same discipline T020's own docstring insists on):
    extra reach -> 1/12 correct; this module's `_CROP_MARGIN_FACTOR` -> 11/12 (a wider margin
    still, e.g. twice this, scores *worse*: a bigger crop has more chance of catching a
    neighbouring control's number or the purple out-of-bounds hatching -- both the same ink again;
-   see `test_ocr.py` for the one fixture control this still does not resolve, close enough to the
-   course boundary that its hatching lands inside even this margin).
+   at the time this margin alone did not resolve the one fixture control close enough to the
+   course boundary that its hatching landed inside even this margin -- `_keep_largest_ink_cluster`
+   below (T102) later isolates its digits from that hatching too, see `test_ocr.py`).
 
 **Confidence.** `pytesseract.image_to_data` gives a per-word confidence, 0-100, or -1 where
 Tesseract has nothing to say (e.g. block/paragraph/line-level rows with no recognised text).
@@ -139,6 +140,19 @@ _RING_CHECK_OUTER_RATIO = 1.2
 _RING_DENSITY_WIDEN_THRESHOLD = 0.4
 _WIDENED_CIRCLE_MASK_RADIUS_FACTOR = 1.55
 
+# T102 (I6): gap (in digit heights) `_keep_largest_ink_cluster` groups components by, to drop
+# leftover ink from an unrelated nearby symbol that survives `_strip_thin_ink`'s area floor.
+# Measured directly on `ogps-6802` control 72 (a contour-crossing mark sitting just above the
+# printed number): the two real digits sit 3px apart (~0.08x digit height), the stray mark sits
+# 43px from them (~1.2x digit height) -- comfortable margin either side. Swept 0.0/0.3/0.4/0.5/
+# 0.65/0.8/1.0 against the synthetic fixture (`clean_synthetic_map`, 11/12 floor) and every
+# existing real-scan `TestRealScanReadRateFloor` map: 0.0 is degenerate (the minimum dilation
+# radius is 1px regardless, fine-grained enough to treat almost every digit pair as "competing"
+# and, combined with the edge-touch guard below, cost the fixture 11/12 -> 0/12), but every value
+# from 0.3 to 1.0 left every floor unchanged or improved -- 0.5 sits mid-range rather than chasing
+# the tightest passing value. `data/maps/_t102_sweep.py` (gitignored, ADR-010 pattern).
+_INK_CLUSTER_GAP_FACTOR = 0.5
+
 
 def _strip_thin_ink(ink: np.ndarray, min_area: float) -> np.ndarray:
     """Drop every connected component of *ink* whose pixel area is under *min_area*.
@@ -166,6 +180,55 @@ def _strip_thin_ink(ink: np.ndarray, min_area: float) -> np.ndarray:
         if stats[label, cv2.CC_STAT_AREA] >= min_area:
             keep |= labels == label
     return keep
+
+
+def _keep_largest_ink_cluster(ink: np.ndarray, gap_px: float) -> np.ndarray:
+    """Drop every connected component of *ink* except those in the single largest group of
+    components that sit within *gap_px* of each other (by total surviving pixel count).
+
+    T102: a control's printed number is always one tight cluster of digits -- gaps of a few
+    pixels between characters, even between two pieces of one character split by anti-aliasing.
+    Leftover ink from an unrelated nearby symbol that survives `_strip_thin_ink`'s area floor
+    (small but not small enough) instead sits many times farther away. Grouping is done by
+    dilating *ink* with a disk of radius `gap_px / 2` -- two components closer than *gap_px*
+    merge into one dilated blob -- then labelling the dilated mask and keeping whichever label
+    covers the most original `ink` pixels. A no-op when *ink* is empty or already one component.
+
+    When this function actually had something to discard (more than one group found) *and* the
+    surviving group touches an edge of *ink*'s own array, the survivor is discarded too (an empty
+    mask returned) rather than trusted. Measured on `kkm-toksovo` control 13: an unerased ring
+    stroke (a second, larger group) sat beside the true two-digit number; removing it correctly
+    picked the number as the larger group, but the number's own leading digit was separately
+    clipped by the crop window itself (a pre-existing, unrelated limitation --
+    `_CROP_MARGIN_FACTOR`'s headroom is not always enough for a number printed unusually far from
+    its circle). Tesseract then confidently read the *visible* digit alone ("2" of a true "72"), a
+    wrong answer where the pre-T102 behaviour (the ring still corrupting the whole crop) had at
+    least failed safely to "no digits found" -- exactly what ADR-009 exists to prevent. Gating the
+    check on "more than one group" keeps it narrow: on every crop with no competing ink at all,
+    this function is already a no-op, and a full, correctly-captured number that simply happens to
+    sit close to the margin on those crops (measured: common enough on real scans that rejecting
+    every edge-touching crop outright, tried first, cost ~25 previously-correct reads across the
+    owner corpus for one avoided wrong guess) must not be penalised just for being alone.
+    """
+    if not ink.any():
+        return ink
+    radius = max(1, round(gap_px / 2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+    dilated = cv2.dilate(ink.astype(np.uint8), kernel)
+    _, labels = cv2.connectedComponents(dilated, connectivity=8)
+    counts = np.bincount(labels[ink])
+    best = counts.argmax()
+    cluster = ink & (labels == best)
+    had_competition = int((counts > 0).sum()) > 1
+    touches_edge = (
+        cluster[0, :].any()
+        or cluster[-1, :].any()
+        or cluster[:, 0].any()
+        or cluster[:, -1].any()
+    )
+    if had_competition and touches_edge:
+        return np.zeros_like(ink)
+    return cluster
 
 
 def _annulus_ink_density(
@@ -250,6 +313,12 @@ def _ocr_crop(image: np.ndarray, control: Control, dpi: float, cfg: AppConfig) -
     scale = r_mid / base_r_mid if base_r_mid > 0 else 1.0
     digit_height_px = det.number_font_height_mm * (dpi / 25.4) * scale
     ink = _strip_thin_ink(ink, (digit_height_px * _MIN_INK_AREA_FACTOR) ** 2)
+
+    # T102: leftover ink `_strip_thin_ink`'s area floor doesn't catch (a nearby contour/symbol
+    # fragment big enough to survive) still defeats Tesseract's psm 7 single-line assumption even
+    # when it sits well clear of the real digits -- keep only the tightest cluster of remaining
+    # ink, on the measured assumption that a control's own number is always one such cluster.
+    ink = _keep_largest_ink_cluster(ink, digit_height_px * _INK_CLUSTER_GAP_FACTOR)
 
     return np.where(ink, 0, 255).astype(np.uint8)
 

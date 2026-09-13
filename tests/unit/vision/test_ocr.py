@@ -7,9 +7,12 @@ degrades the run, never aborts it.
 Measured against `clean_synthetic_map`, not the degraded standard fixture -- `ocr.py`'s own
 module docstring documents why: its two crop-geometry findings (ring masking, margin headroom)
 were measured there, and 11 of the fixture's 12 controls read correctly at that noise level. The
-twelfth (`id=8`, truth number 83) sits close enough to the course boundary that its purple
-out-of-bounds hatching lands inside even the widened crop margin -- a real, documented limitation,
-not a bug, and exactly the case F8's "never a guess" line exists for.
+twelfth (`id=8`, truth number 83) sat close enough to the course boundary that its purple
+out-of-bounds hatching landed inside even the widened crop margin -- a real, documented limitation
+at the time, and exactly the case F8's "never a guess" line exists for. T102's
+`_keep_largest_ink_cluster` (leftover-ink clusters, `ocr.py`'s own docstring) incidentally isolates
+this control's digits from the hatching too, so all 12 now read correctly; the floor below stays
+at its own conservative margin rather than being tightened to chase the new number.
 """
 
 from __future__ import annotations
@@ -61,6 +64,16 @@ _KKM_TOKSOVO_PATH = (
 )
 _LEMBOLOVO_KKM_PATH = (
     Path(__file__).resolve().parents[3] / "data" / "maps" / "lembolovo-kkm" / "map.jpg"
+)
+
+#: T102 (I6, `docs/iterations/I6-real-map-detection-gaps-and-viewer-ux.md`): the owner's own named
+#: unread controls (42/53/72) on this real scan. Same gitignored-real-scan caveat (ADR-010).
+_OGPS_6802_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "maps"
+    / "ogps-6802_4a769f64b455f9b4675552284c3681b1"
+    / "map.jpg"
 )
 
 
@@ -239,25 +252,26 @@ class TestReadsNumbersOnFixture:
 
         assert all(0.0 <= c.confidence <= 1.0 for c in updated)
 
-    def test_the_boundary_control_is_flagged_null_not_a_wrong_guess(
+    def test_an_unreadable_control_is_flagged_null_not_a_wrong_guess(
         self, clean_synthetic_map
     ) -> None:
+        """T102: this used to exercise the one fixture control whose purple out-of-bounds
+        hatching landed inside the crop margin (`_UNREADABLE_CONTROL_TRUTH_NUMBER = 83`, see the
+        module docstring) -- `_keep_largest_ink_cluster` now correctly isolates its digits from
+        that hatching and it reads 83 like every other control (a genuine improvement, not a
+        regression; `_INK_CLUSTER_GAP_FACTOR`'s own comment in `ocr.py` has the corpus-wide
+        measurement). The "never a guess" path itself still needs covering, so this constructs a
+        blank-ink crop directly instead of depending on incidental fixture noise.
+        """
         sm = clean_synthetic_map
         cfg = default_config()
-        detections = detect_controls(sm.image, sm.dpi, cfg)
-        truth = [c for c in sm.controls if not c.is_hub]
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
 
-        updated, flags = read_control_numbers(sm.image, detections, sm.dpi, cfg)
-        det = next(
-            d
-            for d in updated
-            if not d.is_hub
-            and _nearest_truth(d, truth).number == _UNREADABLE_CONTROL_TRUTH_NUMBER
-        )
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
 
-        assert det.number is None
-        assert det.points is None  # first_digit rule: no number, no points -- never a guess
-        assert any(f"control {det.id}" in f for f in flags)
+        assert updated.number is None
+        assert updated.points is None  # first_digit rule: no number, no points -- never a guess
+        assert flag is not None and f"control {updated.id}" in flag
 
 
 class TestPointsRule:
@@ -291,11 +305,14 @@ class TestPointsRule:
     def test_first_digit_leaves_points_null_when_number_is_unreadable(
         self, clean_synthetic_map
     ) -> None:
+        # T102: a directly-constructed blank-ink crop, not a fixture control -- see
+        # `TestReadsNumbersOnFixture.test_an_unreadable_control_is_flagged_null_not_a_wrong_guess`
+        # for why the fixture no longer has one of its own.
         sm = clean_synthetic_map
         cfg = _with_detector(default_config(), points_rule="first_digit")
-        truth = next(c for c in sm.controls if c.number == _UNREADABLE_CONTROL_TRUTH_NUMBER)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
 
-        updated, flag = read_control_number(sm.image, truth, sm.dpi, cfg)
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
 
         assert updated.number is None
         assert updated.points is None
@@ -306,9 +323,9 @@ class TestPointsRule:
     ) -> None:
         sm = clean_synthetic_map
         cfg = _with_detector(default_config(), points_rule="constant", points_constant=7)
-        truth = next(c for c in sm.controls if c.number == _UNREADABLE_CONTROL_TRUTH_NUMBER)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
 
-        updated, flag = read_control_number(sm.image, truth, sm.dpi, cfg)
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
 
         assert updated.number is None  # still unreadable -- only points falls back
         assert updated.points == 7
@@ -328,16 +345,19 @@ class TestPointsRule:
     def test_csv_rule_never_assigns_points_here_readable_or_not(
         self, clean_synthetic_map
     ) -> None:
+        # `csv`'s own no-op contract doesn't depend on whether the number is actually read (module
+        # docstring), so a second, once-hard-to-read fixture control (T102: now reads fine, see
+        # `TestReadsNumbersOnFixture`) still exercises the same "points always None" guarantee.
         sm = clean_synthetic_map
         cfg = _with_detector(default_config(), points_rule="csv")
         readable = sm.controls[1]
-        unreadable = next(c for c in sm.controls if c.number == _UNREADABLE_CONTROL_TRUTH_NUMBER)
+        other = next(c for c in sm.controls if c.number == _UNREADABLE_CONTROL_TRUTH_NUMBER)
 
         readable_updated, _f1 = read_control_number(sm.image, readable, sm.dpi, cfg)
-        unreadable_updated, _f2 = read_control_number(sm.image, unreadable, sm.dpi, cfg)
+        other_updated, _f2 = read_control_number(sm.image, other, sm.dpi, cfg)
 
         assert readable_updated.points is None
-        assert unreadable_updated.points is None
+        assert other_updated.points is None
         assert readable_updated.number == readable.number  # csv only changes `points`, not reading
 
 
@@ -481,7 +501,11 @@ class TestRealScanReadRateFloor:
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
-        # T083 baseline (ADR-023): 0/41. T084 measured: 19/41.
+        # T083 baseline (ADR-023): 0/41. T084 measured: 19/41. T102 measured: 18/41 -- one of
+        # those 19 (control 14) was itself a wrong read ("5" of a true "35", clipped at the crop's
+        # own edge by a separate, pre-existing limitation) that `_keep_largest_ink_cluster`'s
+        # competition+edge-touch guard now correctly rejects to unread rather than a wrong number
+        # (ADR-009); the floor stays at its own margin below the true, still-correct count.
         assert n_read >= 15, f"pervomayskoe read {n_read}/41 numbers, expected >= 15"
 
     @pytest.mark.skipif(
@@ -515,7 +539,8 @@ class TestRealScanReadRateFloor:
 
         # T083 baseline (ADR-023): 0/21. T084 measured: 6/21. T090/ADR-031 measured: 16/23 -- this
         # absolute count is unchanged by every later amendment (including T103's), only the total
-        # circle count moved.
+        # circle count moved. T102 measured: 18/21 -- `_keep_largest_ink_cluster` newly reads 2
+        # controls whose crops had leftover ink (a nearby symbol/mark) alongside the real digits.
         assert n_read >= 13, f"novo-kavgolovsky-lesopark read {n_read}/21 numbers, expected >= 13"
 
     @pytest.mark.skipif(
@@ -551,7 +576,9 @@ class TestRealScanReadRateFloor:
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 1/25. T090/ADR-031 measured: 8/25 -- this
         # absolute count is unchanged by every later amendment (including T103's), only the total
-        # circle count moved.
+        # circle count moved. T102 measured: 12/24 -- 5 controls newly read (leftover ink beside
+        # the real digits), 1 corrected from a wrong read ("3" of a true 2+-digit number, clipped
+        # at the crop's own edge) to properly-flagged unread (ADR-009: never a guess).
         assert n_read >= 6, f"kkm-toksovo read {n_read}/24 numbers, expected >= 6"
 
     @pytest.mark.skipif(
@@ -582,5 +609,45 @@ class TestRealScanReadRateFloor:
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 7/20. T090/ADR-031 measured: 13/22 -- this
         # absolute count is unchanged by every later amendment (including T103's), only the total
-        # circle count moved.
+        # circle count moved. T102 measured: 14/21 -- 1 control newly read (leftover ink beside
+        # the real digits).
         assert n_read >= 10, f"lembolovo-kkm read {n_read}/21 numbers, expected >= 10"
+
+    @pytest.mark.skipif(
+        not _OGPS_6802_PATH.is_file(),
+        reason="data/maps/ogps-6802.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_ogps_6802_control_72_reads_correctly(self) -> None:
+        """T102: diagnosed the owner's three named unread controls (42/53/72) on this scan by
+        cropping each individually -- three different, unrelated root causes, not one shared bug:
+
+        - Control 72: a contour-line/mark fragment survived `_strip_thin_ink`'s area floor and
+          sat well above the real digits (43px, ~1.2x this crop's digit height) -- exactly the
+          leftover-ink-cluster failure `_keep_largest_ink_cluster` targets. Fixed here.
+        - Control 42: the crop is already clean (no stray ink at all) -- Tesseract itself reads
+          the correct text "42" but assigns it 0% confidence, below `min_ocr_confidence`. Not an
+          ink-masking problem; out of this task's scope.
+        - Control 53: also a clean crop -- Tesseract misreads the printed "5" as "9" ("93" at 41%
+          confidence, below floor). A character-recognition problem, not ink-masking; out of scope.
+
+        DoD's own "(or a documented subset)" clause: this pins the one of the three T102's actual
+        mechanism reaches, and documents (not silently drops) why the other two stay unread.
+        """
+        cfg = default_config()
+        dpi = resolve_dpi(_OGPS_6802_PATH, user_dpi=None)
+        image = load_raster(_OGPS_6802_PATH, dpi=dpi)
+        detections = detect_controls(image, dpi, cfg)
+        circles = [c for c in detections if not c.is_hub]
+        assert len(circles) == 35, f"expected 35 detected circles, got {len(circles)}"
+
+        updated, _flags = read_control_numbers(image, detections, dpi, cfg)
+        n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
+        # T102 measured: 32/35 (up from 31/35 pre-fix -- one control net gained after the
+        # competition+edge-touch guard also rejected a pre-existing wrong short read elsewhere on
+        # this same map, matching the corrective pattern measured on kkm-toksovo/pervomayskoe).
+        assert n_read >= 30, f"ogps-6802 read {n_read}/35 numbers, expected >= 30"
+
+        # Control 72: measured at (1175, 2475) in this scan's own pixel grid.
+        control_72 = min(circles, key=lambda c: (c.x - 1175) ** 2 + (c.y - 2475) ** 2)
+        updated_72 = next(c for c in updated if c.id == control_72.id)
+        assert updated_72.number == 72, f"control at (1175, 2475) read {updated_72.number}, want 72"
