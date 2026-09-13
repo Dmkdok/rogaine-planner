@@ -522,7 +522,7 @@ class TestHubFoundOnOzeroShchuche:
 
 
 class TestOcrGateSubBaseScale:
-    """T090/ADR-031 (independent review finding H2): `_ocr_gate_sub_base_scale`'s four branches,
+    """T090/ADR-031 (independent review finding H2): `_ocr_gate_sub_base_scale`'s branches,
     driven directly with a stubbed `read_control_numbers` -- its only prior coverage was three
     real-scan floor tests in `test_ocr.py`, all `skipif`-guarded on gitignored files (ADR-010), so
     the gate ran unexercised on any machine without the owner's own corpus (CI included). The
@@ -532,8 +532,17 @@ class TestOcrGateSubBaseScale:
     patch `rogaine.vision.controls` itself.
 
     Each stub is keyed by the exact x-coordinates of the `Control`s it's asked to score -- a plain,
-    deterministic stand-in for "how many numbers this candidate set reads" that needs no real image
-    or OCR call.
+    deterministic stand-in for "how many of these controls read a number" that needs no real image
+    or OCR call; `_stub_reading` marks the first *n_read* controls (in the order passed in) as read,
+    the rest as unread.
+
+    T099/ADR-032 generalised the sub-1.0 side from a whole-set comparison to a per-candidate one --
+    the first four tests below happen to keep the same overall pass/fail outcome as T090's original
+    version (every sub-1.0 candidate in them either all read or all don't, so per-candidate
+    filtering changes nothing about which side wins), which is itself the regression proof that
+    T099 didn't disturb T090's own already-covered branches. The last two tests are T099's own new
+    coverage: a mixed genuine-plus-glyph-false-positive set, and the no-production branch which now
+    also gates instead of standing unconditionally.
     """
 
     @staticmethod
@@ -629,28 +638,65 @@ class TestOcrGateSubBaseScale:
         )
         assert result == production
 
-    def test_no_production_candidates_returns_sub_base_without_any_ocr_pass(
+    def test_no_production_candidates_still_gates_sub_base_per_candidate(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No `>=1.0` entry has any candidate at all -- nothing to gate against, so the sub-1.0 set
-        stands unconditionally, and `read_control_numbers` must never even be called (paying for an
-        OCR pass would be pure waste when there's no alternative to compare against)."""
-        sub_base = [(10.0, 10.0, 5.0, 0.9)]
-        per_multiplier = [(0.5, []), (1.0, [])]
+        """T099/ADR-032: no `>=1.0` entry has any candidate at all -- nothing to compare against --
+        but the per-candidate probe still runs and still filters, unlike T090's original version
+        (which returned the whole unfiltered sub-1.0 set unconditionally here, paying no OCR cost).
+        A map whose only Hough hits are sub-1.0 (e.g. a cover page with no real controls, only small
+        round glyph loops) is exactly the case this gate must not leave unguarded. Only one
+        `read_control_numbers` call happens (there is nothing on the production side to probe) --
+        the stub dict below has no key for a production call, so an unexpected second call raises
+        `KeyError` and fails the test loudly.
+        """
+        sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, sub_base), (1.0, [])]
 
         import rogaine.vision.ocr as ocr_module
         from rogaine.vision.controls import _ocr_gate_sub_base_scale
 
-        def _unexpected_call(*args, **kwargs):
-            raise AssertionError("read_control_numbers must not be called when no production "
-                                  "candidate set exists")
-
-        monkeypatch.setattr(ocr_module, "read_control_numbers", _unexpected_call)
+        # Only the first candidate reads a plausible number; the second (e.g. a glyph loop) does
+        # not.
+        monkeypatch.setattr(
+            ocr_module, "read_control_numbers", self._stub_reading({(10.0, 20.0): 1})
+        )
 
         result = _ocr_gate_sub_base_scale(
             np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
         )
-        assert result == sub_base
+        assert result == [sub_base[0]]
+
+    def test_mixed_genuine_and_glyph_false_positive_keeps_only_the_genuine_reads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T099/ADR-032's own motivating case: two genuine sub-1.0 controls (both read a plausible
+        number) plus one coincidental glyph false positive (reads nothing) all cleared
+        `_ring_coverage` at the same winning sub-1.0 scale -- T090's set-level gate would have kept
+        all three, since the set's aggregate count (2) could still beat production. The
+        per-candidate gate drops exactly the one that doesn't read, keeps the two that do, and that
+        filtered set still wins against a weaker production side.
+        """
+        sub_base = [(10.0, 10.0, 5.0, 0.9), (20.0, 20.0, 5.0, 0.9), (30.0, 30.0, 5.0, 0.9)]
+        production = [(40.0, 40.0, 5.0, 0.9)]
+        per_multiplier = [(0.5, []), (1.0, production)]
+
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        # xs order matches `_controls_for`'s enumeration order: the two genuine controls (10, 20)
+        # read, the glyph false positive (30) does not -- `_stub_reading` marks the first n_read
+        # entries as read, so it is listed last.
+        monkeypatch.setattr(
+            ocr_module,
+            "read_control_numbers",
+            self._stub_reading({(10.0, 20.0, 30.0): 2, (40.0,): 1}),
+        )
+
+        result = _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8), 200.0, default_config(), per_multiplier, sub_base
+        )
+        assert result == [sub_base[0], sub_base[1]]
 
 
 class TestHubTriangleIgnoresSubBaseScaleRungs:

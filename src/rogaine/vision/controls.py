@@ -269,11 +269,14 @@ def _detect_circles(
     cannot tell a genuinely undersized ring from the *same* correctly-matched >=1.0 ring winning a
     sweep-order tie against its own sub-1.0 window, or from a small false-positive ink cluster
     (ADR-030 measured both failure modes on real scans: naive widening was a net -24 reads across
-    7 owner maps). `_ocr_gate_sub_base_scale` below runs the real OCR outcome against both
-    candidate sets and keeps whichever reads strictly more valid numbers, defaulting to the >=1.0
-    (production) winner otherwise -- bounded to at most two extra `read_control_numbers` passes
-    (one per candidate set), only paid when a sub-1.0 candidate would otherwise be chosen blind, on
-    top of the pipeline's own later OCR pass over whichever set is finally returned.
+    7 owner maps). `_ocr_gate_sub_base_scale` below probes the real OCR outcome of each sub-1.0
+    candidate individually (T099/ADR-032: a set-level comparison let a same-scale glyph false
+    positive, e.g. a round loop inside a bold digit label, ride along inside a winning sub-1.0 set
+    alongside genuine controls) and compares the surviving count against the >=1.0 (production)
+    side's own aggregate read count, defaulting to production otherwise -- bounded to at most two
+    `read_control_numbers` passes (one per candidate set), only paid when a sub-1.0 candidate would
+    otherwise be chosen blind, on top of the pipeline's own later OCR pass over whichever set is
+    finally returned.
     """
     det = config.detector
     base_r_min, base_r_max = det.circle_radius_px(dpi)
@@ -335,38 +338,72 @@ def _ocr_gate_sub_base_scale(
     per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]],
     sub_base_candidates: list[tuple[float, float, float, float]],
 ) -> list[tuple[float, float, float, float]]:
-    """T090/ADR-031 H2 gate: `_select_best_scale`'s ring-coverage-only score is not enough to
-    trust a sub-1.0 winner. Compare the real OCR outcome (`read_control_numbers`, unmodified --
-    same technique T089's own throwaway comparison script `_t089_h2_apples.py` worked out) between
-    *sub_base_candidates* and whatever `_select_best_scale` would pick from the >=1.0 (production)
-    subset alone, and keep whichever set reads strictly more valid numbers. Ties -- including the
-    degenerate case where both sides read zero, e.g. a purely geometric image with no digit ink --
-    fall back to the production winner, never to a sub-1.0 set that reads no better. If no >=1.0
-    candidate exists at all, there is nothing to gate against, so the sub-1.0 set stands.
-    """
-    production_candidates = _select_best_scale(
-        [(mult, candidates) for mult, candidates in per_multiplier if mult >= 1.0]
-    )
-    if not production_candidates:
-        return sub_base_candidates
+    """T090/ADR-031 H2 gate, generalised per-candidate by T099/ADR-032: `_select_best_scale`'s
+    ring-coverage-only score is not enough to trust a sub-1.0 winner. `_ring_coverage` saturates at
+    1.0 for any solid ink blob, not only a genuine ring (`_select_best_scale`'s own docstring), and
+    a smaller sub-1.0 search window is exactly the size a round loop inside a bold digit/letter
+    glyph (a title, a course-number label) can also fill -- a real, previously unguarded false-
+    positive path when such a glyph coincidence is *not* on a map with no real controls at all
+    (which the production-comparison path below still catches) but sits *alongside* genuine sub-1.0
+    controls on the same map.
 
+    T090's original version compared two whole candidate *sets* by aggregate valid-read count and
+    kept one entirely -- so a few genuine sub-1.0 controls mixed with several glyph false positives
+    could still let the false positives ride along as part of the winning set. Fixed by probing
+    each sub-1.0 candidate's *own* crop individually and keeping only the ones that read a
+    plausible number, before ever comparing to the production side. A candidate that is a genuine
+    control but whose specific number happens to be illegible is indistinguishable, from inside
+    this function, from a glyph coincidence that never was a control -- both read `None` -- so this
+    gate trades "an illegible-but-real sub-1.0 control is silently dropped instead of surfaced as
+    flagged-unreadable" for "a same-scale glyph false positive no longer survives just because
+    enough real neighbours carried the set's own aggregate count." That trade only ever applies on
+    the already-narrow, already-gated sub-1.0 path (T090); the production (`>=1.0`) side is
+    unchanged, both in how it is computed and in that it is still returned as a whole, unfiltered
+    set when it wins.
+
+    Comparison against production: the filtered sub-1.0 set's own size (every survivor read
+    something, by construction) versus production's aggregate valid-read count, same tie-break as
+    before -- ties, including both sides at zero, fall back to production, never to a sub-1.0 set
+    that reads no better. Unlike T090's version, this now runs the per-candidate probe even when no
+    `>=1.0` candidate exists at all to compare against: a map whose *only* Hough hits are sub-1.0
+    (e.g. a cover page with no real controls, only small round glyph loops) is exactly the
+    unguarded case above, and skipping the probe there would leave it wide open.
+    """
     # Deferred import: `vision.ocr` imports `purple_mask` from this module at load time, so a
     # module-level import here would be circular.
     from rogaine.vision.ocr import read_control_numbers
 
-    def _n_read(candidates: list[tuple[float, float, float, float]]) -> int:
-        controls = [
+    def _controls_for(
+        candidates: list[tuple[float, float, float, float]],
+    ) -> list[Control]:
+        return [
             Control(
                 id=i, x=x, y=y, confidence=coverage, radius_px=r, source="detected", is_hub=False
             )
             for i, (x, y, r, coverage) in enumerate(candidates, start=1)
         ]
-        updated, _flags = read_control_numbers(image, controls, dpi, config)
-        return sum(1 for c in updated if c.number is not None)
 
-    sub_ok = _n_read(sub_base_candidates)
-    prod_ok = _n_read(production_candidates)
-    return sub_base_candidates if sub_ok > prod_ok else production_candidates
+    sub_updated, _flags = read_control_numbers(
+        image, _controls_for(sub_base_candidates), dpi, config
+    )
+    filtered_sub = [
+        cand
+        for cand, updated_control in zip(sub_base_candidates, sub_updated, strict=True)
+        if updated_control.number is not None
+    ]
+
+    production_candidates = _select_best_scale(
+        [(mult, candidates) for mult, candidates in per_multiplier if mult >= 1.0]
+    )
+    if not production_candidates:
+        return filtered_sub
+
+    prod_updated, _flags = read_control_numbers(
+        image, _controls_for(production_candidates), dpi, config
+    )
+    prod_ok = sum(1 for c in prod_updated if c.number is not None)
+
+    return filtered_sub if len(filtered_sub) > prod_ok else production_candidates
 
 
 def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Control | None:

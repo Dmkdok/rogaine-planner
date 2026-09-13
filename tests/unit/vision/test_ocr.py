@@ -413,6 +413,14 @@ class TestRealScanReadRateFloor:
     re-run against the landed gate (`data/maps/_t089_owner_out.csv`) -- not carried over from
     T089/ADR-030's apples-to-apples table verbatim, since that table predates T090's landed gate;
     this floor uses the gate's actual output.
+
+    T099/ADR-032 generalised the sub-1.0 gate to per-candidate (keep only the ones whose own crop
+    reads a plausible number), which moved all three of T090's own circle counts down again --
+    `novo-kavgolovsky-lesopark` 23 -> 16, `kkm-toksovo` 25 -> 8, `lembolovo-kkm` 22 -> 13 -- by
+    dropping exactly the candidates that were never contributing a read anyway. Each map's absolute
+    `n_read` count is unchanged (16, 8, 13 respectively): the `n_read >=` floors below did not need
+    to move, only the `len(circles) ==` counts, since the sub-1.0 candidates that used to sit in the
+    detected-but-unread gap are simply no longer part of the returned set.
     """
 
     @pytest.mark.skipif(
@@ -443,16 +451,20 @@ class TestRealScanReadRateFloor:
         image = load_raster(_NOVO_KAVGOLOVSKY_PATH)
         detections = detect_controls(image, dpi, cfg)
         circles = [c for c in detections if not c.is_hub]
-        # T090/ADR-031: the OCR-gated sub-1.0 fix now picks this map's true (smaller) scale, so the
-        # circle count itself moves too -- 21 (T084's own count, at the old base-scale-only ladder)
-        # -> 23 (2 more real rings found at the correct, smaller scale).
-        assert len(circles) == 23, f"expected 23 detected circles, got {len(circles)}"
+        # T090/ADR-031: the OCR-gated sub-1.0 fix picks this map's true (smaller) scale, so the
+        # circle count itself moved -- 21 (T084's own count, at the old base-scale-only ladder) ->
+        # 23 (2 more real rings found at the correct, smaller scale). T099/ADR-032's per-candidate
+        # gate then dropped that 23 to 16 -- the 7 sub-1.0 candidates that never read a plausible
+        # number anyway (measured: absolute n_read is unchanged at 16, see below; only the
+        # never-successful candidates are gone).
+        assert len(circles) == 16, f"expected 16 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # T083 baseline (ADR-023): 0/21. T084 measured: 6/21. T090/ADR-031 measured: 16/23.
-        assert n_read >= 13, f"novo-kavgolovsky-lesopark read {n_read}/23 numbers, expected >= 13"
+        # T099/ADR-032 measured: 16/16 (same absolute count, now 100% of a smaller detected set).
+        assert n_read >= 13, f"novo-kavgolovsky-lesopark read {n_read}/16 numbers, expected >= 13"
 
     @pytest.mark.skipif(
         not _KKM_TOKSOVO_PATH.is_file(),
@@ -462,20 +474,23 @@ class TestRealScanReadRateFloor:
         """T090/ADR-031: this map's real control circles print smaller than ISOM spec (H2), gated
         to multiplier 0.85 by `_ocr_gate_sub_base_scale`'s OCR-outcome comparison. Before T090, the
         production ladder's base-scale (1.0) fit read only 1/25 -- the worst reader in the owner
-        corpus.
+        corpus. T099/ADR-032's per-candidate gate then dropped the circle count from 25 to 8 -- the
+        17 sub-1.0 candidates that never read a plausible number anyway (measured: absolute n_read
+        is unchanged at 8, see below).
         """
         cfg = default_config()
         dpi = resolve_dpi(_KKM_TOKSOVO_PATH, user_dpi=None)
         image = load_raster(_KKM_TOKSOVO_PATH)
         detections = detect_controls(image, dpi, cfg)
         circles = [c for c in detections if not c.is_hub]
-        assert len(circles) == 25, f"expected 25 detected circles, got {len(circles)}"
+        assert len(circles) == 8, f"expected 8 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 1/25. T090/ADR-031 measured: 8/25.
-        assert n_read >= 6, f"kkm-toksovo read {n_read}/25 numbers, expected >= 6"
+        # T099/ADR-032 measured: 8/8 (same absolute count, now 100% of a smaller detected set).
+        assert n_read >= 6, f"kkm-toksovo read {n_read}/8 numbers, expected >= 6"
 
     @pytest.mark.skipif(
         not _LEMBOLOVO_KKM_PATH.is_file(),
@@ -483,17 +498,20 @@ class TestRealScanReadRateFloor:
     )
     def test_lembolovo_kkm_read_rate_floor(self) -> None:
         """T090/ADR-031: gated to multiplier 0.5 (H2), which also finds 2 more real rings than the
-        base-scale-only ladder did (20 -> 22 circles).
+        base-scale-only ladder did (20 -> 22 circles). T099/ADR-032's per-candidate gate then
+        dropped the circle count from 22 to 13 -- the 9 sub-1.0 candidates that never read a
+        plausible number anyway (measured: absolute n_read is unchanged at 13, see below).
         """
         cfg = default_config()
         dpi = resolve_dpi(_LEMBOLOVO_KKM_PATH, user_dpi=None)
         image = load_raster(_LEMBOLOVO_KKM_PATH)
         detections = detect_controls(image, dpi, cfg)
         circles = [c for c in detections if not c.is_hub]
-        assert len(circles) == 22, f"expected 22 detected circles, got {len(circles)}"
+        assert len(circles) == 13, f"expected 13 detected circles, got {len(circles)}"
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
 
         # Pre-T090 (base scale 1.0 only, ADR-030): 7/20. T090/ADR-031 measured: 13/22.
-        assert n_read >= 10, f"lembolovo-kkm read {n_read}/22 numbers, expected >= 10"
+        # T099/ADR-032 measured: 13/13 (same absolute count, now 100% of a smaller detected set).
+        assert n_read >= 10, f"lembolovo-kkm read {n_read}/13 numbers, expected >= 10"
