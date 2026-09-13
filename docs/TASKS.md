@@ -2010,3 +2010,17 @@ the implementer's self-report.
   of direction; before/after crops for controls matching the owner's own reported examples sent to
   the owner for the manual sign-off this milestone's DoD requires (ADR-019 precedent) before this
   checkbox closes.
+  **Measurement done, colour-heuristic coverage confirmed (no gap, no speculative test added) —
+  checkbox left open pending the owner's decision on a real trade-off this measurement surfaced.**
+  Corpus-wide: owner's 14 maps 420→387 circles (-7.9%), reads 228→229 (+1), rate 54.3%→59.2%; 40
+  `ogps-*` sample 1877→1526 circles (-18.7%), reads 528→527 (-1, noise), rate 28.1%→34.5%. Visual
+  spot-check (not just aggregate counts) found T099 behaves very differently on different maps:
+  `ogps-3771_...` is a clean win (230→17 circles, a confirmed pink-hatched "no-crossing zone" ink
+  texture in the same colour family generating hundreds of coincidental false positives, every real
+  control unaffected) but the owner's own `kkm-toksovo` is not (25→8 circles; controls 91/92/72/52
+  confirmed by eye as real, legible, correctly-positioned controls that Tesseract simply never read
+  at this map's print style — now silently absent from the output instead of appearing
+  detected-but-unread as they did before T099). Full account, including the exact question put to
+  the owner: `docs/DECISIONS.md` ADR-032's own amendment. Before/after crops sent via
+  `SendUserFile`. **Awaiting the owner's decision** (keep T099 as landed, or amend it to flag
+  rather than drop unread sub-1.0 candidates) before this checkbox and the milestone can close.

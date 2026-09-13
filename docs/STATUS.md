@@ -170,8 +170,16 @@ Progress (M12 in `docs/TASKS.md`, T097-T100):
   departure in ADR-032's own amendment). Measured: the 3 real-scan floors' circle counts dropped
   (23→16, 25→8, 22→13) but each map's absolute `n_read` is unchanged (16, 8, 13) — only the
   never-successful candidates were dropped, so the existing `n_read >=` floors didn't need to move.
-  506 passed, `ruff check .` clean. **T100 next** (confirm colour-heuristic coverage, measure the
-  combined effect corpus-wide, send the owner before/after evidence for sign-off).
+  506 passed, `ruff check .` clean. **T100 measured** — colour-heuristic coverage confirmed (no gap).
+  Corpus-wide: owner's 14 maps circles 420→387 (-7.9%), reads 228→229 (+1); 40-map `ogps-*` sample
+  circles 1877→1526 (-18.7%), reads 528→527 (-1, noise). Visual spot-check found a real,
+  map-dependent trade-off, not a clean win everywhere: `ogps-3771` cleanly drops 213 coincidental
+  false positives (a pink-hatched "no-crossing zone" texture) with zero real controls affected, but
+  the owner's own `kkm-toksovo` also silently drops 4+ confirmed real, legible controls (91/92/72/52)
+  that Tesseract never read — before T099 these still appeared flagged-unread; now they vanish
+  entirely. Full account: ADR-032's amendment, `docs/TASKS.md` T100's entry. Before/after crops sent
+  via `SendUserFile`. **Milestone gated on the owner's decision** (keep T099's drop-if-unread
+  behaviour, or amend it to flag instead) before T100/M12 can close.
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed

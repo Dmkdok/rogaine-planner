@@ -1377,3 +1377,63 @@
   per-candidate filtering changes nothing about which side wins there) — itself the regression
   proof that T099 left T090's own already-covered branches undisturbed. 506 passed, `ruff check .`
   clean.
+
+- **Amendment, 2026-09-13 — T100 measurement, and a real trade-off found that needs the owner's
+  own call before this milestone closes.** Confirmed first (DoD item 1): `purple_mask`/
+  `ink_hue_ranges` already gate every detection and OCR-crop code path (`detect_controls` computes
+  one mask and passes it to both `_detect_hub_triangle` and `_detect_circles`; `_ocr_crop`
+  re-applies the same `purple_mask` function to its own crop) — no gap found, no speculative test
+  added.
+
+  Corpus-wide before/after (throwaway `data/maps/_t100_measure.py`, T083/T084/T089's own method,
+  no re-implementation; "before" = commit `989c08f`, pre-I5; "after" = current tree with T097+T099,
+  T098 closed with no change): **owner's 14-map corpus** circle count 420→387 (-7.9%), absolute
+  successful reads 228→229 (+1), rate 54.3%→59.2%. **A 40-map `ogps-*` sample**: circle count
+  1877→1526 (-18.7%), absolute reads 528→527 (-1, noise-level), rate 28.1%→34.5%. In both corpora
+  the story is the same shape: a large fraction of previously-detected circles disappear, while the
+  total count of *successfully read* numbers barely moves — meaning most of what disappeared was
+  never contributing a read either way.
+
+  **What that removal actually is, checked by eye on real maps, not assumed:** on
+  `ogps-3771_0da0ae4ad426ed5d03089615dbe38a1f` this is unambiguously a win — 230→17 circles, 17/17
+  now reading (100%, was 7%). Visual inspection found the map prints a large pink/magenta hatched
+  "no-crossing zone" (its own legend confirms: "РОЗОВОЙ ШТРИХОВКОЙ ОБОЗНАЧЕНЫ ЗОНЫ, ЗАПРЕЩЕННЫЕ ДЛЯ
+  ПЕРЕСЕЧЕНИЯ УЧАСТНИКАМИ") in the same ink family `ink_hue_ranges` matches — the hatch texture's
+  crossings coincidentally clear `_ring_coverage` by the hundreds, and T099 discards essentially all
+  of them while every real, green-circled control on the same map survives untouched.
+
+  On the owner's own `kkm-toksovo`, the same mechanism is **not** a clean win. 25→8 circles, 8/8
+  reading (100%, was 32%) — but a by-hand check of a sample of the 17 dropped candidates
+  (`data/maps/_t100_crop_xy.py`) found several that are unambiguously real, clearly-legible,
+  correctly-positioned controls (91, 92, 72, 52 confirmed by eye against the map's own printed
+  labels) that Tesseract simply never read at this map's own print style/scale — a pre-existing OCR
+  weakness (this map read only 8/25 *before* I5 too, unrelated to T097/T099), not something these
+  tasks introduced. T099 cannot distinguish "real control, illegible to Tesseract" from "coincidental
+  ink texture, never a control" — both read `None` from their own crop and are structurally
+  indistinguishable to this gate. Before T099, such a control still appeared in the output as a
+  detected-but-unread `Control` (flagged, position correct, ready for the owner to type its number
+  in by hand). After T099, it is silently absent from the output entirely — the owner would have to
+  notice it is missing and re-add it from scratch (position and number both), not just fill in a
+  number. This is the exact trade-off T099's own landing note (above) already named in the abstract;
+  seeing it materialise on a real, important map with multiple confirmed real controls is why it is
+  called out here explicitly rather than treated as already settled.
+
+  This is a genuine product/UX judgement call, not a correctness bug with one right answer: keep
+  T099's current behaviour (fewer false positives shown, at the cost of some real-but-illegible
+  controls vanishing instead of surfacing flagged), or amend it to keep every sub-1.0 candidate in
+  the output (flagged unread instead of dropped) and use the per-candidate read outcome only to
+  decide *which scale wins* — reopening exactly the "false positives ride along in the winning set"
+  risk T099 was built to close. No code change made in response to this finding without the owner's
+  own decision (ADR-019 precedent: manual sign-off is this iteration's acceptance gate, not a
+  numeric floor) — see `docs/TASKS.md` T100's own entry and the session's report to the owner for
+  the question as put and, once answered, the resolution.
+
+  Before/after crops sent to the owner via `SendUserFile`: the `kkm-toksovo` full-map overview
+  (before/after), the 4 confirmed-real dropped-control crops (91/92/72/52), and the
+  `ogps-3771` full-map overview (before/after) as the contrasting clean-win case. A third, subtler
+  T097 case was also measured (control `72` on `ogps-3592_2b186961d73c0efb57200e3baee226d9`,
+  matching the owner's own reported example number exactly: unread before, reads "72" after) but its
+  crop-size change is only ~5px at the edge the control does not actually sit closest to, so it is
+  recorded as a real, reproduced flip rather than a visually dramatic "digit was chopped off" story
+  — Tesseract's own layout analysis is evidently sensitive to a smaller margin change than a human
+  eye would guess, not fully root-caused pixel-by-pixel here.
