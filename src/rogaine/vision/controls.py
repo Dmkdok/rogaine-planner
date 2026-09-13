@@ -289,14 +289,23 @@ def _select_best_scale(
     best: list[tuple[float, float, float, float]] = []
     best_score: tuple[int, int] = (-1, -1)
     for _mult, candidates in per_multiplier:
-        if not candidates:
-            continue
-        mean_coverage = sum(c for _, _, _, c in candidates) / len(candidates)
-        score = (round(mean_coverage / _SCALE_TIE_EPS), len(candidates))
-        if score > best_score:
+        score = _multiplier_score(candidates)
+        if score is not None and score > best_score:
             best_score = score
             best = candidates
     return best
+
+
+def _multiplier_score(
+    candidates: list[tuple[float, float, float, float]],
+) -> tuple[int, int] | None:
+    """The `(coverage bucketed to _SCALE_TIE_EPS, candidate count)` score `_select_best_scale`
+    ranks multipliers by, factored out so `_ocr_gate_tied_scales` (T104) can detect an exact tie
+    against the same score without duplicating the formula. `None` for an empty candidate list."""
+    if not candidates:
+        return None
+    mean_coverage = sum(c for _, _, _, c in candidates) / len(candidates)
+    return (round(mean_coverage / _SCALE_TIE_EPS), len(candidates))
 
 
 def _detect_circles(
@@ -328,6 +337,15 @@ def _detect_circles(
     it doesn't. Bounded to at most two `read_control_numbers` passes (one per candidate set), only
     paid when a sub-1.0 candidate would otherwise be chosen blind, on top of the pipeline's own
     later OCR pass over whichever set is finally returned.
+
+    T104: when the winner sits *at or above* `1.0` instead, a different failure mode applies --
+    `_select_best_scale`'s own sweep-order tie-break can still pick a multiplier too small for
+    this map's real print size when several multipliers tie exactly on score (a thick or doubled
+    ring passes `_ring_coverage` at more than one nested radius). `_ocr_gate_tied_scales` below
+    resolves that by OCR outcome across only the tied multipliers, the same principle as the
+    sub-1.0 gate -- see its own docstring for the measured `ogps-8078` case this fixes and why the
+    reverse "always prefer larger" bias is unsafe. Zero extra cost when nothing ties, which is most
+    maps.
     """
     det = config.detector
     base_r_min, base_r_max = det.circle_radius_px(dpi)
@@ -391,6 +409,8 @@ def _detect_circles(
     selected_mult = selected[0][2] / base_r_mid if selected and base_r_mid > 0 else None
     if selected_mult is not None and selected_mult < 1.0:
         selected = _ocr_gate_sub_base_scale(image, dpi, config, per_multiplier, selected)
+    elif selected_mult is not None:
+        selected = _ocr_gate_tied_scales(image, dpi, config, per_multiplier, selected)
 
     return selected
 
@@ -485,6 +505,70 @@ def _ocr_gate_sub_base_scale(
     if sub_read_count <= prod_ok:
         return production_candidates
     return filtered_sub if junk_dominated else sub_base_candidates
+
+
+def _ocr_gate_tied_scales(
+    image: np.ndarray,
+    dpi: float,
+    config: AppConfig,
+    per_multiplier: list[tuple[float, list[tuple[float, float, float, float]]]],
+    selected: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float, float, float]]:
+    """T104: when the winning (>=1.0) multiplier's own score exactly ties `_select_best_scale`'s
+    score with one or more *other* >=1.0 multipliers, pick whichever tied candidate set actually
+    reads the most numbers, rather than trusting sweep order's own default (the smallest tied
+    multiplier).
+
+    Measured on `ogps-8078_8295c94963b2c249d6f4d94fd0c35fa1`: this map's printed control ring is
+    thick/doubled enough that Hough+`_ring_coverage` passes at multipliers 2.0, 2.5 *and* 3.0 --
+    the same 52 physical positions (within 5px) at every one, near-identical mean coverage
+    (0.9813/0.9821/0.9826, all three bucketed to the same `_SCALE_TIE_EPS` tier) -- a genuine
+    3-way tie, not a coincidental near-miss. `_select_best_scale`'s sweep-order default picks the
+    smallest (2.0), which undersizes `_ocr_crop`'s ring-erase disk and digit-search window for the
+    map's true (larger) print size, leaving a residual ring in almost every crop: 2/52 controls
+    read. Forcing the largest tied multiplier (3.0) instead reads 30/52.
+
+    Blindly always preferring the largest tied multiplier is *not* safe, though -- disproven by a
+    different real map already on record: `_select_best_scale`'s own docstring measures
+    `kkm-toksovo` tying multiplier `0.85` against `1.0`, where `0.85` is the genuinely correct
+    scale (reads 8/25 against `1.0`'s 1/25) -- the reverse direction. Scoped to `selected`'s own
+    multiplier being `>= 1.0` keeps this entirely clear of that case (still `_ocr_gate_sub_base_
+    scale`'s own, already-measured territory below `1.0`) -- and gated on actual OCR outcome, the
+    same principle that gate already established, rather than a second blind directional guess.
+
+    A no-op, zero extra `read_control_numbers` cost, whenever nothing actually ties -- the
+    overwhelming majority of maps, which have one clear-scoring multiplier.
+    """
+    from rogaine.vision.ocr import read_control_numbers
+
+    selected_score = _multiplier_score(selected)
+    tied = [
+        candidates
+        for mult, candidates in per_multiplier
+        if mult >= 1.0 and _multiplier_score(candidates) == selected_score
+    ]
+    if len(tied) <= 1:
+        return selected
+
+    def _controls_for(candidates: list[tuple[float, float, float, float]]) -> list[Control]:
+        return [
+            Control(
+                id=i, x=x, y=y, confidence=coverage, radius_px=r, source="detected", is_hub=False
+            )
+            for i, (x, y, r, coverage) in enumerate(candidates, start=1)
+        ]
+
+    def _read_count(candidates: list[tuple[float, float, float, float]]) -> int:
+        updated, _flags = read_control_numbers(image, _controls_for(candidates), dpi, config)
+        return sum(1 for c in updated if c.number is not None)
+
+    best_candidates = tied[0]
+    best_count = _read_count(tied[0])
+    for candidates in tied[1:]:
+        count = _read_count(candidates)
+        if count > best_count:
+            best_candidates, best_count = candidates, count
+    return best_candidates
 
 
 def _detect_hub_triangle(mask: np.ndarray, dpi: float, config: AppConfig) -> Control | None:

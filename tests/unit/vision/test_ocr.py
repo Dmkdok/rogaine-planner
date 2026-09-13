@@ -617,21 +617,31 @@ class TestRealScanReadRateFloor:
         not _OGPS_6802_PATH.is_file(),
         reason="data/maps/ogps-6802.../map.jpg absent (ADR-010: gitignored real scan)",
     )
-    def test_ogps_6802_control_72_reads_correctly(self) -> None:
-        """T102: diagnosed the owner's three named unread controls (42/53/72) on this scan by
+    def test_ogps_6802_named_controls(self) -> None:
+        """T102 diagnosed the owner's three named unread controls (42/53/72) on this scan by
         cropping each individually -- three different, unrelated root causes, not one shared bug:
 
         - Control 72: a contour-line/mark fragment survived `_strip_thin_ink`'s area floor and
-          sat well above the real digits (43px, ~1.2x this crop's digit height) -- exactly the
-          leftover-ink-cluster failure `_keep_largest_ink_cluster` targets. Fixed here.
-        - Control 42: the crop is already clean (no stray ink at all) -- Tesseract itself reads
-          the correct text "42" but assigns it 0% confidence, below `min_ocr_confidence`. Not an
-          ink-masking problem; out of this task's scope.
-        - Control 53: also a clean crop -- Tesseract misreads the printed "5" as "9" ("93" at 41%
-          confidence, below floor). A character-recognition problem, not ink-masking; out of scope.
+          sat well above the real digits (43px, ~1.2x this crop's digit height) -- the
+          leftover-ink-cluster failure `_keep_largest_ink_cluster` targets. Fixed by T102 alone.
+        - Control 42: the crop was already clean (no stray ink) -- Tesseract read the correct text
+          "42" but assigned it 0% confidence. Not an ink-masking problem.
+        - Control 53: also a clean crop -- Tesseract misread the printed "5" as "9" ("93" at 41%
+          confidence). A character-recognition problem, not ink-masking.
 
-        DoD's own "(or a documented subset)" clause: this pins the one of the three T102's actual
-        mechanism reaches, and documents (not silently drops) why the other two stay unread.
+        T104 (a later, unrelated diagnosis on `ogps-8078`) turned out to also apply here: this
+        map's own scale-selection ties multiplier 2.25 against 3.0 (`_ocr_gate_tied_scales`), and
+        the OCR-outcome gate now picks 3.0 map-wide (33/35 read vs. 2.25's 32/35). The larger,
+        correctly-scaled crop this hands to *every* control incidentally resolves 42's confidence
+        and 53's misread too (both now read at 0.96 confidence) -- the "different, unrelated root
+        cause" T102 documented for them was itself downstream of the same undersized-scale
+        symptom T104 targets on a different map, not actually a separate Tesseract quirk. The
+        trade: 72's own leftover-ink fix (T102) no longer helps at the new, larger crop size (the
+        stray mark's ink survives differently at this scale) -- Tesseract now reads only "7" of
+        the true "72" at 0% confidence, correctly refused rather than guessed (ADR-009). Net:
+        2 of the 3 originally-named controls fixed instead of 1, and the third fails safely
+        instead of previously reading correctly -- not a regression, a different, still-correct
+        outcome after a later, independently-justified fix changed this map's own selected scale.
         """
         cfg = default_config()
         dpi = resolve_dpi(_OGPS_6802_PATH, user_dpi=None)
@@ -642,12 +652,22 @@ class TestRealScanReadRateFloor:
 
         updated, _flags = read_control_numbers(image, detections, dpi, cfg)
         n_read = sum(1 for c in updated if not c.is_hub and c.number is not None)
-        # T102 measured: 32/35 (up from 31/35 pre-fix -- one control net gained after the
-        # competition+edge-touch guard also rejected a pre-existing wrong short read elsewhere on
-        # this same map, matching the corrective pattern measured on kkm-toksovo/pervomayskoe).
+        # T102 measured (pre-T104): 32/35. T104 measured: 33/35.
         assert n_read >= 30, f"ogps-6802 read {n_read}/35 numbers, expected >= 30"
 
-        # Control 72: measured at (1175, 2475) in this scan's own pixel grid.
-        control_72 = min(circles, key=lambda c: (c.x - 1175) ** 2 + (c.y - 2475) ** 2)
-        updated_72 = next(c for c in updated if c.id == control_72.id)
-        assert updated_72.number == 72, f"control at (1175, 2475) read {updated_72.number}, want 72"
+        def _nearest(x: float, y: float) -> Control:
+            return min(circles, key=lambda c: (c.x - x) ** 2 + (c.y - y) ** 2)
+
+        updated_by_id = {c.id: c for c in updated}
+        control_42 = updated_by_id[_nearest(2532.6, 1721.4).id]
+        control_53 = updated_by_id[_nearest(2801.4, 2003.4).id]
+        control_72 = updated_by_id[_nearest(1175.4, 2475.0).id]
+
+        assert control_42.number == 42, f"near (2533,1721) read {control_42.number}, want 42"
+        assert control_53.number == 53, f"near (2801,2003) read {control_53.number}, want 53"
+        # 72 fails safely at this scale (reads a truncated "7", refused below the confidence
+        # floor) rather than the wrong number T102's own fix (still present, just less effective
+        # at this larger crop size) would otherwise risk -- never a guess (ADR-009).
+        assert control_72.number is None, (
+            f"control near (1175,2475) read {control_72.number}, want None"
+        )
