@@ -239,8 +239,10 @@ function redraw() {
 function setMode(mode) {
   state.mode = mode;
   els.mapViewport.classList.toggle("mode-add", mode === "add");
+  els.mapViewport.classList.toggle("mode-add-once", mode === "add-once");
   els.mapViewport.classList.toggle("mode-calibrate", mode === "calibrate");
   els.toggleAddModeBtn.setAttribute("aria-pressed", String(mode === "add"));
+  els.addControlBtn.setAttribute("aria-pressed", String(mode === "add-once"));
   els.calibStartBtn.setAttribute("aria-pressed", String(mode === "calibrate"));
 }
 
@@ -1072,9 +1074,14 @@ function initMapToolbar() {
     els.mapViewport.focus();
   });
   els.detectBtn.addEventListener("click", () => runDetect());
+  // T107 (F17): arms a one-shot placement instead of dropping a pin at the view centre
+  // immediately -- the next map click (below, `beginArmedPointerGesture`) places the control
+  // exactly there and returns to idle, matching the calibration-line tool's own click-to-place
+  // flow. Clicking again while armed disarms it, same as `calibStartBtn`. Leaves the existing
+  // `toggleAddModeBtn` multi-placement flow (`state.mode === "add"`) untouched.
   els.addControlBtn.addEventListener("click", () => {
-    const c = view.viewCenterMap();
-    addControlAt(clamp(c.x, 0, view.mapWidth || c.x), clamp(c.y, 0, view.mapHeight || c.y));
+    setMode(state.mode === "add-once" ? "idle" : "add-once");
+    els.mapViewport.focus();
   });
 }
 
@@ -1102,16 +1109,16 @@ function startPan(e) {
 // gesture still reads as a pan (T106).
 const CLICK_DRAG_THRESHOLD_PX = 5;
 
-/** Tracks a pointer gesture on the map canvas for an "armed" placement tool (currently
- * `calibrate`; reusable by a future one-shot mode such as T107's add-control panel button): while
- * cumulative movement stays under CLICK_DRAG_THRESHOLD_PX the gesture is a click, and `onClick`
- * fires once on pointerup with the map coordinates (already clamped to the map bounds); once
- * movement crosses the threshold the gesture behaves exactly like `startPan` instead -- the view
- * pans and `onClick` never fires. This is what stops a drag-to-pan gesture from placing or
- * corrupting a point while a tool is armed (SPEC F17).
+/** Tracks a pointer gesture on the map canvas for an "armed" placement tool (`calibrate` and
+ * `add-once`, T106/T107): while cumulative movement stays under CLICK_DRAG_THRESHOLD_PX the
+ * gesture is a click, and `onClick` fires once on pointerup with the map coordinates (already
+ * clamped to the map bounds); once movement crosses the threshold the gesture behaves exactly
+ * like `startPan` instead -- the view pans and `onClick` never fires. This is what stops a
+ * drag-to-pan gesture from placing or corrupting a point while a tool is armed (SPEC F17).
  *
- * A future caller that needs "place one point, then return to idle" (T107) should pass an
- * `onClick` that finishes by calling `setMode("idle")` -- no second pointer-handling path needed.
+ * A one-shot mode's `onClick` finishes by calling `setMode("idle")` (T107's `add-once`) so the
+ * map is draggable again immediately; a persistent mode like `calibrate` leaves the mode armed
+ * for repeat placements instead.
  */
 function beginArmedPointerGesture(e, onClick) {
   const canvas = els.mapCanvas;
@@ -1148,6 +1155,13 @@ function initMapViewport() {
     if (e.button !== 0) return;
     if (state.mode === "calibrate") {
       beginArmedPointerGesture(e, setCalibrationPoint);
+      return;
+    }
+    if (state.mode === "add-once") {
+      beginArmedPointerGesture(e, (x, y) => {
+        addControlAt(x, y);
+        setMode("idle");
+      });
       return;
     }
     const rect = els.mapViewport.getBoundingClientRect();

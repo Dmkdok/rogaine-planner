@@ -241,6 +241,7 @@ button[aria-pressed="true"] {
   touch-action: none;
 }
 .map-viewport.mode-add,
+.map-viewport.mode-add-once,
 .map-viewport.mode-calibrate {
   cursor: crosshair;
 }
@@ -257,6 +258,20 @@ button[aria-pressed="true"] {
 }
 .map-viewport.mode-calibrate {
   outline: 2px solid var(--danger);
+  outline-offset: -2px;
+}
+/* T107: the add-control button's own "armed" state (F17 names both tools) needs the same kind
+   of distinct affordance, but the warning tokens instead of the calibration tool's danger ones
+   -- placing a control has no overwrite risk (unlike an armed calibration click, which can
+   corrupt an existing line), so "one placement about to happen" reads better than "about to
+   overwrite something". */
+#add-control-btn[aria-pressed="true"] {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  font-weight: 600;
+}
+.map-viewport.mode-add-once {
+  outline: 2px solid var(--warning-border);
   outline-offset: -2px;
 }
 

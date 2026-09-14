@@ -745,3 +745,92 @@ class TestCalibrationToolArmedState:
             x1_before,
             y1_before,
         )
+
+
+class TestAddControlClickToPlace:
+    """T107 (F17, I6): `#add-control-btn` used to drop a control at the view centre on click,
+    the moment it was pressed. It now arms a one-shot `state.mode = "add-once"` instead -- the
+    next map click (via `beginArmedPointerGesture`, T106's shared armed-gesture helper) places the
+    control exactly there and immediately returns to idle, matching `#calib-start-btn`'s own
+    click-to-place flow. The pre-existing `#toggle-add-mode-btn` multi-placement flow
+    (`state.mode = "add"`) is untouched and not exercised here.
+
+    Needs the full upload -> apply-scale -> segment+detect setup (`TestFullViewerFlow`'s own path)
+    because `#add-control-btn` stays `disabled` until `state.segment` is set
+    (`updateAvailability`), unlike T106's calibration test which only needed `view.fit()`.
+    """
+
+    def test_click_arms_then_places_at_click_point_and_returns_to_idle(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+        rows_before = page.locator("#controls-tbody tr").count()
+
+        def last_row_id() -> str:
+            row_ids = page.evaluate(
+                "() => [...document.querySelectorAll('#controls-tbody tr')].map((r) => r.id)"
+            )
+            return row_ids[-1].replace("control-row-", "")
+
+        def place_at(screen_x: float, screen_y: float) -> tuple[float, float]:
+            page.click("#add-control-btn")
+            expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "true")
+            expect(page.locator("#map-viewport")).to_have_class(re.compile(r"\bmode-add-once\b"))
+            page.mouse.move(screen_x, screen_y)
+            page.mouse.down()
+            page.mouse.up()
+            row_id = last_row_id()
+            return (
+                float(page.input_value(f"#control-{row_id}-x")),
+                float(page.input_value(f"#control-{row_id}-y")),
+            )
+
+        # --- Clicking the panel button arms the tool without placing anything -------------------
+        page.click("#add-control-btn")
+        expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#map-viewport")).to_have_class(re.compile(r"\bmode-add-once\b"))
+        assert page.locator("#controls-tbody tr").count() == rows_before
+        page.click("#add-control-btn")  # disarm again; the placements below re-arm explicitly
+        expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "false")
+
+        box = page.locator("#map-canvas").bounding_box()
+        assert box is not None
+
+        # --- The next map click places the control at that exact point, then returns to idle,
+        # proven by placing at two different points and getting two different, click-dependent
+        # map positions -- the old behaviour placed at `view.viewCenterMap()` regardless of any
+        # later map click, which would give identical x/y both times ------------------------------
+        xa, ya = place_at(box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.75)
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 1)
+        expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "false")
+        expect(page.locator("#map-viewport")).not_to_have_class(re.compile(r"\bmode-add-once\b"))
+
+        xb, yb = place_at(box["x"] + box["width"] * 0.75, box["y"] + box["height"] * 0.25)
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 2)
+
+        assert (xa, ya) != (xb, yb)
+        assert xb > xa  # second click was to the right of the first
+        assert yb < ya  # second click was above the first
+
+        # --- Placement immediately returns to idle: the map is draggable again, and a drag on
+        # the canvas pans instead of placing a third control ---------------------------------------
+        cx, cy = box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 80, cy + 40, steps=10)
+        page.mouse.up()
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 2)
