@@ -68,6 +68,21 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   false positive T103 now correctly excludes, not a real regression), fixed
   (`b91677a`). **T101 and T102 landed** (`55f0d86`, `dc0fb1c`) — see their own `docs/TASKS.md`
   entries for the full diagnosis/fix/measurement account. 518 passed, `ruff check .` clean.
+  **2026-09-14: T104 and T105 landed** (`255f1cf`/ADR-034 docs `73c5d34`, `3aeaaf2`/ADR-035 docs
+  `74427aa` — all four commits predate this session; this session found them already on the tree,
+  matching `docs/TASKS.md`'s own `[x]` checkboxes, trust-the-tree confirmed rather than assumed).
+  T104's own diagnosis overturned its DoD's two-colour-print premise (ADR-034: the real cause was a
+  `_select_best_scale` tie-break gap, `ogps-8078` 2/52→40/52 reads). T105 shipped a measured, named
+  `_AUTO_PLACEMENT_CONFIDENCE_FLOOR = 0.80` (ADR-035) — a small accepted cost per ADR-033's own
+  advance risk acceptance, not a measured win (drops 4/524 real detections, all confirmed genuine).
+  **Same session: T107 landed** (add-control click-to-place, matching T106's calibration-line
+  flow) — new `state.mode = "add-once"` routed through T106's own `beginArmedPointerGesture` helper
+  (its docstring had already reserved this exact extension point); armed-state affordance uses the
+  `--warning` tokens per F17's own text naming both tools, not just the click mechanics; new
+  `TestAddControlClickToPlace` e2e case. **All 7/7 M13 tasks now landed** — see `docs/TASKS.md`
+  T107's own entry for the full account. 520 passed (519 + T107's own test), `ruff check .` clean,
+  `git status` confirmed only the three touched files changed (this session's own run, not trusted
+  from any commit message). M13 implementation phase closed; verification/review still open.
 
 ## Baseline I6
 `docker compose run --rm tests` — 513 passed, exit 0 (own run, not piped through `tail`); `ruff
@@ -83,12 +98,13 @@ session's edit, doesn't touch the `tests` service, left alone; owner has not sai
 commit or revert it).
 
 ## Resume here
-**This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check.
-Active work is Iteration I3 (M10, T083-T088), all 6/6 tasks landed and independently reviewed
-(FAIL-then-fixed) as of 2026-09-09 — jump to the "Iteration I3" section below for its own
-Resume-here-equivalent progress checklist. Implementation and review are both closed; all that's
-left is two manual owner sign-offs (T086's visual review, M9's T082 spot-check) before reading the
-rest of this section.**
+**This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check
+(itself since closed, see Iteration I4 below). Active work is Iteration I6 (M13, T101-T107): all
+7/7 tasks now landed as of 2026-09-14 — jump to the "Iteration I6" section below for its own
+progress checklist. Implementation is closed; verification (full suite, already green — see the
+`current:` line above) and the milestone-level independent review are next, then closing bookkeeping.
+One older, unrelated manual owner sign-off is also still open (T086's visual review, Iteration I3) —
+tracked separately, does not block I6.**
 
 `master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
 merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
@@ -185,13 +201,17 @@ Progress (M13 in `docs/TASKS.md`, T101-T107):
   independent)
 - [x] 3 docs amended (SPEC F4/F7/F8/F17 extended, DECISIONS ADR-033, TASKS M13 T101-T107)
 - [x] GATE — approved by the owner 2026-09-13 («Утверждаю, продолжи»)
-- [ ] 4 implementation — **4/7 tasks landed: T101 (`55f0d86`), T102 (`dc0fb1c`), T103 (`0c5f1f7`/
-  `fe863b3`, fix `b91677a`), T106 (`774f10c`/`b1f2e06`)** — see each task's own `docs/TASKS.md` entry
-  for the full diagnosis/fix/measurement account (T103/T106 were landed by the previous, budget-
-  interrupted session and backfilled here per trust-the-tree; T103's own fix this session came from
-  actually running its real-corpus floors against the main tree for the first time). **T104, T105,
-  T107 not yet started.** 518 passed, `ruff check .` clean (this session's own run).
-- [ ] 5 verification
+- [x] 4 implementation — **7/7 tasks landed: T101 (`55f0d86`), T102 (`dc0fb1c`), T103 (`0c5f1f7`/
+  `fe863b3`, fix `b91677a`), T104 (`255f1cf`/ADR-034), T105 (`3aeaaf2`/ADR-035), T106 (`774f10c`/
+  `b1f2e06`), T107 (this session, not yet committed)** — see each task's own `docs/TASKS.md` entry
+  for the full diagnosis/fix/measurement account (T103/T106 were landed by an earlier, budget-
+  interrupted session and backfilled per trust-the-tree; T104/T105 landed by a session between that
+  one and this one, found already on the tree and confirmed against `docs/TASKS.md`'s own checkboxes
+  rather than assumed; T107 implemented this session). 520 passed (519 + T107's own test),
+  `ruff check .` clean, `git status` confirmed clean apart from T107's own three touched files (this
+  session's own run).
+- [x] 5 verification green, baseline suites still green — same 520-passed/clean run as above,
+  2026-09-14
 - [ ] 6 review
 - [ ] 7 closed
 - [ ] 8 deploy (optional, not yet decided)

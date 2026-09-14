@@ -2228,7 +2228,7 @@ the implementer's self-report.
   as part of the full-suite run below — JS/e2e change, unaffected by the real-corpus vision floors
   T103 collided with.
 
-- [ ] **T107** — Manual add-control click-to-place flow — paths:
+- [x] **T107** — Manual add-control click-to-place flow — paths:
   `src/rogaine/web/static/app.js` (`add-control-btn`'s click handler) — deps: T106 (reuses its fixed
   pointer/mode machinery rather than duplicating a second path) — DoD: clicking "Добавить контроль"
   arms add-mode without placing anything; the next map click places the control exactly there (not
@@ -2236,3 +2236,27 @@ the implementer's self-report.
   matching the calibration-line tool's own click-to-place flow; the existing `toggle-add-mode-btn`
   multi-placement flow is untouched; a new `tests/e2e/test_viewer.py` case covers click-to-place plus
   the immediate return to idle.
+  **Landed.** New `state.mode = "add-once"`: `#add-control-btn`'s click handler now calls
+  `setMode("add-once")` instead of placing at `view.viewCenterMap()` immediately (clicking again
+  while armed disarms it, same convention as `#calib-start-btn`); `initMapViewport`'s `pointerdown`
+  handler routes `add-once` through T106's own `beginArmedPointerGesture` helper with an `onClick`
+  that places the control at the click's map coordinates and calls `setMode("idle")` — exactly the
+  extension point that helper's own docstring had already reserved for this task, no second
+  pointer-handling path added. `toggle-add-mode-btn`'s pre-existing `state.mode = "add"` multi-
+  placement path is untouched (separate branch, separate mode string). One addition beyond the
+  DoD's own text: SPEC F17 states plainly that *both* the calibration-line and add-control tools
+  need "a visibly distinct armed affordance" (not just the click-to-place mechanics), so
+  `#add-control-btn[aria-pressed="true"]` and `.map-viewport.mode-add-once` get the existing
+  `--warning-bg`/`--warning-border` tokens (not `--danger`, reserved for the calibration tool's own
+  overwrite-risk framing per T106's own CSS comment — placing a control has no such risk) instead of
+  being left at the shared, easily-confused `button[aria-pressed="true"]` accent. New
+  `TestAddControlClickToPlace` (`tests/e2e/test_viewer.py`): arming without placing; two placements
+  at different screen points landing at two different, click-dependent map positions (the concrete
+  proof the old view-centre bug did not survive — a fixed centre would give identical positions
+  both times) with a directional check (`xb > xa`, `yb < ya`, matching the two click points' own
+  screen offsets) rather than reading internal JS module state (`state`/`view` are ES-module-scoped,
+  not reachable from `page.evaluate`'s global context — read from the `#control-{id}-x`/`-y` table
+  inputs instead, same technique `TestFullViewerFlow` already uses); armed-state
+  aria-pressed/CSS-class assertions mirroring T106's own test; a final drag proving the tool
+  returned to idle (pans, does not place a third control). 520 passed (519 + this task's own test),
+  `ruff check .` clean; `git status` confirmed only the three touched files changed.
