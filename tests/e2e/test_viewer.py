@@ -826,11 +826,112 @@ class TestAddControlClickToPlace:
         assert xb > xa  # second click was to the right of the first
         assert yb < ya  # second click was above the first
 
-        # --- Placement immediately returns to idle: the map is draggable again, and a drag on
-        # the canvas pans instead of placing a third control ---------------------------------------
+    def test_enter_key_places_at_view_center_and_returns_to_idle(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        """Review finding H2 (I6 milestone review): the button handler focuses `#map-viewport` on
+        arming, so a keyboard user who never touches the mouse needs an `Enter` path too -- `add`
+        and `calibrate` both already have one, `add-once` didn't until this fix. Without it,
+        arming via the button and pressing `Enter` was a dead end.
+        """
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+        rows_before = page.locator("#controls-tbody tr").count()
+
+        page.click("#add-control-btn")
+        expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#map-viewport")).to_be_focused()
+
+        page.keyboard.press("Enter")
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 1)
+        expect(page.locator("#add-control-btn")).to_have_attribute("aria-pressed", "false")
+        expect(page.locator("#map-viewport")).not_to_have_class(re.compile(r"\bmode-add-once\b"))
+
+
+class TestToggleAddModeArmedState:
+    """Review finding H-1 (I6 milestone review): `#toggle-add-mode-btn`'s persistent
+    multi-placement `add` mode used to place a control straight on `pointerdown` -- unlike
+    `calibrate` (T106) and `add-once` (T107), it never went through the shared click-vs-drag
+    gesture helper, so a drag while armed dropped a spurious control at the drag origin instead of
+    panning, the exact bug T106 fixed for `calibrate`. Mirrors
+    `TestCalibrationToolArmedState`'s own drag-pans/click-places proof, but for a persistent mode:
+    unlike `add-once`, placing one control does not return it to idle.
+
+    Needs the full upload -> apply-scale -> segment+detect setup, same as
+    `TestAddControlClickToPlace`, because `#toggle-add-mode-btn` stays `disabled` until
+    `state.segment` is set.
+    """
+
+    def test_drag_pans_without_placing_control_click_places_one_and_stays_armed(
+        self, _live_server: str, page: Page, synthetic_map, tmp_path: Path
+    ) -> None:
+        sm = synthetic_map
+        map_path = tmp_path / "map.png"
+        _write_png(map_path, sm.image)
+
+        page.goto(_live_server + "/")
+        page.set_input_files("#map-file-input", str(map_path))
+        page.click("#upload-btn")
+        expect(page.locator("#scale-fieldset")).to_be_enabled()
+
+        page.fill("#scale-denominator", str(sm.scale_denominator))
+        page.fill("#scale-dpi", str(sm.dpi))
+        page.click("#apply-scale-btn")
+        page.wait_for_selector(
+            "#controls-tbody tr", state="attached", timeout=_SEGMENT_AND_DETECT_TIMEOUT_MS
+        )
+        rows_before = page.locator("#controls-tbody tr").count()
+
+        page.click("#toggle-add-mode-btn")
+        expect(page.locator("#toggle-add-mode-btn")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#map-viewport")).to_have_class(re.compile(r"\bmode-add\b"))
+
+        box = page.locator("#map-canvas").bounding_box()
+        assert box is not None
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+
+        # --- A drag (well past the click/drag threshold) pans the map instead of placing a
+        # control -- before the fix this placed one at the drag's start point on raw pointerdown --
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 120, cy + 60, steps=10)
+        page.mouse.up()
+        assert page.locator("#controls-tbody tr").count() == rows_before
+        # still armed -- a persistent mode, unlike add-once, survives a pan
+        expect(page.locator("#toggle-add-mode-btn")).to_have_attribute("aria-pressed", "true")
+
+        # --- A genuine click (no meaningful movement) places a control, and the mode stays armed
+        # for further placements (unlike add-once, which returns to idle) ------------------------
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.up()
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 1)
+        expect(page.locator("#toggle-add-mode-btn")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#map-viewport")).to_have_class(re.compile(r"\bmode-add\b"))
+
+        page.click("#toggle-add-mode-btn")  # disarm
+        expect(page.locator("#toggle-add-mode-btn")).to_have_attribute("aria-pressed", "false")
+        expect(page.locator("#map-viewport")).not_to_have_class(re.compile(r"\bmode-add\b"))
+
+        # --- After disarming, mode is back to idle: a drag on the canvas just pans, it does not
+        # place a third control -----------------------------------------------------------------
         cx, cy = box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5
         page.mouse.move(cx, cy)
         page.mouse.down()
         page.mouse.move(cx + 80, cy + 40, steps=10)
         page.mouse.up()
-        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 2)
+        expect(page.locator("#controls-tbody tr")).to_have_count(rows_before + 1)

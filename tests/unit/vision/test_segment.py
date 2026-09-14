@@ -273,8 +273,9 @@ class TestBankedWaterConsolidationOnRealScan:
     `water_shallow`/`water_uncrossable` shades (and to real scan noise) that `classify_labels`'s
     per-pixel nearest-shade choice fragments one continuous, bank-lined river into thousands of
     tiny `water_uncrossable` islands inside an otherwise `water_shallow` (passable) blob -- not
-    nearly enough of it to block a route (`docs/DECISIONS.md` ADR-033 measured this directly: the
-    river's largest single fragment was 341px against a river thousands of pixels long).
+    nearly enough of it to block a route (`docs/TASKS.md` T101's own landed account measured this
+    directly: the river's largest single fragment was 341px against a river thousands of pixels
+    long).
     `_consolidate_banked_water` promotes a whole water blob once its own boundary is
     substantially bank-lined; this pins that it does so for the real river without swallowing a
     real hatched/screened marsh nearby that has no such bank line.

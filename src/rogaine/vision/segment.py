@@ -16,11 +16,24 @@ ever rewrite pixels the palette called `road`) -- running it last simply matches
 in `docs/PLAN.md`'s architecture diagram.
 
 :func:`reclassify_grid_ink` (T074, F20, ADR-012) runs between those last two: it must see
-`classify_palette`'s raw water classes before anything downstream treats them as real water.
+`classify_palette`'s water classes before anything downstream treats them as real water.
 `extract_linear_features` only ever rewrites pixels the palette called `road`, never `road`'s own
 water-class siblings, so the two passes are independent in practice -- but this is the order
-ADR-012 states, and it is the one that lets `reclassify_grid_ink` see the palette's classification
-untouched by any later stage.
+ADR-012 states.
+
+Review finding M-4 (I6 milestone review): this docstring used to promise `reclassify_grid_ink` the
+palette's classification "untouched by any later stage" -- no longer true. `classify_palette`
+itself is not just `classify_labels` + `fill_unknown`: T101 (F4, `docs/TASKS.md`) inserted
+:func:`~rogaine.vision.palette._consolidate_banked_water` between them, so what
+`reclassify_grid_ink` actually sees already has bank-lined water blobs bulk-promoted to
+`water_uncrossable`. This still doesn't collide with `reclassify_grid_ink`'s own column/row
+water-fraction test, which sums across *both* water classes and so cannot see a
+`water_shallow -> water_uncrossable` promotion within that sum. What it can collide with is
+`_consolidate_banked_water`'s own whole-component promotion: a real shallow watercourse that is
+8-connected to a genuinely bank-lined body (e.g. a ditch draining into a river) is promoted along
+with it, since the two share one connected component. This is outside T101's own diagnosed case
+(`ogps-6802`'s marsh, a disjoint blob) and not yet measured against a real instance of that
+specific shape -- a named, not yet corpus-tested, follow-up risk rather than a fix landed here.
 
 `dpi` and `meters_per_pixel` are both required here, independently, because neither derives from
 the other: `dpi` is scan resolution, needed to convert this config's millimetre-based tunables

@@ -260,19 +260,45 @@ button[aria-pressed="true"] {
   outline: 2px solid var(--danger);
   outline-offset: -2px;
 }
-/* T107: the add-control button's own "armed" state (F17 names both tools) needs the same kind
-   of distinct affordance, but the warning tokens instead of the calibration tool's danger ones
-   -- placing a control has no overwrite risk (unlike an armed calibration click, which can
-   corrupt an existing line), so "one placement about to happen" reads better than "about to
-   overwrite something". */
+/* T107, extended by review finding H-1: the add-control tools' own "armed" state (F17 names both
+   tools) needs the same kind of distinct affordance, but the warning tokens instead of the
+   calibration tool's danger ones -- placing a control has no overwrite risk (unlike an armed
+   calibration click, which can corrupt an existing line), so "one placement about to happen"
+   reads better than "about to overwrite something". Covers both add-control flows --
+   `toggle-add-mode-btn`'s persistent multi-placement `add` and `add-control-btn`'s one-shot
+   `add-once`; H-1 found the multi-placement toggle had been left with no matching affordance
+   (and no click-vs-drag protection, fixed in app.js) when T107 landed only the one-shot half. */
+#toggle-add-mode-btn[aria-pressed="true"],
 #add-control-btn[aria-pressed="true"] {
   background: var(--warning-bg);
+  /* Review finding H1: without an explicit `color`, the shared `button[aria-pressed="true"]`
+     rule's `--accent-contrast` (white) still applies to this element's text -- unlike T106's
+     danger-toned rule above, which sets its own `color`, this one didn't, leaving near-white text
+     on the pale warning background (~1.1:1 light, ~1.4:1 dark). `--text` is the page's own default
+     foreground, the same "no colour override" look `.warning`/`.note` already use on a tinted box. */
+  color: var(--text);
   border-color: var(--warning-border);
   font-weight: 600;
 }
+.map-viewport.mode-add,
 .map-viewport.mode-add-once {
   outline: 2px solid var(--warning-border);
   outline-offset: -2px;
+  /* Review finding M-2: `--warning-border` alone measures ~1.9:1 against a light/white scanned
+     map, short of WCAG 1.4.11's 3:1 non-text-contrast floor (T106's danger-toned outline above
+     needed no such help, ~5.9:1). A 1px inset line in the page's own default text colour reads
+     correctly against light and dark scans alike without a new token. */
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+/* Review finding M-1: `:focus-visible` above is a lone pseudo-class (specificity 0,1,0); both
+   mode outlines above are a class pair (0,2,0) and always won, so a keyboard user who tabs to the
+   map while a tool is armed -- the arming handlers focus it directly, so this is the *default*
+   keyboard path for both tools -- saw an outline indistinguishable from the unfocused armed
+   state, and it stayed after tabbing away. Same specificity as the mode rules but later in
+   source order, so it wins only while actually focused; the armed outline still shows unfocused. */
+.map-viewport:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 #map-canvas {

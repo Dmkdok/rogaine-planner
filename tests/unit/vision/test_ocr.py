@@ -667,7 +667,9 @@ class TestRealScanReadRateFloor:
         assert control_53.number == 53, f"near (2801,2003) read {control_53.number}, want 53"
         # 72 fails safely at this scale (reads a truncated "7", refused below the confidence
         # floor) rather than the wrong number T102's own fix (still present, just less effective
-        # at this larger crop size) would otherwise risk -- never a guess (ADR-009).
-        assert control_72.number is None, (
-            f"control near (1175,2475) read {control_72.number}, want None"
+        # at this larger crop size) would otherwise risk -- never a guess (ADR-009). Review
+        # finding M-7: pin "not a wrong guess", not "must stay unread forever" -- a future OCR
+        # improvement correctly reading 72 should not read as a regression here.
+        assert control_72.number in (None, 72), (
+            f"control near (1175,2475) read {control_72.number}, want None or 72"
         )

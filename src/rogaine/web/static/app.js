@@ -1128,6 +1128,14 @@ function beginArmedPointerGesture(e, onClick) {
   let lastX = startX;
   let lastY = startY;
   let dragging = false;
+  // Review finding M-3: the mode this gesture was armed for, captured once. Guards onUp below
+  // against a stray pointercancel (touch palm rejection, pointer device disconnect, an OS
+  // gesture taking over) that used to fire neither onMove nor onUp and leave both listeners
+  // bound to the canvas -- a later, unrelated stationary click would then still fire the stale
+  // onUp and place a point while every other affordance (aria-pressed, the outline) already read
+  // idle. pointercancel now tears down the same as onUp but never calls onClick; the mode check
+  // also covers the mode changing out from under an in-flight gesture some other way.
+  const armedMode = state.mode;
   function onMove(ev) {
     if (!dragging) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < CLICK_DRAG_THRESHOLD_PX) return;
@@ -1138,16 +1146,24 @@ function beginArmedPointerGesture(e, onClick) {
     lastY = ev.clientY;
     redraw();
   }
-  function onUp(ev) {
+  function teardown() {
     canvas.removeEventListener("pointermove", onMove);
     canvas.removeEventListener("pointerup", onUp);
-    if (dragging) return;
+    canvas.removeEventListener("pointercancel", onCancel);
+  }
+  function onUp(ev) {
+    teardown();
+    if (dragging || state.mode !== armedMode) return;
     const rect = els.mapViewport.getBoundingClientRect();
     const { x, y } = view.screenToMap(ev.clientX - rect.left, ev.clientY - rect.top);
     onClick(clamp(x, 0, view.mapWidth || x), clamp(y, 0, view.mapHeight || y));
   }
+  function onCancel() {
+    teardown();
+  }
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onCancel);
 }
 
 function initMapViewport() {
@@ -1164,10 +1180,14 @@ function initMapViewport() {
       });
       return;
     }
-    const rect = els.mapViewport.getBoundingClientRect();
-    const { x, y } = view.screenToMap(e.clientX - rect.left, e.clientY - rect.top);
     if (state.mode === "add") {
-      addControlAt(clamp(x, 0, view.mapWidth || x), clamp(y, 0, view.mapHeight || y));
+      // Review finding H-1: this branch used to place straight on pointerdown, so a drag while
+      // the toggle was armed dropped a spurious control at the drag origin instead of panning --
+      // the exact bug T106 fixed for `calibrate`, and T106's own scope note named `add` as a
+      // second consumer of the shared click-vs-drag fix, but T107 only extended add-once's flow.
+      // Route through the same gesture helper; unlike add-once this is a persistent
+      // multi-placement mode, so onClick does not call setMode("idle").
+      beginArmedPointerGesture(e, addControlAt);
       return;
     }
     startPan(e);
@@ -1232,6 +1252,15 @@ function initMapViewport() {
         const cy = clamp(c.y, 0, view.mapHeight || c.y);
         if (state.mode === "add") {
           addControlAt(cx, cy);
+          e.preventDefault();
+        } else if (state.mode === "add-once") {
+          // Review finding H2: the button handler focuses the map viewport on arming, so a
+          // keyboard user who never touches the mouse needs an Enter path too, same as `add` and
+          // `calibrate` already have -- without this, arming via the button and pressing Enter
+          // was a dead end (the pre-T107 behaviour, placing at the view centre, was reachable by
+          // Enter for free; T107's click-to-place replacement needs its own Enter equivalent).
+          addControlAt(cx, cy);
+          setMode("idle");
           e.preventDefault();
         } else if (state.mode === "calibrate") {
           setCalibrationPoint(cx, cy);
