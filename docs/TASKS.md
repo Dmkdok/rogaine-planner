@@ -2072,6 +2072,17 @@ the implementer's self-report.
   confirmation (checked at the mechanism, not by solving). New
   `TestBankedWaterConsolidationOnRealScan` (2 cases) in `test_segment.py`; every existing IoU/
   grid-ink floor unchanged. 518 passed (together with T102, T103's own fix), `ruff check .` clean.
+  **Milestone review finding M-4 (2026-09-14, see T107's own entry for the full review account):**
+  `_consolidate_banked_water` runs inside `classify_palette` itself, so `segment.py`'s module
+  docstring no longer accurately promised `reclassify_grid_ink` the palette's classification
+  "untouched by any later stage" — corrected. In practice this still doesn't collide with
+  `reclassify_grid_ink`'s own column/row test (it sums across both water classes, blind to a
+  promotion within that sum), but a real, not yet corpus-tested risk was named: a shallow
+  watercourse 8-connected to a genuinely bank-lined body (e.g. a ditch draining into a river) is
+  promoted whole along with it, since `_consolidate_banked_water` promotes by connected component —
+  outside this task's own diagnosed case (`ogps-6802`'s marsh, a disjoint blob). Not fixed here
+  (no measured instance to fix against, same precedent as T098's reverted unmeasured filter);
+  filed as a follow-up for the owner/a future iteration.
 
 - [x] **T102** — Fix missing OCR reads on `ogps-6802` controls 42/53/72 — paths:
   `src/rogaine/vision/ocr.py`, `tests/unit/vision/test_ocr.py` — deps: none — DoD: diagnose which
@@ -2088,7 +2099,7 @@ the implementer's self-report.
   at 41% respectively — a confidence-calibration and a character-confusion problem, neither an
   ink-masking issue, out of this task's scope (documented, not silently dropped, per the DoD's own
   "or a documented subset" clause). Fix: `_keep_largest_ink_cluster` (new, `ocr.py`) keeps only the
-  tightest dilation-connected group of remaining ink (a control's own digits are always one such
+  largest dilation-connected group of remaining ink (a control's own digits are always one such
   group), dropping a farther, unrelated leftover blob. `_INK_CLUSTER_GAP_FACTOR=0.5` (digit
   heights) swept 0.0/0.3/0.4/0.5/0.65/0.8/1.0 against the synthetic fixture and every existing
   real-scan floor (`data/maps/_t102_sweep.py`, gitignored) — every value from 0.3 to 1.0 left every
@@ -2115,6 +2126,14 @@ the implementer's self-report.
   >=30, control at (1175, 2475) == 72); `pervomayskoe`/`novo-kavgolovsky-lesopark`/`kkm-toksovo`/
   `lembolovo-kkm` floors all re-verified, values unchanged, actual counts documented per-map (some
   moved down slightly from a wrong-read correction, all still comfortably above their own floor).
+  **Milestone review finding M-5 (2026-09-14, see T107's own entry for the full review account):**
+  the competition+edge guard above (originally added to fix the `kkm-toksovo` control-13 case)
+  covers only an edge-clipped false positive; a group split by a wide inter-digit gap that also has
+  unrelated competing ink elsewhere, but away from the crop edge, would still be silently discarded
+  in favour of a confidently-wrong shorter read. Not reproduced against any map in either corpus (the
+  0.3-1.0 gap-factor sweep measures read *counts*, which can't distinguish a new correct read from a
+  new wrong one), so not fixed here — same precedent as T098's reverted unmeasured filter; filed as
+  a follow-up for the owner/a future iteration, not silently dropped.
 
 - [x] **T103** — Exclude the ISOM 709 out-of-bounds symbol from control detection and confirm it
   stays impassable in routing — paths: `src/rogaine/vision/controls.py`, possibly a new dependency
@@ -2227,6 +2246,19 @@ the implementer's self-report.
   worktree (503 passed, 11 skipped, no `data/maps/`); re-verified against the main tree this session
   as part of the full-suite run below — JS/e2e change, unaffected by the real-corpus vision floors
   T103 collided with.
+  **Milestone review findings M-1/M-2/M-3 (2026-09-14, see T107's own entry for the full review
+  account):** M-1 — `.map-viewport:focus-visible` (equal specificity to the armed-mode outline
+  rules, and earlier in source order) always lost to them, so a keyboard user tabbing to the map
+  while a tool was armed — the default path, since both arming handlers focus the viewport — saw no
+  distinguishable focus indicator; fixed with a later, same-specificity `:focus-visible` rule that
+  wins only while actually focused. M-2 — the warning-toned armed outline (T107's own state, see
+  below) measured ~1.9:1 against a light/white scanned map, short of WCAG 1.4.11's 3:1 (T106's own
+  danger-toned outline needed no such fix, ~5.9:1); fixed with a 1px inset `--text` line. M-3 —
+  `beginArmedPointerGesture` removed its `pointermove`/`pointerup` listeners only inside `onUp`, so a
+  `pointercancel` (touch palm rejection, pointer disconnect, an OS gesture taking over) left both
+  bound to the canvas; a later, unrelated stationary click would then still fire the stale `onUp` and
+  place a point while every other affordance already read idle — fixed with `pointercancel` teardown
+  and a mode guard captured at arm time. All three fixed same session as T107's milestone review.
 
 - [x] **T107** — Manual add-control click-to-place flow — paths:
   `src/rogaine/web/static/app.js` (`add-control-btn`'s click handler) — deps: T106 (reuses its fixed
@@ -2259,4 +2291,68 @@ the implementer's self-report.
   inputs instead, same technique `TestFullViewerFlow` already uses); armed-state
   aria-pressed/CSS-class assertions mirroring T106's own test; a final drag proving the tool
   returned to idle (pans, does not place a third control). 520 passed (519 + this task's own test),
-  `ruff check .` clean; `git status` confirmed only the three touched files changed.
+  `ruff check .` clean; `git status` confirmed only the three touched files changed at landing time
+  (see the milestone review below for what changed after).
+
+  **Milestone review, 2026-09-14.** Scoped `reviewer` subagent, `ba27ff1..HEAD` (the full M13 diff,
+  T101-T107, plus a working tree that already carried two uncommitted fixes from an earlier review
+  pass whose own session was interrupted before it could commit or write up docs — H1/H2 below).
+  **Verdict: PASS WITH WAIVERS.** Reviewer independently ran `docker compose run --rm tests` (520
+  passed) and `ruff check .` (clean) itself, not trusted from any commit message.
+
+  No Critical. **One High, fixed same session:**
+  - **H-1** — T106's own scope note named both `calibrate` and the `add` toggle as consumers of the
+    shared click-vs-drag fix ("T106 fixes the shared click-vs-drag distinction and active-state
+    affordance, used by both `calibrate` and `add` modes"), and SPEC F17 says panning while
+    *either* tool is armed never places or corrupts a point — but T107 only extended `add-once`'s
+    flow; the persistent `add` toggle (`toggle-add-mode-btn`) still placed straight on
+    `pointerdown`, so a drag while it was armed dropped a spurious control at the drag origin
+    instead of panning, the exact bug T106 fixed for `calibrate`. Fixed: `app.js`'s `pointerdown`
+    handler now routes `add` through `beginArmedPointerGesture` too (a persistent mode, so
+    `onClick` does not call `setMode("idle")`); `style.css` gives
+    `toggle-add-mode-btn[aria-pressed="true"]` and `.map-viewport.mode-add` the same warning-toned
+    affordance `add-once` already had. New `TestToggleAddModeArmedState`
+    (`tests/e2e/test_viewer.py`) mirrors T106's own drag-pans/click-places proof for the persistent
+    mode.
+
+  **Six Medium, all fixed same session** (M-1/M-2/M-3 recorded in T106's own entry above, since they
+  are in the shared `beginArmedPointerGesture`/CSS mechanism T106 introduced; M-4/M-5 recorded in
+  T101's/T102's own entries, since they are about those tasks' own mechanisms and were left as named
+  follow-ups rather than fixed): **M-6** — the H1/H2 fixes below, and the SPEC F7 "configured" →
+  "fixed" wording correction, were sitting uncommitted, untested (no case covered the H2 keyboard
+  path) and unrecorded; committed this session, `TestAddControlClickToPlace` gained
+  `test_enter_key_places_at_view_center_and_returns_to_idle`. **M-7** —
+  `test_ogps_6802_named_controls` pinned control 72's read as `assert control_72.number is None`;
+  the surrounding comment's own intent is "not a wrong guess", not "must stay unread forever", so a
+  future OCR improvement correctly reading 72 would have read as a regression — loosened to
+  `in (None, 72)`.
+
+  **Six Low:** three fixed as trivial prose/markup corrections — `docs/TASKS.md`'s T102 entry said
+  `_keep_largest_ink_cluster` keeps the "tightest" group, the code and its own docstring say
+  "largest"; `test_segment.py`'s 341px-fragment citation pointed at `docs/DECISIONS.md` ADR-033,
+  which contains no such measurement (it's in T101's own `docs/TASKS.md` entry) — repointed;
+  `#add-control-btn` gains `aria-pressed="false"` in `index.html`'s markup, matching its two sibling
+  toggles (`#toggle-add-mode-btn`, `#calib-start-btn`) instead of relying on `setMode`'s runtime
+  call alone. Three left as documented, non-blocking notes: `docs/CONVENTIONS.md`, which `CLAUDE.md`
+  names as required subagent context, does not exist under `docs/` — pre-existing, not an M13
+  regression, but affects every subagent briefed on this project; `_ocr_gate_tied_scales` runs one
+  full OCR pass per tied multiplier, unbounded by tie count (harmless at the corpus's own tie sizes,
+  no NFR budget covers detection); `_INTERIOR_INK_MAX=0.3`'s area-based margin could in principle be
+  cleared by two ~4px crossing lines at the base scale's own radius — a margin note, not a
+  reproduced defect (`grid-lines-red-controls`'s own F7 floor stayed green).
+
+  **H1 and H2 (found already fixed, uncommitted, in the working tree at the start of this review —
+  from an earlier review pass whose own session ran out of budget before it could commit or write
+  up docs, same interrupted-session pattern as T103/T106's own backfills) were independently
+  re-verified correct and sufficient, not just trusted:** **H1** —
+  `#add-control-btn[aria-pressed="true"]` had no explicit `color`, so the shared
+  `button[aria-pressed="true"]` rule's white `--accent-contrast` still applied over the pale warning
+  background (measured ~1.1:1 light, ~1.4:1 dark, against WCAG's 4.5:1 text-contrast floor); fixed
+  with `color: var(--text)` (measured ~16.1:1 light, ~10.2:1 dark). **H2** — `add-once` had no
+  `Enter`-key path while `add`/`calibrate` both already did, and the arming handler focuses the
+  viewport (the default keyboard path), so a keyboard-only user's path dead-ended; fixed by
+  mirroring the pointer path's own `addControlAt` + `setMode("idle")`.
+
+  Full account, including exact contrast numbers and file:line citations: `docs/DECISIONS.md`
+  ADR-033's own review amendment. Re-verified after every fix: **522 passed** (520 + this task's
+  own test + `TestToggleAddModeArmedState`), `ruff check .` clean, this session's own run.

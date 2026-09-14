@@ -1528,6 +1528,55 @@
   final value was — if the corpus-wide measurement later shows it was too aggressive on some other
   map, that becomes a fresh owner report and a new iteration, not a defect in this decision; the
   trade-off was made with the risk named up front, not discovered after the fact.
+- **Amendment, 2026-09-14 — milestone review.** Scoped `reviewer` subagent, `ba27ff1..HEAD` (the
+  full M13 diff, T101-T107). **Verdict: PASS WITH WAIVERS.** No Critical. One High (H-1): T106's
+  own scope named both `calibrate` and the `add` toggle as consumers of the shared click-vs-drag
+  fix, but T107 only extended `add-once`'s flow, leaving the persistent `add` mode on the old raw-
+  pointerdown behaviour (a drag while armed still dropped a spurious control instead of panning) —
+  fixed same session: `app.js`'s pointerdown handler now routes `add` through
+  `beginArmedPointerGesture` too, plus a matching CSS armed affordance and a new e2e case
+  (`TestToggleAddModeArmedState`). Six Medium, all fixed: M-1 (`.map-viewport:focus-visible` lost
+  to the armed-mode outline rules at equal specificity, so tabbing to the map while a tool was
+  armed — the default keyboard path, since arming focuses the viewport — showed no distinguishable
+  focus indicator); M-2 (the warning-toned armed outline measured ~1.9:1 against a light scan,
+  short of WCAG 1.4.11's 3:1 — added a 1px inset `--text` line); M-3
+  (`beginArmedPointerGesture` leaked its listeners on `pointercancel`, and the leaked handler could
+  later fire on an unrelated click while every visible affordance already read idle — added
+  `pointercancel` teardown and an armed-mode guard); M-4 (`segment.py`'s module docstring still
+  promised `reclassify_grid_ink` the palette's classification "untouched by any later stage" after
+  T101 inserted `_consolidate_banked_water` inside `classify_palette` itself — docstring corrected;
+  a real but not yet corpus-tested follow-up risk named, not fixed: a shallow watercourse
+  8-connected to a genuinely bank-lined body is promoted whole along with it); M-5
+  (`_keep_largest_ink_cluster`'s edge+competition guard covers T102's own edge-clipped
+  false-positive case but not a wide-inter-digit-gap split with unrelated competing ink elsewhere —
+  not fixed, since neither the sweep nor either corpus demonstrates it live and this project's own
+  precedent (T098) is not to ship an unmeasured discriminant; named as a follow-up instead); M-6
+  (two working-tree fixes from an earlier, session-interrupted review pass — see below — were
+  uncommitted, untested and unrecorded; committed this session, plus a new `Enter`-key e2e case);
+  M-7 (`test_ogps_6802_named_controls` pinned control 72's read as `None` rather than "not a wrong
+  guess", so a future OCR improvement reading it correctly would have read as a regression —
+  loosened to `None or 72`). Six Low, three fixed as trivial prose/markup corrections
+  (`docs/TASKS.md`'s "tightest" → "largest" dilation-connected group; `test_segment.py`'s 341px
+  citation moved from this document, which never contained that measurement, to `docs/TASKS.md`
+  T101's own entry, where it actually lives; `#add-control-btn` gains `aria-pressed="false"` in the
+  markup, matching its two sibling toggles), three left as documented notes (no
+  `docs/CONVENTIONS.md` file exists despite `CLAUDE.md` naming it as required subagent context —
+  pre-existing, not an M13 regression; an unbounded-but-harmless extra OCR pass per tied scale; an
+  `_INTERIOR_INK_MAX` area-based margin note). Full finding-by-finding account:
+  `docs/TASKS.md`'s M13 section (T101/T102/T106/T107 entries). Independently re-verified after
+  fixes: 522 passed (520 + 2 new e2e cases), `ruff check .` clean.
+
+  **The same review also found, already fixed but uncommitted, untested and unrecorded in the
+  working tree, two findings from an earlier review pass whose own session ran out of budget
+  before it could commit or write up docs (same interrupted-session pattern as T103/T106's own
+  backfills) — confirmed correct and sufficient by this review, not just trusted:** **H1** —
+  `#add-control-btn[aria-pressed="true"]` had no explicit `color`, so the shared
+  `button[aria-pressed="true"]` rule's white `--accent-contrast` still applied over the pale
+  warning background (measured ~1.1:1 light, ~1.4:1 dark, against WCAG's 4.5:1 text-contrast
+  floor); fixed with `color: var(--text)` (measured ~16.1:1 light, ~10.2:1 dark). **H2** —
+  `add-once` had no `Enter`-key path while `add`/`calibrate` both already did, and the arming
+  handler focuses the viewport (the default keyboard path), so a keyboard-only user's path
+  dead-ended; fixed by mirroring the pointer path's own `addControlAt` + `setMode("idle")`.
 
 ## ADR-034 — T104's real cause was a `_select_best_scale` tie-break gap, not a two-colour print
 style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR outcome

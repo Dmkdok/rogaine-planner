@@ -83,6 +83,17 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   T107's own entry for the full account. 520 passed (519 + T107's own test), `ruff check .` clean,
   `git status` confirmed only the three touched files changed (this session's own run, not trusted
   from any commit message). M13 implementation phase closed; verification/review still open.
+  **2026-09-14, next session: milestone review run** (scoped `reviewer` subagent, `ba27ff1..HEAD`,
+  the full M13 diff) — **verdict PASS WITH WAIVERS**, 1 High + 6 Medium + 6 Low, all fixed except
+  two Medium named as measured follow-up risk (same T098 unmeasured-filter precedent) and three Low
+  left as documented notes; also independently re-verified two fixes (H1 a CSS contrast bug, H2 a
+  missing keyboard path) found already applied, uncommitted, in the working tree from an earlier
+  review pass whose own session had run out of budget before it could commit or write up docs — same
+  interrupted-session pattern as T103/T106's own backfills. Full account: `docs/DECISIONS.md`
+  ADR-033's own review amendment, `docs/TASKS.md` T101/T102/T106/T107's own entries. Re-verified
+  after every fix: 522 passed (520 + 2 new e2e cases), `ruff check .` clean, this session's own run.
+  M13 implementation and review both closed; only the owner's own manual spot-check (ADR-019
+  precedent, I6's own exit criterion) is left open before M13/I6 can close.
 
 ## Baseline I6
 `docker compose run --rm tests` — 513 passed, exit 0 (own run, not piped through `tail`); `ruff
@@ -100,11 +111,13 @@ commit or revert it).
 ## Resume here
 **This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check
 (itself since closed, see Iteration I4 below). Active work is Iteration I6 (M13, T101-T107): all
-7/7 tasks now landed as of 2026-09-14 — jump to the "Iteration I6" section below for its own
-progress checklist. Implementation is closed; verification (full suite, already green — see the
-`current:` line above) and the milestone-level independent review are next, then closing bookkeeping.
-One older, unrelated manual owner sign-off is also still open (T086's visual review, Iteration I3) —
-tracked separately, does not block I6.**
+7/7 tasks landed, implementation and the milestone-level independent review both closed (PASS WITH
+WAIVERS, all blocking/recommended findings fixed same session) — jump to the "Iteration I6" section
+below for its own progress checklist. Only remaining step: the owner's own manual spot-check of the
+three named real maps plus the two viewer UX flows (ADR-019 precedent, I6's own exit criterion) —
+not something a session can do unsupervised. Fresh session: `/clear`, then «продолжай по
+docs/STATUS.md» and relay this to the owner. One older, unrelated manual owner sign-off is also
+still open (T086's visual review, Iteration I3) — tracked separately, does not block I6.**
 
 `master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
 merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
@@ -212,8 +225,30 @@ Progress (M13 in `docs/TASKS.md`, T101-T107):
   session's own run).
 - [x] 5 verification green, baseline suites still green — same 520-passed/clean run as above,
   2026-09-14
-- [ ] 6 review
-- [ ] 7 closed
+- [x] 6 review — scoped `reviewer` subagent, `ba27ff1..HEAD` (the full M13 diff, all 7 tasks, plus
+  the working tree). **Verdict: PASS WITH WAIVERS.** No Critical. One High (H-1: the `add` toggle's
+  persistent multi-placement mode had been left on the old raw-pointerdown behaviour, no
+  click-vs-drag protection and no armed affordance, when T107 only extended `add-once`'s flow —
+  fixed). Six Medium, all fixed except two named as measured follow-up risk rather than an
+  unmeasured code change (M-4: a shallow watercourse 8-connected to a bank-lined body could be
+  over-promoted to uncrossable, not yet reproduced against a real map; M-5: `_keep_largest_ink_
+  cluster`'s edge+competition guard doesn't cover a wide-gap split with off-edge competing ink, not
+  yet reproduced either — both same precedent as T098's reverted unmeasured filter). Six Low, three
+  fixed (prose/citation corrections, an `aria-pressed` markup gap), three left as documented notes
+  (`docs/CONVENTIONS.md` referenced by `CLAUDE.md` doesn't exist — pre-existing, not an M13
+  regression; two harmless margin/cost notes). Also independently re-verified, not just trusted: two
+  fixes (H1 a CSS contrast bug on `#add-control-btn`'s armed state, H2 a missing keyboard `Enter`
+  path for `add-once`) found already applied but uncommitted, untested and undocumented in the
+  working tree — from an earlier review pass whose own session had run out of budget before it could
+  commit or write up docs (same interrupted-session pattern as T103/T106's own backfills). Full
+  account: `docs/DECISIONS.md` ADR-033's own review amendment, `docs/TASKS.md` T101/T102/T106/T107's
+  own entries. Reviewer independently ran the full suite (520 passed) and `ruff check .` (clean)
+  itself. Re-verified after every fix, this session's own run: **522 passed** (520 + 2 new e2e
+  cases: `TestToggleAddModeArmedState`, `TestAddControlClickToPlace`'s new Enter-key case), `ruff
+  check .` clean.
+- [ ] 7 closed — blocked on the owner's own manual spot-check of `ogps-6802`/`ogps-7302`/`ogps-8078`
+  plus the two viewer UX flows (ADR-019 precedent, I6's own exit criterion) — the only remaining
+  exit criterion, not something a session can do unsupervised.
 - [ ] 8 deploy (optional, not yet decided)
 
 ## Iteration I5: control-circle/number false negatives and false positives on real scans (closed, branch `iteration/I2-vision-recognition-fix`, continued)
