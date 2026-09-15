@@ -9,7 +9,7 @@ description: >-
 compatibility: Cursor Agent, Claude Code; Plan Mode recommended for Phase 1–3
 metadata:
   author: product-factory
-  version: "1.1.0"
+  version: "1.3.0"
   lang_user: ru
   lang_internal: en
 ---
@@ -73,10 +73,23 @@ Two practices from Claude Code's own best-practices guide, which apply directly 
   exploration doesn't consume your main context" — the documented fix for reading many files while
   researching. A subagent works in its own window and returns only the summary.
 
+Beyond these two, general context/token hygiene (bounded reads, batched tool calls, scratchpad
+persistence, tool-schema footprint) is skill `context-token-optimization` — it applies from Phase 0
+onward, not only here.
+
+## Skill name resolution
+
+Every cross-reference below (`discover-requirements`, `draft-product-spec`, `code-review`, ...) is a
+bare skill name. Installed straight into a project's `.claude/skills/`, that resolves as-is. Loaded
+as a plugin (`--plugin-dir`), Claude Code may list the same skill as `product-factory:<name>`
+instead — if the bare name doesn't trigger, retry once with that prefix before concluding the skill
+is missing.
+
 ## Pipeline
 
 ```
 0 Intake → 1 Elicit → 2 Spec → 3 Tech plan → GATE → 4 Implement → 5 Test → 6 Review → 7 Handoff
+  → 8 Deploy (optional)
 ```
 
 Read phase details on demand:
@@ -105,13 +118,30 @@ docs/
   SPEC.md
   PLAN.md
   TASKS.md
+  CONVENTIONS.md
   DECISIONS.md
   STATUS.md
+  CHANGELOG.md
 ```
+
+`CONVENTIONS.md` is written in Phase 3 (`draft-tech-plan`), not here — listed now so Phase 0 scaffolding
+and Phase 4 delegation both expect the same file set. `CHANGELOG.md` **is** scaffolded here, empty,
+from `templates/CHANGELOG.template.md` — it only gets real entries starting at Phase 8 (`deploy-product`)
+or at an `iterate-product` close for a local-only product, but the empty file exists from Phase 0 so
+no later phase has to remember to create it.
 
 Copy structure from `templates/product-factory/` when present, else `templates/` (pack root case).
 
-### Phase 1 — Elicit (read skill `elicit-requirements`)
+**Dependency preflight.** Seven skills this pipeline calls by name — `coding-discipline`,
+`concise-mode`, `secure-review`, `web-design-guidelines`, `frontend-design`, `ui-quality-audit`,
+`context-token-optimization` — are bundled in this pack's own `skills/` (see README "Dependencies"),
+so this only matters if the copy you're running from is partial. `code-review` and `simplify` need
+no check at all — they ship with Claude Code itself, not as files. Confirm the seven resolve before
+the phase that needs them (Phase 4 and 6 mostly, `context-token-optimization` from Phase 0 on); a
+missing one is not fatal — that phase runs without it — but say so to the user once, in Russian,
+rather than silently skipping a step they expect run.
+
+### Phase 1 — Elicit (read skill `discover-requirements`)
 
 Grill until shared understanding: batches of 5–8, **recommended answers** on each question, skip
 what the repo already answers. Prefer structured choices when possible.
@@ -126,9 +156,9 @@ Produce `docs/SPEC.md`: problem, users, scope, non-goals, UX flows, acceptance c
 
 ### Phase 3 — Tech plan (`draft-tech-plan`)
 
-Produce `docs/PLAN.md` + `docs/TASKS.md`: stack, architecture, file map, milestones, parallel workstreams, test strategy, Definition of Done.
+Produce `docs/PLAN.md` + `docs/TASKS.md` + `docs/CONVENTIONS.md`: stack, architecture, file map, milestones, parallel workstreams, test strategy, Definition of Done, and the naming/structure/testing rules every Phase 4 subagent reads.
 
-Web research is allowed for current docs/libraries (mid-2026+). Prefer boring, proven defaults unless the user constrained otherwise.
+Web research is allowed for current docs/libraries — check today's date rather than assuming a fixed year. Prefer boring, proven defaults unless the user constrained otherwise.
 
 ### GATE — User approval
 
@@ -168,6 +198,9 @@ Run automated checks + Playwright / browser verification. Fix failures before cl
 
 Independent verification (verifier mindset). Critical functional **or** security issues must be fixed.
 
+Also run `code-review` and `simplify` on the diff — a different lens from `review-product`'s
+SPEC/DoD check: correctness bugs, reuse, and simplification/efficiency cleanups in the code itself.
+
 ### Phase 7 — Handoff
 
 Russian summary for the user:
@@ -179,6 +212,22 @@ Russian summary for the user:
 
 English `docs/HANDOFF.md` **and** an up-to-date `docs/STATUS.md` for continuity across
 tools/sessions. A later agent must be able to resume from STATUS alone without the prior chat.
+
+### Phase 8 — Deploy (optional, `deploy-product`)
+
+Skip entirely for a local-only product. When a real deploy target exists and the user wants it
+shipped, not just handed off: load `deploy-product`. It refuses to run past a FAIL review verdict,
+requires a rollback plan written down before the deploy starts, and proves the deployed artifact
+works with a smoke test against the live target — a green deploy pipeline is not that proof by
+itself. Writes `docs/RELEASE.md` and appends to `docs/CHANGELOG.md`.
+
+### Optional: CI (`setup-ci`)
+
+Not a numbered phase and not default — **most projects here run without CI.** `setup-ci` is
+`disable-model-invocation`, so it never triggers on its own; load it only when the user explicitly
+asks for CI/CD, or said yes to "CI expected?" at discovery and now confirms they want it scaffolded.
+It has no fixed place in the pipeline — commonly after Phase 4 once there's something to lint/test,
+sometimes requested up front. It never adds a deploy step; that stays `deploy-product`'s job.
 
 ## Progress checklist
 
@@ -194,6 +243,7 @@ Copy into `docs/STATUS.md` and tick:
 - [ ] Phase 5 tests green
 - [ ] Phase 6 review clean (or accepted waivers)
 - [ ] Phase 7 handoff
+- [ ] Phase 8 deploy (optional, only if a real deploy target exists)
 ```
 
 ## Anti-patterns
@@ -205,5 +255,7 @@ Copy into `docs/STATUS.md` and tick:
 - Closing with “should work” without running verification
 - Drive-by refactors and speculative architecture (violates `coding-discipline`)
 - Auto-running `ui-quality-audit` on every delivery (optional skill — only on explicit request)
+- Auto-running `setup-ci` because the user mentioned tests or deploy — it's optional, ask first
 - Claiming tests green from TASKS checkboxes or chat memory without running the suite
 - Dumping all of `docs/` into every subagent prompt
+- Deploying (Phase 8) past a FAIL review verdict, or with no rollback plan written down first

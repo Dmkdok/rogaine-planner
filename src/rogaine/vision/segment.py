@@ -86,7 +86,7 @@ def segment(
 
     cfg = config or default_config()
     normalized = normalize(image)
-    labels = classify_palette(normalized, cfg)
+    labels = classify_palette(normalized, cfg, dpi)
     labels = reclassify_grid_ink(labels, dpi, cfg)
     labels = extract_linear_features(labels, dpi, cfg)
     density = contour_density(labels, dpi, cfg)

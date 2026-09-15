@@ -2421,6 +2421,7 @@ the implementer's self-report.
   reported polygon; every existing synthetic-fixture IoU floor unchanged; a new real-scan test pins
   a probe point deep inside the polygon as `out_of_bounds`/impassable, skipped when the gitignored
   scan is absent; full suite green before T110/T112 start (shared-primitive ordering, ADR-036).
+  ⏸ paused mid-work — see STATUS.md
 - [ ] **T110** — Fix lake crossing on `ogps-8620`, and reclassify `veg_fight` impassable — paths:
   `src/rogaine/vision/palette.py` (lake fix, if T108/T109 don't already cover it), `config/
   default.toml` (`veg_fight.passable`), `tests/unit/cost/test_field.py`/`test_graph.py`,
@@ -2504,6 +2505,7 @@ the implementer's self-report.
   fake/mocked client — no real network call anywhere in the test suite (ADR-010/ADR-039); base
   `pip install`/`docker compose run --rm tests` makes zero new network-capable code reachable
   (optional dependency group).
+  ⏸ paused mid-work — see STATUS.md
 - [ ] **T114** — Wire the fallback into the OCR pipeline; amend SPEC/NFR — paths:
   `src/rogaine/vision/ocr.py` or `vision/controls.py` (trigger condition only), `config/
   default.toml` (new `[ocr_fallback]` section: `enabled`, `trigger_confidence`, model id), `tests/

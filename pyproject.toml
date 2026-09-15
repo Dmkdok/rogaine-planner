@@ -32,6 +32,11 @@ dev = [
     "pytest-playwright>=0.6",
     "ruff>=0.8",
 ]
+# T113/ADR-039: the VLM OCR fallback's SDK. Deliberately not in the base `dependencies` list --
+# installing the product never pulls in a network-capable client; only opting into this extra does.
+ocr_vlm = [
+    "anthropic>=1.0",
+]
 
 [project.scripts]
 rogaine = "rogaine.cli:app"

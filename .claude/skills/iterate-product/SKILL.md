@@ -11,7 +11,7 @@ compatibility: >-
   docs/PLAN.md and docs/TASKS.md, and a runnable test suite.
 metadata:
   author: product-factory
-  version: "1.0.0"
+  version: "1.2.0"
   lang_user: ru
   lang_internal: en
 ---
@@ -39,6 +39,13 @@ exist for that risk and have no counterpart in the greenfield pipeline.
 
 Speak to the user in **Russian**. Keep `docs/`, task prompts and subagent handoffs in **English**.
 
+## Skill name resolution
+
+Every cross-reference below (`review-product`, `code-review`, `deploy-product`, ...) is a bare skill
+name. Installed straight into a project's `.claude/skills/`, that resolves as-is. Loaded as a plugin
+(`--plugin-dir`), Claude Code may list the same skill as `product-factory:<name>` instead — if the
+bare name doesn't trigger, retry once with that prefix before concluding the skill is missing.
+
 ## Hard gate (non-negotiable)
 
 **No implementation code until the user approves the delta.** Allowed before approval: reading,
@@ -51,7 +58,8 @@ if a change contradicts one, that contradiction is the thing to put in front of 
 ## Pipeline
 
 ```
-0 Baseline → 1 Delta intake → 2 Impact map → 3 Amend docs → GATE → 4 Implement → 5 Verify → 6 Review → 7 Close
+0 Baseline → 1 Delta intake → 2 Impact map → 3 Amend docs → GATE → 4 Implement → 5 Verify → 6 Review
+  → 7 Close → 8 Deploy (optional)
 ```
 
 Read on demand, one level down:
@@ -74,6 +82,7 @@ Iteration I<n> progress:
 - [ ] 5 verification green, baseline suites still green
 - [ ] 6 review clean or waived
 - [ ] 7 closed (STATUS rewritten, milestone ticked)
+- [ ] 8 deploy (optional, only if a real deploy target exists)
 ```
 
 ### Phase 0 — Baseline
@@ -180,13 +189,33 @@ what, and when.
 Load `review-product`; add `secure-review` when the change touched auth, uploads, input handling or
 dependencies, and `web-design-guidelines` when it touched UI. The reviewer's specific job here is
 regression: judge the diff against the impact map, and check that nothing outside the owned paths
-moved.
+moved. Also load `code-review` and `simplify` for a diff-quality pass — a different lens from
+`review-product`'s SPEC/DoD-and-regression check.
 
 ### Phase 7 — Close
 
 Tick the milestone, rewrite `## Resume here` in `docs/STATUS.md`, and report to the user in Russian:
 what changed, suite results with counts, what was deferred and where that is recorded, and the next
-open item. Use the `pause` skill if the session ends here.
+open item. Use the `close-session` skill if the session ends here and there's time for a proper
+close; use `pause` instead only if the user needs to leave immediately.
+
+If this iteration ships without a formal deploy (a local-only product, or "done" means merged), and
+the change is user-visible, append one entry to `docs/CHANGELOG.md` here — don't rely on Phase 8 to
+do it, since Phase 8 is skipped in that case. Create the file from
+`templates/CHANGELOG.template.md` if it doesn't exist yet.
+
+### Phase 8 — Deploy (optional, `deploy-product`)
+
+Skip for a local-only change. When this iteration ships to a real environment, load
+`deploy-product` after close: it refuses to run past a FAIL review verdict, requires a rollback plan
+written down first, and proves the deployed artifact works with a smoke test against the live
+target. Writes/updates `docs/RELEASE.md` and appends to `docs/CHANGELOG.md` — skip the Phase 7
+CHANGELOG step above if this phase runs, so the change isn't logged twice.
+
+### Optional: CI (`setup-ci`)
+
+Same as the parent pipeline — not a phase, not default. Load only on explicit request; it never
+triggers on its own (`disable-model-invocation`).
 
 ## Regression contract
 
@@ -208,3 +237,5 @@ Applies from the gate to the close, for every agent working the iteration:
 - Reading the whole codebase to build the impact map instead of following symbol references
 - Fixing what is merely nearby
 - Treating a phased plan inside the source document as if it were already approved scope
+- Deploying (Phase 8) past a FAIL review verdict, or with no rollback plan written down first
+- Auto-running `setup-ci` because the change touched tests — it's optional, ask first

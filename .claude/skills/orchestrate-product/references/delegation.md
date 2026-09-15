@@ -89,19 +89,26 @@ never paste file contents back.
 
 | Phase | Skills |
 |-------|--------|
-| 1 | `elicit-requirements` |
+| 1 | `discover-requirements` |
 | 2 | `draft-product-spec` |
 | 3 | `draft-tech-plan` |
 | 4 | `implement-product`, `coding-discipline`, `frontend-design` |
 | 5 | `test-product` |
-| 6 | `review-product`, `web-design-guidelines`, `secure-review` |
+| 6 | `review-product`, `web-design-guidelines`, `secure-review`, `code-review`, `simplify` |
+| 8 (optional) | `deploy-product` — only when a real deploy target exists |
 | any | `concise-mode` when user asks кратко / экономь токены |
+| any | `context-token-optimization` — general context/token hygiene, load by default |
 | optional | `ui-quality-audit` — **only** on explicit UI/UX deep-audit request; not default Phase 6 |
+| optional | `setup-ci` — **only** on explicit request; `disable-model-invocation`, never auto-loaded |
 
 ## Reading code (Serena)
 
 This project has Serena, an LSP-backed symbol index. Reading source files whole is what exhausted a
 previous session's context — the tree is ~450 KB, about 115k tokens if read end to end.
+
+Every tool name below (`get_symbols_overview`, `find_symbol`, ...) is shorthand for the
+fully-qualified MCP tool `mcp__serena__<name>`. Call it qualified — a bare name can fail to resolve
+once a target project has more than one MCP server attached, which this pack cannot assume it won't.
 
 Give every code-touching agent this protocol:
 

@@ -47,11 +47,13 @@ nothing.
 * ``out_of_bounds`` is filled ground truth (the *whole* enclosed polygon is
   ``labels == OUT_OF_BOUNDS``) but only *drawn* as purple hatching over the terrain that was there
   before — the fixture's own docstring says a correct pipeline "has to fill the hatch, not just
-  trace it". A per-pixel nearest-colour classifier has no notion of "enclosed": it correctly
-  classifies the hatch lines themselves and, just as correctly by its own lights, classifies the
-  ground between them as whatever colour is actually there. That is this module working as
-  specified, not a bug — filling the interior is a flood-fill/morphological step nobody in
-  ``docs/TASKS.md`` M1 owns yet. The test measures and reports its IoU without asserting a floor.
+  trace it". :func:`classify_labels` alone has no notion of "enclosed": it correctly classifies
+  the hatch lines themselves and, just as correctly by its own lights, classifies the ground
+  between them as whatever colour is actually there — that is this function working as specified,
+  not a bug. :func:`classify_palette` closes the gap one step later, via
+  :func:`_close_out_of_bounds_regions` (T109, ADR-036); the synthetic fixture has no hatched region
+  wide enough to exercise it (real-scan-only coverage, ``tests/unit/vision/test_segment.py``), so
+  this IoU test still measures and reports ``out_of_bounds`` without asserting a floor on it.
 
 **Performance.** No per-pixel Python loop. ``rgb2lab`` runs once on the whole image and once on the
 ~14 configured shades; distance-to-each-shade is a Python loop of ~14 broadcasted ``(H, W)`` array
@@ -184,6 +186,90 @@ def fill_unknown(labels: np.ndarray, radius: int) -> np.ndarray:
     return filled
 
 
+def _close_out_of_bounds_regions(
+    labels: np.ndarray,
+    dpi: float,
+    hatch_close_mm: float = 2.4,
+    min_density_fraction: float = 0.25,
+    min_closed_fraction: float = 0.70,
+) -> np.ndarray:
+    """Fill a hatched ``out_of_bounds`` polygon's whole enclosed interior (T109, ADR-036, F4).
+
+    :func:`classify_labels` is a per-pixel nearest-shade classifier with no notion of "enclosed":
+    it correctly labels the ISOM 709 hatch lines themselves ``out_of_bounds`` and, just as
+    correctly by its own lights, labels the paper showing through the gaps between them as
+    whatever terrain colour is actually printed there. T108's measurement on
+    ``data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`` (three real out-of-bounds polygons,
+    not one -- this map's own control circles print red, not purple) found the largest polygon's
+    raw hatch-ink density inside its own interior only 56.75%: :func:`fill_unknown`'s radius-3
+    majority vote closes most of the ambiguous ``unknown`` remainder as a side effect (56.75% ->
+    81.06% ``out_of_bounds`` after the full pipeline), but not the 15.94% where a wide gap lands a
+    *confident* nearest-shade match on real terrain (``forest_runnable``, mostly) -- that residual
+    then leaks through `cost/graph.py`'s any-passable-pixel block rule as routable ground.
+
+    Run this *before* :func:`_consolidate_banked_water`/:func:`fill_unknown` so the region is
+    already closed by the time either runs, rather than have `fill_unknown` do a partial,
+    order-sensitive job on whatever gaps happen to be within its own radius of known ink.
+
+    Mirrors :func:`_consolidate_banked_water`'s shape: close the raw hatch mask with a kernel sized
+    to the hatch's own line pitch, fill each closed component's external contour, and promote every
+    pixel inside a fill to ``out_of_bounds`` -- but only if that filled interior passes *two*
+    "don't swallow unrelated terrain" guards (the same role ``_consolidate_banked_water``'s
+    ``min_bank_fraction`` plays there):
+
+    * ``min_density_fraction`` -- the filled interior's own raw hatch-ink density. Calibration
+      (T108, ``ogps-8620``): the three real polygons measured 36-57% density; one small unrelated
+      purple symbol (a start-triangle fragment, same ``purple_100`` ink) measured only 15%.
+    * ``min_closed_fraction`` -- the fraction of the filled interior *already* covered by the
+      closed mask itself, before this function's own contour fill adds anything. A real hatch
+      pattern, once its own pitch is bridged by ``hatch_close_mm``'s kernel, is already
+      near-solid throughout its interior (closing alone does most of the work); a purple ring
+      symbol (an ISOM control circle, or this project's own synthetic fixture's course-overprint
+      circles, sharing ``purple_100`` ink per ``config/default.toml``'s ``out_of_bounds`` note) is
+      a thin loop closing into a mostly-*empty* disk -- the disk only gets covered by this
+      function's own contour fill, not by closing. Needed because ``min_density_fraction`` alone
+      cannot separate the two here: closing bridges a control circle's ring to its own adjacent
+      purple control-number digits (a few px apart, well within any kernel that also bridges a
+      real hatch's own, much coarser, pitch), and that ring+digit density (measured on this
+      project's synthetic fixture, ``tests/conftest.py``'s ``clean_synthetic_map``: 0.296-0.387)
+      overlaps the real polygon's own density there (0.319) -- but the two are cleanly separable
+      on ``min_closed_fraction`` alone (real polygon 0.847 vs. every ring+digit false positive
+      0.537-0.608), so this second guard is load-bearing, not redundant.
+
+    ``hatch_close_mm`` is a paper distance, converted to pixels via *dpi* like every sibling
+    geometric tunable in this project (never a hardcoded pixel count) -- calibration point:
+    25px closed this map's hatch cleanly at 265.991 dpi, i.e. ``25 * 25.4 / 265.991 ~= 2.39mm``.
+    """
+    oob = terrain_label(TerrainClass.OUT_OF_BOUNDS)
+    raw = labels == oob
+    if not raw.any():
+        return labels
+
+    ksize = max(1, round(hatch_close_mm * dpi / 25.4))
+    kernel = np.ones((ksize, ksize), np.uint8)
+    closed = cv2.morphologyEx(raw.astype(np.uint8), cv2.MORPH_CLOSE, kernel) > 0
+
+    contours, _ = cv2.findContours(
+        closed.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    if not contours:
+        return labels
+
+    out = labels.copy()
+    for contour in contours:
+        filled = np.zeros(labels.shape[:2], dtype=np.uint8)
+        cv2.drawContours(filled, [contour], -1, color=1, thickness=cv2.FILLED)
+        filled_mask = filled > 0
+        area = int(filled_mask.sum())
+        if area == 0:
+            continue
+        density = float(np.count_nonzero(raw & filled_mask)) / area
+        closed_fraction = float(np.count_nonzero(closed & filled_mask)) / area
+        if density >= min_density_fraction and closed_fraction >= min_closed_fraction:
+            out[filled_mask] = oob
+    return out
+
+
 def _consolidate_banked_water(
     labels: np.ndarray, border_radius: int = 2, min_bank_fraction: float = 0.3
 ) -> np.ndarray:
@@ -253,15 +339,25 @@ def _consolidate_banked_water(
     return out
 
 
-def classify_palette(image: np.ndarray, config: AppConfig | None = None) -> np.ndarray:
+def classify_palette(
+    image: np.ndarray, config: AppConfig | None = None, dpi: float | None = None
+) -> np.ndarray:
     """Classify *image* into ISOM terrain classes and fill in ``unknown`` (T013, F4).
 
-    :func:`classify_labels`, then :func:`_consolidate_banked_water` (T101) to make a genuinely
+    :func:`classify_labels`, then :func:`_close_out_of_bounds_regions` (T109) to close a hatched
+    ``out_of_bounds`` polygon's whole interior before either of the next two steps can leak part of
+    it through as real terrain, then :func:`_consolidate_banked_water` (T101) to make a genuinely
     bank-lined water body solidly ``water_uncrossable``, then :func:`fill_unknown` using
     ``config.palette.unknown_fill_radius``. Returns an ``(H, W)`` uint8 array indexed by
     ``TERRAIN_ORDER`` — directly usable as :class:`rogaine.models.TerrainMap`'s ``labels``.
+
+    *dpi* sizes the out-of-bounds closure's morphological kernel to the hatch's own line pitch on
+    paper (see :func:`_close_out_of_bounds_regions`); it defaults to ``config.map.default_dpi``
+    when the caller has no better estimate, the same fallback :func:`~rogaine.io.raster.resolve_dpi`
+    uses when a scan carries no DPI metadata of its own.
     """
     cfg = config or default_config()
     labels = classify_labels(image, cfg)
+    labels = _close_out_of_bounds_regions(labels, dpi if dpi is not None else cfg.map.default_dpi)
     labels = _consolidate_banked_water(labels)
     return fill_unknown(labels, cfg.palette.unknown_fill_radius)

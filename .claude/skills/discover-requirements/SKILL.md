@@ -1,13 +1,16 @@
 ---
-name: elicit-requirements
+name: discover-requirements
 description: >-
   Relentless product discovery interview until shared understanding is reached.
   Builds docs/BRIEF.md before any coding. Use during discovery, requirements
   gathering, or orchestrate-product Phase 1. Speaks Russian to the user; writes
   English brief artifacts. Grill-me style: recommended answers, design-tree walk.
+metadata:
+  author: product-factory
+  version: "1.0.0"
 ---
 
-# Elicit Requirements
+# Discover Requirements
 
 ## Goal
 

@@ -50,6 +50,18 @@ _OGPS_6802_DIR = (
 )
 _OGPS_6802_PATH = _OGPS_6802_DIR / "map.jpg"
 
+#: T109 (I7, ADR-036): a third real scan carrying three genuine ISOM 709 out-of-bounds polygons
+#: (this map's own control circles print red, not purple) whose hatched interiors leaked through
+#: as whatever terrain prints in the gaps between hatch lines -- see
+#: `_close_out_of_bounds_regions`'s own docstring in `vision/palette.py` for the measured mechanism.
+_OGPS_8620_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "maps"
+    / "ogps-8620_502cda4f6c774e8ecb86d063a71895f6"
+)
+_OGPS_8620_PATH = _OGPS_8620_DIR / "map.jpg"
+
 # Same list, same reason as `test_palette.py`'s `AREA_CLASSES`: the 11 ISOM area classes with a
 # unique shade -- the ones a colour classifier alone should nail on the clean fixture render.
 AREA_CLASSES: tuple[TerrainClass, ...] = (
@@ -349,6 +361,69 @@ class TestBankedWaterConsolidationOnRealScan:
         block_row, block_col = 1597 // graph.downsample, 948 // graph.downsample
         assert not graph.block_passable[block_row, block_col], (
             "river core block is passable in the routing graph -- a route could still cross it"
+        )
+
+
+class TestOutOfBoundsClosureOnRealScan:
+    """T109, SPEC F4, ADR-036 (I7): on `ogps-8620`, `classify_labels`'s raw hatch-ink density
+    inside the largest of this map's three real ISOM 709 out-of-bounds polygons is only 56.75% --
+    the rest is `unknown`/`forest_runnable`/etc., whatever colour prints between the hatch lines
+    (T108's own measured breakdown; confirmed unchanged here as the RAW figure below). Pre-fix,
+    `cost/graph.py`'s any-passable-pixel block rule then made 84.26% of the graph blocks
+    overlapping this interior block-passable -- a route could cross straight through. This pins
+    that `_close_out_of_bounds_regions` (wired into `classify_palette` ahead of
+    `_consolidate_banked_water`/`fill_unknown`) makes the whole interior classify consistently
+    `out_of_bounds` and impassable, both at the pixel level and in the routing graph.
+    """
+
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_polygon_interior_probe_point_is_out_of_bounds(self) -> None:
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        labels = classify_palette(normalize(image), cfg, dpi)
+
+        oob = terrain_label(TerrainClass.OUT_OF_BOUNDS)
+
+        # Measured (`data/maps/_t109_measure_oob.py`): (2357, 1761) is the largest polygon's own
+        # deepest interior point (max distance from its boundary, ~118px in) -- a small box
+        # centred on it sits entirely inside the polygon, clear of the hatch/paper edge on every
+        # side, and clear of the residual `forest_runnable` gaps RAW classification leaves there.
+        probe = labels[1756:1766, 2352:2362]
+        assert (probe == oob).all(), (
+            f"interior probe not fully out_of_bounds: "
+            f"oob={int((probe == oob).sum())}/{probe.size}"
+        )
+
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_polygon_interior_is_impassable_in_the_routing_graph(self) -> None:
+        """DoD: `rogaine plan`/`detect` on this map no longer routes through the polygon --
+        checked at `GridGraph.block_passable`, the deterministic ground truth `_build_edges`
+        actually reads (same precedent as T101's and T103's own real-scan graph confirmations),
+        rather than by solving a full route and hoping its non-deterministic GRASP search happens
+        to avoid the polygon.
+        """
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        assert cfg.graph.strict_impassable, "test assumes the strict_impassable default"
+
+        terrain_map = segment(image, dpi, meters_per_pixel=mpp_from_dpi(dpi, 24000), config=cfg)
+        cost_field = compute_cost_field(terrain_map, base_speed_mps=2.0, config=cfg)
+        graph = build_grid_graph(cost_field, cfg)
+
+        # Same deepest-interior-point measurement as the pixel-level test above, reduced to its
+        # containing block.
+        block_row, block_col = 1761 // graph.downsample, 2357 // graph.downsample
+        assert not graph.block_passable[block_row, block_col], (
+            "polygon interior block is passable in the routing graph -- a route could still "
+            "cross it"
         )
 
 
