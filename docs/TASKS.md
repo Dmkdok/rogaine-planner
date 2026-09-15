@@ -2434,13 +2434,37 @@ the implementer's self-report.
   block is excluded from the graph like `out_of_bounds`/`water_uncrossable`, on every map, not only
   `ogps-8620`; any existing test asserting the old passable behaviour is updated to match, named in
   this task's own entry as an intended consequence, not a silent fix.
-- [ ] **T111** — Diagnose ЛЭП (power line) ink vs. footpath ink on `ogps-8620` — paths: none
+- [x] **T111** — Diagnose ЛЭП (power line) ink vs. footpath ink on `ogps-8620` — paths: none
   (read-only diagnosis script, gitignored) — deps: none — DoD: measure this map's actual power-line
   symbol's ink pattern (dash/gap spacing, width, any tick/cross marks) against a genuine footpath's
   on the same map; determine whether `vision/linear.py`'s pure width-bucketing
   (`linear.py:174-175`) can be safely extended with a distinguishing signal, or whether none exists
   safely this round (T098 precedent — a valid, documented close); findings feed T112 (ADR-038).
-- [ ] **T112** — Fix ЛЭП costing, if T111 found a safe signal — paths:
+
+  **Closed, no safe fix found this round — a candidate signal was measured and shown unsafe.** The
+  ЛЭП at control 72 ("опора ЛЭП") is drawn as two parallel hairline strokes (~1px each, ~1-2px gap)
+  with short perpendicular pylon ticks every ~172-177px (~16.7mm paper, ~400m real-world) —
+  confirmed directly in the palette classifier's own raw `road`-placeholder mask, not just by eye on
+  the JPEG. `close_radius_px=2` (meant to bridge dash-gaps in genuine footpaths/tracks) also bridges
+  the ЛЭП's inter-hairline gap, merging both hairlines into one component whose median stroke width
+  (3.39px) lands nearest `vehicle_track`'s nominal width (3.665px @ this map's 265.991dpi) — not
+  because it is 3.4px of real ink, but because roughly half of that merged component's own footprint
+  is blank paper closed shut. A genuine dotted footpath measured for contrast (component 1461:
+  single stroke, ~1.8px median width, dot/gap runs ~2px/<1px) has no such structure. The natural
+  signal this suggests — "ink fill ratio" (fraction of a closed component's own footprint that is
+  real ink) — was measured across all 86 shape-filter-passing components on this map: the ЛЭП scores
+  0.525, but several components already bucketed as genuine footpath/road/vehicle_track score as low
+  or lower (0.366, 0.577, 0.644, 0.654, 0.697, 0.707, 0.713, 0.719, 0.764) — a threshold on fill
+  ratio would misclassify real corridors elsewhere on this same map. Same precedent as T080/T098: a
+  plausible-sounding signal was measured, not just designed, and shown unsafe before being built into
+  `linear.py`. The double-hairline structure itself is real and visually unique to this ЛЭП among
+  everything sampled here, but a safe detector for it needs a genuine two-band cross-sectional shape
+  test (bimodal ink profile perpendicular to the skeleton, sustained along the component's length),
+  not a width or fill-ratio number — not built or corpus-validated this round. T112 should close as
+  a documented gap unless someone scopes building and validating that specific shape test across the
+  full map corpus (the diagnosis script, gitignored at `data/maps/_t111_diagnose_lep.py`, has the
+  measurement code and raw candidate numbers for that follow-up to start from).
+- [x] **T112** — Fix ЛЭП costing, if T111 found a safe signal — paths:
   `src/rogaine/vision/linear.py`, `tests/unit/vision/test_linear.py`, possibly `config/default.toml`
   (`[linear]`) — deps: T111 — DoD: per T111's finding, either (a) ЛЭП-identified ink on `ogps-8620`
   no longer receives `footpath`/`vehicle_track`/`road`'s speed and T095 proximity-bonus treatment,
@@ -2448,6 +2472,22 @@ the implementer's self-report.
   real-scan test pinning it (gitignored scan, skipped when absent); or (b) T111 found no safe
   distinguishing signal, task closes with no code change, the measured reason recorded in this
   task's own entry (T098 precedent) rather than a guessed fix landing.
+
+  **Closed with no code change (T111 path b) — no safe distinguishing signal exists this round.**
+  T111 measured the ЛЭП's double-hairline structure and the one candidate signal it suggested
+  ("ink fill ratio" within a closed component's own footprint) against all 86 shape-filter-passing
+  linear components on `ogps-8620`: the ЛЭП scores 0.525, but several components already correctly
+  bucketed as genuine footpath/road/vehicle_track score as low or lower (0.366-0.764) — a threshold
+  on it would misclassify real corridors on the very same map, same T080/T098 precedent (measure
+  before building, not after). No other signal in `vision/linear.py`'s existing feature set (width,
+  elongation, aspect ratio) separates the two either. A safe detector is plausible in principle — a
+  genuine two-band cross-sectional shape test (bimodal ink profile perpendicular to the skeleton,
+  sustained along the component's length) — but building and corpus-validating that test is real,
+  unscoped work, not a small extension of the existing width-bucketing, and is not done this round.
+  `vision/linear.py` is unchanged; `ogps-8620`'s ЛЭП stays a documented, named gap (SPEC F5's own
+  acceptance line already states this as a valid outcome). Follow-up starting point if picked up
+  later: T111's own diagnosis script, `data/maps/_t111_diagnose_lep.py` (gitignored), has the
+  measurement code and raw per-component numbers.
 
 ## M15 — Opt-in VLM OCR fallback for control numbers (Iteration I7, `docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`)
 
