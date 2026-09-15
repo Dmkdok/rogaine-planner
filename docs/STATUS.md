@@ -94,6 +94,36 @@ current: M0-M6 complete and reviewed (docs/REVIEW.md, verdict PASS). **M8 comple
   after every fix: 522 passed (520 + 2 new e2e cases), `ruff check .` clean, this session's own run.
   M13 implementation and review both closed; only the owner's own manual spot-check (ADR-019
   precedent, I6's own exit criterion) is left open before M13/I6 can close.
+  **2026-09-14, same session: new owner bug report** — a fourth screenshot-backed report, this time
+  on `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`: a solved route crossing a magenta ISOM
+  709 out-of-bounds polygon and a lake, dark-green "fight" vegetation ("оливка") treated as merely
+  slow rather than forbidden, a power line (ЛЭП) costed as a normal path, and >=6 unread control
+  numbers — plus an explicit owner request to research orienteering route-choice theory and revisit
+  the OCR approach from scratch, citing the project's own reference article
+  (https://habr.com/ru/articles/1065342/) and a companion demo video the owner downloaded locally.
+  Became **Iteration I7** (`docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`),
+  split into **M14** (map/routing correctness, T108-T112, diagnosis-first per ADR-038) and **M15**
+  (opt-in VLM OCR fallback, T113-T115, ADR-039) — delta intake, impact map and docs amendments
+  (SPEC F4/F5/F8/F10/Summary/Integrations/Non-goals/NFR-Security/Risks#4, F23 added; DECISIONS
+  ADR-036..039) all written this session; **gate approved 2026-09-15** («Утверждаю, продолжи»).
+  Research already done, not deferred: `docs/research/route-choice-heuristics.md`
+  (T094) already covers "бег в мешок"/handrails (Rules 2+7, implemented via T095) and "road beats
+  bushwhacking" (Rule 1, already solved exactly by the existing Dijkstra solve) — this iteration's
+  own finding is that the solver's *inputs* (terrain classification, OCR) are wrong on real scans,
+  not that the route-choice heuristics feeding it are missing. The Habr article and the owner's own
+  video (frame-extracted via `ffmpeg` this session, since no fetch tool could read YouTube's page)
+  confirmed the reference implementation uses a trained SegFormer segmenter and a tiled VLM pass for
+  control numbers — ADR-036 adopts a much cheaper region-closure CV fix for the terrain-classification
+  half instead of the reference's neural segmenter (disproportionate for this defect), while ADR-039
+  does adopt a narrow, opt-in VLM fallback for OCR specifically, explicitly revisiting ADR-009 and
+  narrowing `docs/SPEC.md`'s "no network calls at runtime"/"no VLM" lines — flagged loudly to the
+  owner before the gate, not silently overridden. **2026-09-15: implementation starting** — see
+  "Iteration I7" below for the live progress checklist.
+
+## Baseline I7
+`docker compose run --rm tests` — **522 passed**, exit 0, 491.89s, 1 warning (pre-existing
+`httpx`/`starlette` deprecation notice, unrelated); `ruff check .` clean. 2026-09-14, this session's
+own run, branch `iteration/I2-vision-recognition-fix` @ `5f929c0`, tree clean.
 
 ## Baseline I6
 `docker compose run --rm tests` — 513 passed, exit 0 (own run, not piped through `tail`); `ruff
@@ -110,14 +140,19 @@ commit or revert it).
 
 ## Resume here
 **This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check
-(itself since closed, see Iteration I4 below). Active work is Iteration I6 (M13, T101-T107): all
-7/7 tasks landed, implementation and the milestone-level independent review both closed (PASS WITH
-WAIVERS, all blocking/recommended findings fixed same session) — jump to the "Iteration I6" section
-below for its own progress checklist. Only remaining step: the owner's own manual spot-check of the
-three named real maps plus the two viewer UX flows (ADR-019 precedent, I6's own exit criterion) —
-not something a session can do unsupervised. Fresh session: `/clear`, then «продолжай по
-docs/STATUS.md» and relay this to the owner. One older, unrelated manual owner sign-off is also
-still open (T086's visual review, Iteration I3) — tracked separately, does not block I6.**
+(itself since closed, see Iteration I4 below). Active work is Iteration I7 (M14+M15,
+`docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`): delta intake, impact
+map and docs amendments (SPEC + DECISIONS ADR-036..039) written 2026-09-14 — jump to the
+"Iteration I7" section below for its own progress checklist. Baseline recorded (522 passed).
+**Gate approved 2026-09-15 («Утверждаю, продолжи») — implementation in progress.** Dispatched:
+T108 (out-of-bounds/water diagnosis), T111 (ЛЭП diagnosis), T113 (VLM OCR client module) — no
+shared-file conflicts between the three. Still queued, each behind its own dependency: T109 (after
+T108, shared-primitive/serial, full suite re-run before T110/T112 start), T110 (after T109), T112
+(after T111), T114/T115 (after T113, strictly serial). Fresh session: `/clear`, then «продолжай по
+docs/STATUS.md». Three older, unrelated manual owner sign-offs remain open in parallel, none
+blocking I7: Iteration I6's own spot-check of `ogps-6802`/`ogps-7302`/`ogps-8078` plus two viewer UX
+flows (ADR-019 precedent); T086's visual review (Iteration I3); none of these block I7's own
+implementation.**
 
 `master` last release point 640dce9; working branch `iteration/I2-vision-recognition-fix`, not yet
 merged. **Iteration I2 approved 2026-09-05; M9's four automated tasks (T079, T080, T081, T077) all
@@ -181,6 +216,58 @@ subagent call in that session succeeded normally, so this looks transient/interm
 hard block — but if a future session sees the same error, know that subagent tool calls can fail
 mid-task while still having committed real file edits before the failure; check `git status`/`git
 diff` for real work before assuming nothing happened, rather than retrying blind.
+
+## Iteration I7: real-map routing correctness (out-of-bounds/water/ЛЭП/olive) and an opt-in VLM OCR fallback (delta written, pending gate approval, branch `iteration/I2-vision-recognition-fix`, continued)
+
+Owner report, in-chat 2026-09-14, two screenshot crops from
+`data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`: a solved route crossing a magenta ISOM 709
+out-of-bounds polygon and a lake; plus text reports of dark-green "fight" vegetation ("оливка")
+crossed as merely slow, a power line (ЛЭП) costed as a normal path, and >=6 unread control numbers.
+Owner also asked for externally-researched grounding (habr.com/ru/articles/1065342/, already SPEC's
+own cited reference, plus a companion demo video the owner downloaded locally and asked this session
+to actually watch — done via `ffmpeg` frame extraction, since no fetch tool could read YouTube's
+page). Full research, intake and impact map:
+`docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`. New ADRs: ADR-036
+(region-closure fill for hatched ISOM area symbols), ADR-037 (`veg_fight`/ISOM 410 reclassified
+impassable by owner ruling), ADR-038 (out-of-bounds/water/ЛЭП items are diagnosis-first, ADR-026/033
+precedent), ADR-039 (opt-in VLM OCR fallback, explicitly revisits ADR-009 and narrows SPEC's "no
+network calls"/"no VLM" lines to an opt-in, disabled-by-default, number-reading-only exception). SPEC
+F4/F5/F8/F10/Summary/Integrations/Non-goals/NFR-Security/Risks#4 extended in place; F23 added (new
+requirement, the VLM fallback itself).
+
+Split into two milestones at the owner's own choice (this session's `AskUserQuestion`): **M14**
+(map/routing correctness, T108-T112) is smaller and fully deterministic/offline, closes and ships
+independently; **M15** (T113-T115) is the OCR architecture reversal and carries its own weight in
+review. Both are part of the same gate ask below — implementation is planned M14 first (T109 lands
+first and serially, shared primitive), M15 any time after or in parallel (disjoint files).
+
+Explicitly out of scope, recorded with reasons in the iteration doc: adopting the reference
+article's SegFormer segmentation network (disproportionate for a defect the cheaper region-closure
+CV fix already explains); VLM-based control *position*/circle detection (only number-reading gets
+the fallback); attack points/vegetation fatigue/directional slope (already researched and deferred
+by T094/ADR-027, unrelated reasons); lighter vegetation classes (406/408) alongside 410; a
+corpus-wide hunt for further failures beyond `ogps-8620` this round.
+
+Progress (M14+M15 in `docs/TASKS.md`, T108-T115):
+- [x] 0 baseline recorded — `docker compose run --rm tests` 522 passed, exit 0, 491.89s; `ruff
+  check .` clean; 2026-09-14, tree clean (see "Baseline I7" above)
+- [x] 1 delta intake agreed (in / out / deferred) — this session's `AskUserQuestion` batch (milestone
+  split, OCR strategy fork, olive-impassable ruling, diagnosis-first confirmation), all recommended
+  options chosen by the owner; recorded in
+  `docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`
+- [x] 2 impact map written — same file (8 rows: T108-T112 for M14, T113-T115 for M15; ordering:
+  T109 shared-primitive lands first/serially, T110 depends on it, T111->T112 independent pair,
+  veg_fight config item fully independent, T113->T114->T115 strictly serial and independent of M14)
+- [x] 3 docs amended (SPEC F4/F5/F8/F10/Summary/Integrations/Non-goals/NFR-Security/Risks#4
+  extended, F23 added; DECISIONS ADR-036..039; TASKS M14 T108-T112 + M15 T113-T115)
+- [x] GATE — approved by the owner 2026-09-15 («Утверждаю, продолжи»)
+- [ ] 4 implementation — starting: T108/T111/T113 (no shared-file conflicts, dispatched together);
+  T109 depends on T108's diagnosis landing first (shared-primitive, serial); T110 depends on T109;
+  T112 depends on T111; T114/T115 depend on T113, strictly serial
+- [ ] 5 verification
+- [ ] 6 review
+- [ ] 7 closed
+- [ ] 8 deploy (optional, not yet decided)
 
 ## Iteration I6: real-map detection gaps and viewer UX (gate approved, implementation starting, branch `iteration/I2-vision-recognition-fix`, continued)
 

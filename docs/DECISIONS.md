@@ -38,6 +38,10 @@
 | 033 | I6's detection-gap items are diagnosis-first (ADR-026 precedent); the low-confidence auto-placement floor is chosen and shipped without an intermediate owner review step | accepted |
 | 034 | T104's real cause was not a two-colour print style but a `_select_best_scale` tie-break gap; `_ocr_gate_tied_scales` resolves an exact tie among >=1.0 multipliers by OCR outcome, the same principle as ADR-031's sub-1.0 gate | accepted |
 | 035 | T105's auto-placement confidence floor (0.80) is a named, accepted cost, not a measured win — every sub-0.85 detection in the measured corpus is a confirmed genuine control the floor does not need to catch | accepted |
+| 036 | Hatched/screened ISOM area symbols get a region-closure step so their enclosed interior classifies consistently, instead of leaking through per-pixel gaps | accepted |
+| 037 | `veg_fight` (ISOM 410, "оливка") is reclassified impassable by owner ruling, not by measurement | accepted |
+| 038 | I7's out-of-bounds/water/ЛЭП real-scan items are diagnosis-first (ADR-026/033 precedent) | accepted |
+| 039 | An opt-in VLM fallback reads control numbers Tesseract can't, amending ADR-009 and narrowing the SPEC VLM non-goal to number-reading only | accepted |
 
 ---
 
@@ -1670,3 +1674,112 @@ style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR ou
   Full suite: 519 passed (518 + this task's own new test), `ruff check .` clean; every existing
   `TestRealScanReadRateFloor`/circle-count floor re-verified unchanged (this floor's own 4 dropped
   detections are not on any of those specific pinned maps).
+
+## ADR-036 — Hatched/screened ISOM area symbols get a region-closure step so their enclosed interior classifies consistently
+- Date: 2026-09-14
+- Status: accepted
+- Context: I7's owner report — a solved route on `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`
+  crosses a magenta-hatched ISOM 709 out-of-bounds polygon and a lake. `vision/palette.py`'s own
+  module docstring (`palette.py:39-54`) already named the mechanism as an unowned gap since M1:
+  `classify_labels` is strictly per-pixel nearest-shade-in-CIELAB, with no notion of "enclosed" — a
+  sparse diagonal hatch (measured well under 50% ink coverage on real scans) leaves most interior
+  pixels classified as whatever colour actually prints in the gaps (`white`/`unknown`/
+  `forest_runnable`, all passable), not the hatch symbol's own meaning. `cost/graph.py`'s block
+  aggregation (`_aggregate_blocks`, a block is passable if it contains at least one passable pixel)
+  makes this worse at the graph level, not just the per-pixel one.
+- Decision: T108 diagnoses the exact interior-leak mechanism on `ogps-8620` before design (measured
+  hatch density, interior-pixel classification breakdown). T109 then adds a region-closure step to
+  `vision/palette.py::classify_palette` (a flood-fill/morphological-closure pass over an enclosed
+  hatched polygon, keyed to its boundary ink) so the whole enclosed area classifies consistently,
+  not just the drawn hatch lines. T110 measures separately whether the reported lake crossing shares
+  this same mechanism or needs `_consolidate_banked_water`'s own distinct treatment (T101/ADR
+  precedent: a hatched water body with no adjacent black bank line was already a named, distinct gap
+  before this iteration).
+- Consequences: This is a shared-primitive change — `classify_palette`'s output feeds control
+  detection's ink masks, `vision/linear.py`'s corridor extraction, and `cost/field.py` directly — so
+  it lands first and serially in M14, with the full suite re-run before any dependent task starts.
+  Every existing synthetic-fixture IoU floor must stay passing (the fixture has no hatched region
+  wide enough to exercise this gap today); the new coverage is real-scan-only, gitignored per
+  ADR-010. Rejected alternative: adopting the reference article's trained SegFormer segmenter, which
+  would also close this gap — rejected as disproportionate (needs ~200 labelled maps and GPU
+  training infra) for a defect this specific CV step explains and fixes deterministically; ADR-001's
+  "SegFormer is optional" stays unchanged.
+
+## ADR-037 — `veg_fight` (ISOM 410, "оливка") is reclassified impassable by owner ruling, not by measurement
+- Date: 2026-09-14
+- Status: accepted
+- Context: I7's owner report — a solved route crosses dark-green "fight" vegetation
+  (`config/default.toml`'s `veg_fight`, currently `passable=true`, `speed_factor=0.05`, i.e. 20x
+  slower than road). `docs/research/route-choice-heuristics.md`'s Rule 5 already verified this speed
+  factor against the IOF's own published runnability bands and found it correctly calibrated as a
+  "very difficult to run" class, not an "impassable" one, per the general literature. The owner's
+  own ruling for this event overrides that general default: this specific competition's rules treat
+  the darkest vegetation class as forbidden to enter, not merely slow.
+- Decision: `config/default.toml`'s `veg_fight` entry's `passable` flag flips `true` -> `false`,
+  same treatment as `out_of_bounds`/`water_uncrossable`. Lighter vegetation classes (`veg_slow_run`
+  406, `veg_walk` 408) are untouched — the owner's ruling was specific to the darkest class, and
+  Rule 5's own verified calibration for those two is not being second-guessed.
+- Consequences: This is a global behaviour change, not a per-map fix — every map now treats
+  `veg_fight` as a hard no-go, matching `out_of_bounds`/`water_uncrossable`'s existing
+  `strict_impassable` treatment in `cost/graph.py`. Any existing test asserting `veg_fight` is
+  traversable is a direct, intended consequence of this ruling, not a regression (Phase 2's
+  "expectations that change" list). If a future event's rules treat this class as merely slow
+  rather than forbidden, the fix is a one-line config edit (F18), not a code change — the mechanism
+  built for `out_of_bounds` already generalises.
+
+## ADR-038 — I7's out-of-bounds/water/ЛЭП real-scan items are diagnosis-first
+- Date: 2026-09-14
+- Status: accepted
+- Context: Same precedent as ADR-026 (T089) and ADR-033 (I6): a real-scan classification/costing
+  defect's *symptom* is clear from a screenshot, but its exact mechanism on the specific map is not,
+  and a plausible-sounding fix designed without measurement has repeatedly turned out wrong or
+  unsafe in this project's own history (T098's reverted raw-radius filter is the sharpest example).
+  I7 has three such items: out-of-bounds region leak, lake crossing, and ЛЭП costed as a path.
+- Decision: T108 (out-of-bounds + water) and T111 (ЛЭП) are diagnosis tasks against
+  `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6` specifically, each producing measured,
+  named findings before T109/T110/T112 design or land any fix. A diagnosis task may conclude "no
+  safe fix this round" (T098's own precedent) — that is a valid, documented close, not a failure to
+  find one.
+- Consequences: M14's fix tasks (T109, T110, T112) carry an implicit dependency on their own
+  diagnosis task landing first, beyond what `paths:` ownership alone would show — recorded explicitly
+  in `docs/TASKS.md`'s M14 header, matching I6's own convention (ADR-033/M13's ordering note).
+
+## ADR-039 — An opt-in VLM fallback reads control numbers Tesseract can't, amending ADR-009 and narrowing the SPEC VLM non-goal to number-reading only
+- Date: 2026-09-14
+- Status: accepted
+- Context: ADR-009 (2026-08-18) chose Tesseract over a VLM specifically because "a VLM costs money
+  and determinism," with OCR explicitly scoped as non-load-bearing (unread -> null + flag, never a
+  crash, CSV/viewer edit as the first-class repair path) rather than pursued to perfection. Four
+  further tuning rounds on that same classical pipeline (T079, T090, T097-T100, T104-T105) still
+  leave real scans — most recently `ogps-8620_502cda4f6c774e8ecb86d063a71895f6`, >=6 unread numbers
+  — with a real gap. `docs/SPEC.md`'s reference implementation
+  (https://habr.com/ru/articles/1065342/) and its companion demo video (fetched and, for the video,
+  frame-extracted and read directly this session) both solve this with a tiled VLM pass over control
+  crops, not further classical tuning; the video shows a structured per-control read with a
+  confidence score ("VLM тайл 2/4 → #21 ✓ (0.95)"). `docs/SPEC.md` currently states "no network
+  calls at runtime" (NFR-Security), "None. No external APIs, no VLM, no telemetry" (Integrations),
+  and lists "VLM-based control detection... the article's Yandex Cloud Qwen path" under
+  `## Non-goals` — all three directly contradicted by any VLM fallback. This contradiction was
+  raised explicitly with the owner (this session's `AskUserQuestion`, quoting ADR-009 by name)
+  before this decision, not discovered after landing.
+- Decision: A **narrower** reversal than the reference implementation's full VLM pipeline. Circle/
+  position detection stays 100% classical CV — that half of the SPEC Non-goal is **not** withdrawn.
+  Only control-*number* reading gains a fallback: `[ocr_fallback]` in `config/default.toml`,
+  `enabled=false` by default, requiring both the flag and a configured API key before any network
+  call is made; triggers only when Tesseract's own read for a control is empty or below
+  `trigger_confidence`; on any failure (disabled, no key, network error) degrades to F8's existing
+  null-flagged behaviour, never a crash, never blocking a route. A fallback-resolved control is
+  marked distinctly from a Tesseract read (F23) so the output stays auditable. `docs/SPEC.md`'s
+  Summary/Integrations/Non-goals/NFR-Security/Risks#4 lines are amended in place (not silently
+  narrowed) to name this exception; F8 cross-references F23.
+- Consequences: The tool is no longer *unconditionally* offline/deterministic/free — it is offline
+  by default, with an explicit, narrow, disclosed exception the owner opted into with the ADR-009
+  trade-off named plainly. CI/the default test suite must stay green with the fallback at its
+  shipped default (disabled) — no test may depend on a real network call; fallback-path tests use a
+  mocked/fake client (T113), matching ADR-010's own offline-test philosophy. `pyproject.toml` gains
+  a new optional dependency group for the VLM client SDK, not a base dependency — installing the
+  base package makes zero new network-capable code reachable. Rejected alternative: a from-scratch
+  lightweight digit-classifier (ADR-009's own originally-floated "small digit-template matcher")
+  stays free/deterministic/offline but is real, unstarted model-development effort with no assurance
+  of closing the gap either — the owner chose the narrower, faster, opt-in VLM path over building
+  and training a new classifier this round.

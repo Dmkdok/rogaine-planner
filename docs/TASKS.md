@@ -2356,3 +2356,92 @@ the implementer's self-report.
   Full account, including exact contrast numbers and file:line citations: `docs/DECISIONS.md`
   ADR-033's own review amendment. Re-verified after every fix: **522 passed** (520 + this task's
   own test + `TestToggleAddModeArmedState`), `ruff check .` clean, this session's own run.
+
+## M14 — Real-map terrain/routing correctness on `ogps-8620` (Iteration I7, `docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`)
+
+> T108 before T109 before T110 (all three touch `vision/palette.py`'s classification output —
+> T108's diagnosis must land before T109's region-closure fix is designed, and T109's fix must land
+> before T110 decides whether the lake crossing shares its mechanism, per ADR-038). T109 is a
+> **shared primitive** (`classify_palette`'s output feeds control detection's ink masks,
+> `vision/linear.py`, and `cost/field.py`) — it lands serially, full suite re-run before T110/T112
+> start. T111 before T112 (`vision/linear.py`'s own diagnosis-then-fix pair, ADR-038) — independent
+> of T108-T110's file. The `veg_fight` config task is independent of everything else in this
+> milestone (different file, no shared symbol) and may run any time.
+
+- [ ] **T108** — Diagnose real-scan out-of-bounds region-interior leak — paths: none (read-only
+  diagnosis script under `data/maps/`, gitignored per ADR-010) — deps: none — DoD: measure, on
+  `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`, the reported magenta ISOM 709 polygon's
+  hatch ink density and the per-pixel classification breakdown of its interior (what fraction lands
+  `out_of_bounds` vs. `white`/`unknown`/`forest_runnable`/other); confirm or refute
+  `vision/palette.py:39-54`'s own documented hypothesis (per-pixel classification has no notion of
+  "enclosed"); findings and a concrete fix design for T109 written into this task's own entry before
+  T109 starts (ADR-038).
+- [ ] **T109** — Close hatched-polygon interiors for out-of-bounds classification — paths:
+  `src/rogaine/vision/palette.py`, `tests/unit/vision/test_segment.py`, possibly
+  `config/default.toml` (`[palette]`) — deps: T108 — DoD: per T108's design, a region-closure step
+  in `classify_palette` makes the whole enclosed `out_of_bounds` polygon interior classify
+  consistently (ADR-036); `rogaine plan`/`detect` on `ogps-8620` no longer routes through the
+  reported polygon; every existing synthetic-fixture IoU floor unchanged; a new real-scan test pins
+  a probe point deep inside the polygon as `out_of_bounds`/impassable, skipped when the gitignored
+  scan is absent; full suite green before T110/T112 start (shared-primitive ordering, ADR-036).
+- [ ] **T110** — Fix lake crossing on `ogps-8620`, and reclassify `veg_fight` impassable — paths:
+  `src/rogaine/vision/palette.py` (lake fix, if T108/T109 don't already cover it), `config/
+  default.toml` (`veg_fight.passable`), `tests/unit/cost/test_field.py`/`test_graph.py`,
+  `tests/unit/vision/test_segment.py` — deps: T109 (lake half only; the `veg_fight` half is
+  independent and may land first) — DoD: **lake half** — measure whether the reported lake crossing
+  shares T109's region-closure mechanism or needs `_consolidate_banked_water`'s own distinct
+  treatment (T101 precedent); fix accordingly; `ogps-6802`'s own `TestBankedWaterConsolidationOnRealScan`
+  (T101) unchanged; a new gitignored real-scan check confirms the lake's deepest interior point is
+  impassable in the graph. **`veg_fight` half** — `config/default.toml`'s `veg_fight` entry's
+  `passable` flips `true` -> `false` (ADR-037, owner ruling, not measurement); a `veg_fight`-labelled
+  block is excluded from the graph like `out_of_bounds`/`water_uncrossable`, on every map, not only
+  `ogps-8620`; any existing test asserting the old passable behaviour is updated to match, named in
+  this task's own entry as an intended consequence, not a silent fix.
+- [ ] **T111** — Diagnose ЛЭП (power line) ink vs. footpath ink on `ogps-8620` — paths: none
+  (read-only diagnosis script, gitignored) — deps: none — DoD: measure this map's actual power-line
+  symbol's ink pattern (dash/gap spacing, width, any tick/cross marks) against a genuine footpath's
+  on the same map; determine whether `vision/linear.py`'s pure width-bucketing
+  (`linear.py:174-175`) can be safely extended with a distinguishing signal, or whether none exists
+  safely this round (T098 precedent — a valid, documented close); findings feed T112 (ADR-038).
+- [ ] **T112** — Fix ЛЭП costing, if T111 found a safe signal — paths:
+  `src/rogaine/vision/linear.py`, `tests/unit/vision/test_linear.py`, possibly `config/default.toml`
+  (`[linear]`) — deps: T111 — DoD: per T111's finding, either (a) ЛЭП-identified ink on `ogps-8620`
+  no longer receives `footpath`/`vehicle_track`/`road`'s speed and T095 proximity-bonus treatment,
+  with existing width-bucketing behaviour for genuine roads/tracks/footpaths unchanged and a new
+  real-scan test pinning it (gitignored scan, skipped when absent); or (b) T111 found no safe
+  distinguishing signal, task closes with no code change, the measured reason recorded in this
+  task's own entry (T098 precedent) rather than a guessed fix landing.
+
+## M15 — Opt-in VLM OCR fallback for control numbers (Iteration I7, `docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`)
+
+> T113 before T114 before T115, strictly serial (module, then wiring, then measurement). Independent
+> of every M14 task (disjoint files) — may run in parallel with M14 or after it; the owner's own
+> choice to split into two milestones was partly so M14 could close without waiting on M15.
+
+- [ ] **T113** — VLM OCR client module — paths: `src/rogaine/vision/ocr_vlm.py` (new),
+  `pyproject.toml` (new optional dependency group for the VLM client SDK, not the base install),
+  `tests/unit/vision/test_ocr_vlm.py` (new) — deps: none — DoD: a client wrapper that takes a
+  control's cropped ink region and returns a structured (digit string, confidence) result or a
+  typed "no answer" outcome; reads its API key from an environment variable, never from
+  `config/default.toml` or any committed file; unit tests exercise the module entirely against a
+  fake/mocked client — no real network call anywhere in the test suite (ADR-010/ADR-039); base
+  `pip install`/`docker compose run --rm tests` makes zero new network-capable code reachable
+  (optional dependency group).
+- [ ] **T114** — Wire the fallback into the OCR pipeline; amend SPEC/NFR — paths:
+  `src/rogaine/vision/ocr.py` or `vision/controls.py` (trigger condition only), `config/
+  default.toml` (new `[ocr_fallback]` section: `enabled`, `trigger_confidence`, model id), `tests/
+  unit/vision/test_ocr.py` — deps: T113 — DoD: `[ocr_fallback].enabled=false` (shipped default)
+  leaves F8's existing behaviour byte-for-byte unchanged, and the full existing suite (every test
+  implicitly uses this default) stays green with zero new network calls; with `enabled=true` and a
+  mocked client, a control whose Tesseract read is empty or below `trigger_confidence` is retried
+  through the fallback and, on success, marked distinctly from a Tesseract-sourced read (F23); a
+  missing API key or a client error with the fallback enabled degrades to F8's existing
+  null-flagged behaviour, never a crash, never blocking a route; `docs/SPEC.md`'s Summary/
+  Integrations/Non-goals/NFR-Security/F8/Risks#4 lines amended per this iteration's doc (ADR-039).
+- [ ] **T115** — Measure the fallback on real scans — paths: none (measurement script under
+  `data/maps/`, gitignored) — deps: T114 — DoD: with the fallback enabled and a real API key, run
+  against `ogps-8620_502cda4f6c774e8ecb86d063a71895f6` and confirm every one of the owner's
+  originally-reported unread numbers is either read or still explicitly flagged (never silently
+  wrong); run against a broader owner-corpus sample and record the before/after read-rate; record
+  the API call count and an estimated cost per map in this task's own entry — the concrete evidence
+  the iteration's exit criteria and F23's acceptance line are judged against.
