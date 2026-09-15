@@ -2368,7 +2368,7 @@ the implementer's self-report.
 > of T108-T110's file. The `veg_fight` config task is independent of everything else in this
 > milestone (different file, no shared symbol) and may run any time.
 
-- [ ] **T108** — Diagnose real-scan out-of-bounds region-interior leak — paths: none (read-only
+- [x] **T108** — Diagnose real-scan out-of-bounds region-interior leak — paths: none (read-only
   diagnosis script under `data/maps/`, gitignored per ADR-010) — deps: none — DoD: measure, on
   `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`, the reported magenta ISOM 709 polygon's
   hatch ink density and the per-pixel classification breakdown of its interior (what fraction lands
@@ -2376,6 +2376,43 @@ the implementer's self-report.
   `vision/palette.py:39-54`'s own documented hypothesis (per-pixel classification has no notion of
   "enclosed"); findings and a concrete fix design for T109 written into this task's own entry before
   T109 starts (ADR-038).
+  **Diagnosed — confirms `palette.py:39-54`'s hypothesis, and sharpens it.** This map carries three
+  real `out_of_bounds` polygons of different sizes (not one polygon plus purple control circles as
+  first assumed — this map's own control circles print in red); measured on the largest (bbox
+  387x468 px at (2179,1504); interior 89,054 px after closing the hatch mask and filling its
+  contour). Raw `classify_labels` hatch-ink density inside the interior is 56.75% (50,537/89,054
+  px); the rest is 25.09% `unknown`, 15.23% `forest_runnable`, and <2% each of
+  `road`/`bare_rock`/`paved_area`/other — exactly "whatever colour prints in the gaps," not a bug in
+  the nearest-shade math. `fill_unknown`'s own radius-3 majority vote already closes most of the
+  `unknown` slice as a side effect (56.75% → 81.06% `out_of_bounds` after the full `classify_palette`
+  pipeline: narrow hatch gaps fail the CIELAB threshold and get voted into their oob-majority
+  neighbourhood) — but it cannot touch the 15.94% that lands a *confident* nearest-shade match on
+  `forest_runnable` (wider gaps where the true white background wins outright); that residual is the
+  actual leak. `cost/graph.py::_aggregate_blocks`'s any-passable-pixel rule then amplifies it
+  sharply: at `downsample=4`, 84.26% of the 5,737 graph blocks overlapping this interior (4,834 of
+  them) come out block-passable — the cost graph treats the large majority of a polygon that is 81%
+  correctly pixel-classified as freely traversable, which is why a solved route crossed it.
+  **Fix design for T109**: add a region-closure step to `classify_palette`, run on
+  `classify_labels`'s raw output *before* `_consolidate_banked_water`/`fill_unknown` (so
+  `fill_unknown` becomes a no-op inside an already-closed region instead of doing partial,
+  order-sensitive work). Mirror `_consolidate_banked_water`'s proven shape (T101): for the
+  `out_of_bounds` label, `cv2.morphologyEx(MORPH_CLOSE)` the raw hatch mask with a kernel sized to
+  the hatch's own line pitch (kernel=25px closed this map's hatch cleanly at 265.991 dpi — T109
+  should derive this from `meta.toml`'s dpi/scale rather than hardcode one map's pixel count), take
+  each closed component's external contour, fill it, and promote every pixel inside the fill to
+  `out_of_bounds` — but only if that filled interior's own raw hatch-ink density clears a safety
+  threshold, the same "don't swallow unrelated terrain" role `min_bank_fraction` plays in T101's
+  function. Calibration point from this map: the three real polygons measured 36-57% density, while
+  one small unrelated purple symbol (a start-triangle fragment, same `purple_100` ink) measured only
+  15% — a ~25% threshold cleanly separates them here, though T109 should confirm the gap holds
+  against more of the corpus, especially a map with genuine purple control circles
+  (`config/default.toml`'s own note that `out_of_bounds` and control circles share ink), which this
+  map happens not to have. **Risk flagged for T109**: because `fill_unknown` already masks part of
+  the defect (57%→81% oob from the existing radius-3 vote alone), an eyeballed spot-check of the
+  labelled output can look "mostly fixed" while the graph still leaks 84% block-passable through the
+  remaining 16-19% pixel-level hole; T109's acceptance check must measure interior composition the
+  way this diagnosis did, not eyeball the label map. Script: `data/maps/_t108_diagnose_oob.py`
+  (gitignored, not committed).
 - [ ] **T109** — Close hatched-polygon interiors for out-of-bounds classification — paths:
   `src/rogaine/vision/palette.py`, `tests/unit/vision/test_segment.py`, possibly
   `config/default.toml` (`[palette]`) — deps: T108 — DoD: per T108's design, a region-closure step
