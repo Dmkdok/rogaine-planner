@@ -139,6 +139,51 @@ session's edit, doesn't touch the `tests` service, left alone; owner has not sai
 commit or revert it).
 
 ## Resume here
+**PAUSED 2026-09-15, mid-implementation of Iteration I7 M14+M15. Branch
+`iteration/I2-vision-recognition-fix`, tree committed unverified at `050a11a` (pause: session
+snapshot) — no test run since. Gate was approved this session («Утверждаю, продолжи»); T108/T111/T112
+landed and committed clean (see below); T109 and T113 were mid-work when paused, kill checkpoints
+below. Next concrete action: pick up T109 first (it's the shared-primitive blocker for T110/T112 in
+M14) — read the current diff in `src/rogaine/vision/palette.py`/`tests/unit/vision/test_segment.py`,
+finish verifying the fix against all three of `ogps-8620`'s real out_of_bounds polygons (T108's
+diagnosis named all three) plus the purple-symbol fragment (false-positive check), run
+`docker compose run --rm tests` **in the foreground, not backgrounded** (~500s, use a >=600000ms
+timeout — do not use run_in_background/Monitor for this, subagents got stuck waiting on their own
+async notification twice this session), then write T109's own `docs/TASKS.md` entry (checkbox +
+findings) before touching T110. In parallel or after, pick up T113 the same way: it left 3 unresolved
+test failures in `tests/unit/vision/test_ocr_vlm.py`/`src/rogaine/vision/ocr_vlm.py` — get the actual
+failure output first (foreground run, same reasoning), diagnose, fix, re-verify green + `ruff check .`
+clean, then write T113's own entry. Both T109 and T113's `docs/TASKS.md` bullets carry an inline
+`⏸ paused mid-work — see STATUS.md` marker.
+
+**Killed subagents (stopped via TaskStop mid-task, both stuck in the same pattern — launching a
+background/Monitor-tracked test run then ending their own turn before its notification arrived back
+to them, rather than running it inline):**
+- **T109** ("fix out-of-bounds region closure"): had already confirmed the fix works 100% on
+  `ogps-8620`'s main/largest polygon (T108's own measurement target) on the real scan. Was about to
+  check the other two smaller polygons and the purple-symbol fragment T108 flagged as an untested
+  edge case (this map's own controls print red, not purple, so the purple/out_of_bounds ink-sharing
+  collision `config/default.toml` warns about was never exercised), then intended to delete two
+  throwaway gitignored diagnostic scripts and run the full suite. Files already edited:
+  `src/rogaine/vision/palette.py` (+91 lines), `tests/unit/vision/test_segment.py` (+75 lines) —
+  `config/default.toml` untouched (unclear if a new `[palette]` tunable was needed or not — check the
+  diff). Suite not run to completion in my sight; needs a fresh, inline `docker compose run --rm
+  tests` before trusting green.
+- **T113** ("build VLM OCR client module"): `src/rogaine/vision/ocr_vlm.py`,
+  `tests/unit/vision/test_ocr_vlm.py`, and a new `pyproject.toml` optional-dependency group
+  (`ocr_vlm`, `anthropic>=1.0`) were already written. An earlier, incomplete suite run showed 3
+  failures — never diagnosed, tracebacks never seen by me. Design given to the agent (for context if
+  resuming from the diff cold): `read_control_number(image_bytes, *, model="claude-haiku-4-5",
+  client=None)`, forced tool-use with a strict schema for (digit_string, confidence), reads
+  `ANTHROPIC_API_KEY` directly (not the SDK's broader credential chain) and returns a typed
+  no-answer/unavailable outcome without ever constructing a real client when the key is absent, never
+  raises to its caller.
+
+Test status: **not run this session's pause** — last known-green baseline is still 522 passed (see
+"Baseline I7" below), from before T108-T113 started. Everything since is unverified.
+
+---
+
 **This section describes M9/I2, now historical — M9 is done apart from the manual T082 spot-check
 (itself since closed, see Iteration I4 below). Active work is Iteration I7 (M14+M15,
 `docs/iterations/I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`): delta intake, impact
