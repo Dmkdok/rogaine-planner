@@ -2465,7 +2465,7 @@ the implementer's self-report.
   26/26 pass (all three real polygons still close correctly, solidity guard does not reject them),
   full suite **537 passed** (522 baseline + 4 new closure tests + T113's 11), `ruff check .` clean
   — this session's own run, not trusted from any intermediate measurement alone.
-- [ ] **T110** — Fix lake crossing on `ogps-8620`, and reclassify `veg_fight` impassable — paths:
+- [x] **T110** — Fix lake crossing on `ogps-8620`, and reclassify `veg_fight` impassable — paths:
   `src/rogaine/vision/palette.py` (lake fix, if T108/T109 don't already cover it), `config/
   default.toml` (`veg_fight.passable`), `tests/unit/cost/test_field.py`/`test_graph.py`,
   `tests/unit/vision/test_segment.py` — deps: T109 (lake half only; the `veg_fight` half is
@@ -2478,6 +2478,79 @@ the implementer's self-report.
   block is excluded from the graph like `out_of_bounds`/`water_uncrossable`, on every map, not only
   `ogps-8620`; any existing test asserting the old passable behaviour is updated to match, named in
   this task's own entry as an intended consequence, not a silent fix.
+
+  **Lake half diagnosed and fixed — shares `_consolidate_banked_water`'s territory (T101), not
+  `_close_out_of_bounds_regions`'s (T109).** Diagnosis (`data/maps/_t110_diagnose_lake.py`,
+  gitignored, deleted after use) found the reported lake is a single solid raw connected component
+  (213,675 px, bbox 923x924 at (1511,451), `wu_frac` only 0.5%) — unlike `ogps-6802`'s river it is
+  not fragmented into thousands of tiny `water_uncrossable` islands; its interior already classifies
+  almost entirely `water_shallow` outright and just needs whole-blob promotion. Its own boundary is
+  genuinely bank-lined: measured boundary-bank fraction 0.2611 at `_consolidate_banked_water`'s
+  original `border_radius=2` (`palette.py:294-414`), just under the original `min_bank_fraction=0.3`
+  floor.
+
+  Tried and rejected: widening `border_radius` instead of lowering the fraction floor (0.3009 at
+  radius=4, 0.3665 at radius=8, a comfortable +22% margin on the lake alone) — measured to have
+  collateral damage on a *third*, unrelated real scan outside this task's own scope:
+  `data/maps/grid-lines-red-controls` (I1) carries 4 real, compact water bodies (9,191-116,505 px,
+  aspect ratio 1.03-1.80 — genuine blobs, not that map's own grid-line ink) whose boundary-bank
+  fraction (0.083-0.199 at radius=2) also crosses radius=8's widened search window, nearly doubling
+  that map's routable-graph component count (9,685 vs the pinned 580) and breaking
+  `TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`'s own `< pre_n/5` floor
+  (`data/maps/_t110_diagnose_grid_water.py`/`_t110_inspect_newly_promoted.py`, both gitignored,
+  deleted after use).
+
+  **Fix:** lowered `min_bank_fraction` to 0.23, `border_radius` left at its original 2 (so it can
+  never newly discover ink a wider spatial search would have found) — confirmed safe by
+  re-measuring the same 4 grid-lines-red-controls components at the unchanged radius: 0.083, 0.105,
+  0.177, 0.199, all comfortably below the lake's 0.2611 (`_t110_check_threshold_alt.py`, gitignored,
+  deleted after use); 0.23 sits near the middle of that 0.199-0.2611 gap, margin on both sides. A
+  threshold low enough to clear the lake risked separately sweeping in `ogps-6802`'s own marsh —
+  unlike the lake or the 12,252 px river, the marsh's raw water ink is itself sparsely fragmented
+  (744 distinct raw components in the probed bbox alone, largest just 174 px,
+  `_t110_marsh_component_sizes.py`, gitignored, deleted after use), and a handful-of-pixels
+  component's boundary-bank fraction is statistically unreliable. Added `min_component_area_px=500`
+  (comfortably above the marsh's 174 px, comfortably below the river's 12,252 px and the lake's
+  213,675 px — same precedent as `[linear]`'s own raw-px noise floor, `config/default.toml`) to gate
+  promotion by component size.
+
+  Final combination (`_consolidate_banked_water`, `palette.py:294-414`: `border_radius=2`
+  unchanged, `min_bank_fraction=0.23`, `min_component_area_px=500`) verified end to end against all
+  four real scans this function touches (`_t110_final_verify_all.py`, gitignored, deleted after
+  use): lake probe 100/100 `water_uncrossable`, `ogps-6802` river probe 100/100 unchanged (T101
+  untouched), `ogps-6802` marsh ratio 19.44 (better than the pre-T110 baseline 14.12,
+  `TestBankedWaterConsolidationOnRealScan`'s own `> 10` floor unmoved), grid-lines-red-controls
+  fragmentation ratio 0.0614 (within rounding of its own pre-T110 baseline). New gitignored
+  real-scan check kept per this task's own DoD (T109's cleanup precedent — confirming script stays,
+  diagnosis scripts don't): `data/maps/_t110_verify_lake.py` confirms `GridGraph.block_passable` is
+  `False` at the lake's deepest interior point (1749, 1231, block (307,437) at `downsample=4`). Two
+  new pytest cases, `TestLakeConsolidationOnRealScan` in `test_segment.py` (pixel probe +
+  routing-graph block-passability, same two-test shape as T109's own polygon coverage).
+
+  **`veg_fight` half landed.** `config/default.toml`'s `veg_fight` entry flips `passable` `true` ->
+  `false` (ADR-037, owner ruling). `TerrainSpec`'s own validator (`config.py:137-138`: "impassable
+  terrain must have speed_factor 0") forced `speed_factor` to also drop from 0.05 to 0.0 — not an
+  independent choice but a consequence of giving `veg_fight` the same treatment already given
+  `out_of_bounds`/`water_uncrossable`; without it `load_config()` raises at import time and the
+  whole suite fails to collect. Confirmed `cost/graph.py`'s mechanism needs no code change, by
+  reading rather than assuming: `compute_cost_field` (`cost/field.py:56`) reads
+  `cfg.passability()[labels]` straight from config; `build_grid_graph`/`_aggregate_blocks`
+  (`cost/graph.py:133`, `cost/graph.py:214`) already exclude any block with no passable pixel under
+  `strict_impassable` — the same path `out_of_bounds`/`water_uncrossable` already use.
+
+  Two existing tests asserted the old passable/nonzero-speed behaviour and are updated as an
+  intended consequence of ADR-037, not a silent fix: `tests/unit/test_config.py::TestDefaultConfig
+  ::test_impassable_terrain_has_no_speed` now includes `VEG_FIGHT` in its impassable-classes tuple
+  (previously only `WATER_UNCROSSABLE`/`OUT_OF_BOUNDS`); `test_vegetation_ordering_follows_isom_
+  runnability` no longer asserts `fight > 0.0` as part of the strict speed ordering (ISOM 410 is no
+  longer a graded-speed class) and instead asserts `not fight.passable and fight.speed_factor ==
+  0.0` separately. No other existing test asserted `veg_fight` traversability: `tests/unit/cost/
+  test_field.py`/`test_graph.py` derive expected passability from config itself rather than a
+  hardcoded per-class list, so neither needed a change.
+
+  Full suite **539 passed** (537 baseline [T109/T113] + 2 new `TestLakeConsolidationOnRealScan`
+  cases), `ruff check .` clean — this session's own foreground `docker compose run --rm tests`/
+  `ruff check .` runs, not trusted from any intermediate measurement alone.
 - [x] **T111** — Diagnose ЛЭП (power line) ink vs. footpath ink on `ogps-8620` — paths: none
   (read-only diagnosis script, gitignored) — deps: none — DoD: measure this map's actual power-line
   symbol's ink pattern (dash/gap spacing, width, any tick/cross marks) against a genuine footpath's

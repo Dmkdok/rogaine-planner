@@ -491,6 +491,70 @@ class TestOutOfBoundsClosureOnRealScan:
         )
 
 
+class TestLakeConsolidationOnRealScan:
+    """T110, SPEC F4, ADR-036 (I7): on `ogps-8620`, the reported lake crossing is a single solid
+    raw water component (213,675 px, not fragmented like `ogps-6802`'s river) whose own boundary
+    is genuinely bank-lined, measured just under `_consolidate_banked_water`'s original
+    `min_bank_fraction=0.3` floor (0.2611, at the unchanged `border_radius=2`). Widening the radius
+    instead was tried and rejected -- measured to sweep in real, unrelated water bodies on a third
+    scan (`grid-lines-red-controls`), nearly doubling its own routable-graph component count and
+    breaking `TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`. Lowering
+    `min_bank_fraction` to 0.23 instead (radius untouched, so it cannot newly discover any ink a
+    wider search would have found) clears the lake with comfortable margin on both sides of that
+    third scan's own highest comparable fraction (0.199) while `min_component_area_px=500` keeps
+    `ogps-6802`'s own sparsely-fragmented marsh (744 raw components, largest 174px) from crossing
+    the lowered floor -- see `_consolidate_banked_water`'s own docstring for the full measured
+    account. This pins that the lake now consolidates to `water_uncrossable` and is impassable in
+    the routing graph, without moving `TestBankedWaterConsolidationOnRealScan`'s own two pinned
+    real-scan assertions (T101, `ogps-6802`) or `TestGridInkOnRealScan`'s own fragmentation floor.
+    """
+
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_lake_deepest_point_is_water_uncrossable(self) -> None:
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        labels = classify_palette(normalize(image), cfg, dpi)
+
+        wu = terrain_label(TerrainClass.WATER_UNCROSSABLE)
+
+        # Measured (`data/maps/_t110_diagnose_lake.py`, gitignored, deleted after use): (1749,
+        # 1231) is the lake's own deepest interior point (max distance from its raw-component
+        # boundary, ~107.9px in) -- a small box centred on it sits entirely inside the lake, clear
+        # of the shoreline on every side.
+        probe = labels[1226:1236, 1744:1754]
+        assert (probe == wu).all(), (
+            f"lake interior probe not fully water_uncrossable: "
+            f"wu={int((probe == wu).sum())}/{probe.size}"
+        )
+
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_lake_deepest_point_is_impassable_in_the_routing_graph(self) -> None:
+        """DoD: the routing graph no longer crosses the lake -- checked at
+        `GridGraph.block_passable`, the deterministic ground truth `_build_edges` actually reads,
+        same precedent as T101's and T109's own real-scan graph confirmations.
+        """
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        assert cfg.graph.strict_impassable, "test assumes the strict_impassable default"
+
+        terrain_map = segment(image, dpi, meters_per_pixel=mpp_from_dpi(dpi, 24000), config=cfg)
+        cost_field = compute_cost_field(terrain_map, base_speed_mps=2.0, config=cfg)
+        graph = build_grid_graph(cost_field, cfg)
+
+        block_row, block_col = 1231 // graph.downsample, 1749 // graph.downsample
+        assert not graph.block_passable[block_row, block_col], (
+            "lake core block is passable in the routing graph -- a route could still cross it"
+        )
+
+
 class TestIouReportOnFixture:
     """`iou_report` measured on the same fixture and with the same sampleable exclusions
     `test_palette.py`'s `TestPaletteIoUAgainstFixture` and `test_linear.py`'s

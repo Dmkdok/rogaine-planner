@@ -162,9 +162,9 @@ note = "[ISOM] 20-60% of normal speed -> 0.4 x forest"
 name = "veg_fight"
 isom = "410"
 shade = "green_100"
-speed_factor = 0.05
-passable = true
-note = "[ISOM] less than about 20% of normal speed -> 0.15 x forest"
+speed_factor = 0.0
+passable = false
+note = "ADR-037: owner ruling for this event -- forbidden to enter, not merely slow. General-literature calibration (0.05, i.e. 0.15x forest) was correct per [ISOM]'s own runnability band and stays documented in docs/research/route-choice-heuristics.md Rule 5; TerrainSpec's own validator requires speed_factor=0 for impassable terrain, same as out_of_bounds/water_uncrossable above."
 
 [[terrain]]
 name = "marsh"

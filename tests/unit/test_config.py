@@ -52,7 +52,13 @@ class TestDefaultConfig:
 
     def test_impassable_terrain_has_no_speed(self) -> None:
         cfg = load_config()
-        for cls in (TerrainClass.WATER_UNCROSSABLE, TerrainClass.OUT_OF_BOUNDS):
+        # T110/ADR-037: VEG_FIGHT joined this list -- an owner ruling reclassified it impassable,
+        # same treatment as OUT_OF_BOUNDS/WATER_UNCROSSABLE, not a measured runnability change.
+        for cls in (
+            TerrainClass.WATER_UNCROSSABLE,
+            TerrainClass.OUT_OF_BOUNDS,
+            TerrainClass.VEG_FIGHT,
+        ):
             spec = cfg.terrain_of(cls)
             assert not spec.passable and spec.speed_factor == 0.0
 
@@ -61,13 +67,18 @@ class TestDefaultConfig:
         assert load_config().terrain_of(TerrainClass.ROAD).speed_factor == 1.0
 
     def test_vegetation_ordering_follows_isom_runnability(self) -> None:
-        # ISOM 406 60-80%, 408 20-60%, 410 under 20% — of forest speed, in that order.
+        # ISOM 406 60-80%, 408 20-60% — of forest speed, in that order. ISOM 410 (veg_fight) is
+        # ADR-037's owner-ruling exception (T110): reclassified impassable, speed_factor forced to
+        # 0 by TerrainSpec's own validator, so it is no longer part of this strict speed ordering —
+        # checked separately below instead.
         cfg = load_config()
         forest = cfg.terrain_of(TerrainClass.FOREST_RUNNABLE).speed_factor
         slow = cfg.terrain_of(TerrainClass.VEG_SLOW_RUN).speed_factor
         walk = cfg.terrain_of(TerrainClass.VEG_WALK).speed_factor
-        fight = cfg.terrain_of(TerrainClass.VEG_FIGHT).speed_factor
-        assert forest > slow > walk > fight > 0.0
+        assert forest > slow > walk > 0.0
+
+        fight = cfg.terrain_of(TerrainClass.VEG_FIGHT)
+        assert not fight.passable and fight.speed_factor == 0.0
 
     def test_arrays_are_indexed_by_terrain_label(self) -> None:
         cfg = load_config()

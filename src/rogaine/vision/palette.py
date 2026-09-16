@@ -292,10 +292,13 @@ def _close_out_of_bounds_regions(
 
 
 def _consolidate_banked_water(
-    labels: np.ndarray, border_radius: int = 2, min_bank_fraction: float = 0.3
+    labels: np.ndarray,
+    border_radius: int = 2,
+    min_bank_fraction: float = 0.23,
+    min_component_area_px: int = 500,
 ) -> np.ndarray:
     """Promote a whole connected water blob to ``water_uncrossable`` when its own boundary is
-    substantially bank-lined (T101, F4).
+    substantially bank-lined (T101, F4; threshold/area floor retuned T110, ADR-036).
 
     On a real scan, printed ``blue_70`` (``water_shallow``) and ``blue_100`` (``water_uncrossable``)
     ink can land close enough together in CIELAB -- and close enough to real halftone/JPEG noise --
@@ -320,6 +323,56 @@ def _consolidate_banked_water(
     component that fails this check keeps whatever :func:`classify_labels` already gave it. A
     hatched/screened shallow pond or marsh with no such border is untouched by construction: its
     boundary simply has no adjacent bank-line ink to measure.
+
+    **T110 (`ogps-8620`'s reported lake crossing) retuned this function's own numbers, rather than
+    needing a distinct mechanism (ADR-036's own open question, resolved: this map's lake shares
+    this function's territory, not `_close_out_of_bounds_regions`'s).** Diagnosis
+    (`data/maps/_t110_diagnose_lake.py`, gitignored, deleted after use) found the lake is a single
+    solid raw connected component (213,675 px, `wu_frac` only 0.5% -- unlike the river, it is not
+    fragmented; its own interior already classifies almost entirely `water_shallow` outright) whose
+    boundary *is* meaningfully bank-lined: measured boundary-bank fraction 0.2611 at the original
+    `border_radius=2`, just under the original `min_bank_fraction=0.3` floor.
+
+    First tried: widening `border_radius` instead of lowering the fraction floor (0.3009 at
+    radius=4, 0.3665 at radius=8) -- **rejected**, measured to have collateral damage on a third,
+    unrelated real scan. `data/maps/grid-lines-red-controls` (I1's own fixture, exercised by
+    `TestGridInkOnRealScan::test_routable_graph_is_far_less_fragmented`) carries 4 real, compact
+    water bodies (9,191-116,505 px, aspect ratio 1.03-1.80 -- blobs, not the map's own grid-line
+    ink, which is filtered by shape elsewhere) whose boundary-bank fraction is 0.083-0.199 at
+    radius=2 but crosses radius=8's *widened* search window enough to also get swept up, nearly
+    doubling that map's routable-graph component count (9685 vs the pinned 580) and breaking that
+    test's own `< pre_n/5` floor (measured `data/maps/_t110_diagnose_grid_water.py` and
+    `_t110_inspect_newly_promoted.py`, both gitignored, deleted after use) -- a real behaviour
+    change on a map T110 was never scoped to touch.
+
+    Lowering `min_bank_fraction` instead leaves `border_radius` untouched, so it cannot newly
+    discover any ink a wider spatial search would have found -- confirmed safe by measuring the
+    same 4 grid-lines-red-controls components' fraction *at the unchanged radius=2*: 0.083, 0.105,
+    0.177, 0.199, all comfortably below the lake's 0.2611
+    (`data/maps/_t110_check_threshold_alt.py`, gitignored, deleted after use). `min_bank_fraction
+    =0.23` sits in the middle of that 0.199-0.2611 gap (comfortable margin on both sides, ~13% of
+    the gap's own width to each edge) and clears the lake.
+
+    A `min_bank_fraction` low enough to clear the lake also risked sweeping in `ogps-6802`'s own
+    marsh -- a genuinely different failure mode from the grid-lines case: unlike the lake (one
+    213,675 px blob) or the river (12,252 px), the marsh's raw water ink is itself sparsely
+    fragmented (744 distinct raw connected components in the probed bbox alone, the largest just
+    174 px, `data/maps/_t110_marsh_component_sizes.py`, gitignored, deleted after use), and a
+    handful-of-pixels component's boundary-bank fraction is statistically unreliable (a
+    coincidental 1-2 boundary px next to unrelated dark ink can read as "100% banked"). Gating
+    promotion behind `min_component_area_px=500` -- comfortably above the marsh's largest measured
+    fragment (174 px) and comfortably below the river (12,252 px) and the lake (213,675 px) --
+    holds the marsh's `water_shallow`:`water_uncrossable` ratio at 19.44 even at the lowered
+    threshold (better than the pre-T110 baseline, 14.12), same precedent as `[linear]`'s own
+    `min_component_area_px` raw-px noise floor (`config/default.toml`).
+
+    Final combination (`border_radius=2` unchanged, `min_bank_fraction=0.23`,
+    `min_component_area_px=500`) verified end to end
+    (`data/maps/_t110_final_verify_all.py`, gitignored, deleted after use) against all four real
+    scans this function touches: lake probe 100/100 `water_uncrossable`, river probe 100/100
+    unchanged, marsh ratio 19.44, grid-lines-red-controls graph-fragmentation ratio 0.0614 --
+    within rounding of its own pre-T110 baseline (0.0614 vs the recorded 0.0616) and comfortably
+    under that test's own `< 0.2` floor.
 
     Vectorised with :func:`scipy.ndimage.sum` keyed by component id rather than a Python loop over
     components -- a real scan can fragment into several thousand of them, and a per-component
@@ -346,6 +399,7 @@ def _consolidate_banked_water(
         return labels
 
     index = np.arange(1, n + 1)
+    area = ndimage.sum(water, components, index=index)
     boundary_count = ndimage.sum(boundary, components, index=index)
     banked_count = ndimage.sum(boundary & bank_nearby, components, index=index)
     fraction = np.divide(
@@ -353,7 +407,7 @@ def _consolidate_banked_water(
     )
 
     promote = np.zeros(n + 1, dtype=bool)
-    promote[index] = fraction >= min_bank_fraction
+    promote[index] = (fraction >= min_bank_fraction) & (area >= min_component_area_px)
 
     out = labels.copy()
     out[promote[components] & (labels == ws)] = wu
