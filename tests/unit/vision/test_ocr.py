@@ -29,7 +29,7 @@ from rogaine.config import AppConfig, default_config
 from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.models import Control
 from rogaine.vision import ocr as ocr_module
-from rogaine.vision import ocr_vlm
+from rogaine.vision import ocr_vlm, ocr_vlm_ollama
 from rogaine.vision.controls import detect_controls
 from rogaine.vision.ocr import (
     _CROP_MARGIN_FACTOR,
@@ -816,3 +816,56 @@ class TestVlmFallback:
         assert updated.number == 17
         assert updated.number_source == "vlm"
         assert flag is not None and "read '17'" in flag
+
+    def test_provider_ollama_dispatches_to_the_ollama_module_not_anthropic(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T116/ADR-040: `[ocr_fallback].provider="ollama"` calls `ocr_vlm_ollama`, passing
+        `base_url` through, and never touches the Anthropic client module."""
+        sm = clean_synthetic_map
+        cfg = _with_ocr_fallback(
+            default_config(),
+            enabled=True,
+            trigger_confidence=0.6,
+            provider="ollama",
+            base_url="http://localhost:11434",
+        )
+        ollama_spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
+        )
+        anthropic_spy = MagicMock()
+        monkeypatch.setattr(ocr_vlm_ollama, "read_control_number", ollama_spy)
+        monkeypatch.setattr(ocr_vlm, "read_control_number", anthropic_spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
+
+        ollama_spy.assert_called_once()
+        assert ollama_spy.call_args.kwargs["model"] == cfg.ocr_fallback.model
+        assert ollama_spy.call_args.kwargs["base_url"] == cfg.ocr_fallback.base_url
+        anthropic_spy.assert_not_called()
+        assert updated.number == 42
+        assert updated.number_source == "vlm"
+        assert flag is not None and "read '42'" in flag
+
+    def test_provider_anthropic_shipped_default_never_calls_the_ollama_module(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shipped `config/default.toml` provider stays "anthropic" (T116/ADR-040 is purely
+        additive) -- enabling the fallback without selecting `provider="ollama"` must not touch
+        `ocr_vlm_ollama` at all, so every pre-T116 test's own behaviour is unchanged."""
+        sm = clean_synthetic_map
+        assert default_config().ocr_fallback.provider == "anthropic"
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        anthropic_spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
+        )
+        ollama_spy = MagicMock()
+        monkeypatch.setattr(ocr_vlm, "read_control_number", anthropic_spy)
+        monkeypatch.setattr(ocr_vlm_ollama, "read_control_number", ollama_spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
+
+        anthropic_spy.assert_called_once()
+        ollama_spy.assert_not_called()

@@ -111,7 +111,7 @@ import pytesseract
 
 from rogaine.config import AppConfig, DetectorSettings, default_config
 from rogaine.models import Control, NumberSource
-from rogaine.vision import ocr_vlm
+from rogaine.vision import ocr_vlm, ocr_vlm_ollama
 from rogaine.vision.controls import purple_mask
 
 # A number crop holds one short line of digits, not a page -- psm 7 ("treat the image as a single
@@ -381,11 +381,11 @@ def _try_vlm_fallback(
     `[ocr_fallback].trigger_confidence` (T114/ADR-039/F23). Returns the read number, or `None` for
     absolutely anything else -- no usable model answer, a crop that fails to rebuild or encode, an
     unexpected `digit_string` -- which the caller already treats identically to "still unread" (it
-    has Tesseract's own flag in hand either way). `ocr_vlm.read_control_number` itself never raises
-    (T113's own contract), but
-    `int(digit_string)` is untrusted network-response content and is wrapped defensively anyway:
-    one bad control must not take down a batch of otherwise-good ones, same discipline as this
-    module's own Tesseract `try` (module docstring).
+    has Tesseract's own flag in hand either way). Both backends' `read_control_number` never raise
+    (T113's contract, mirrored by T116/ADR-040's Ollama sibling), but
+    `int(digit_string)` is untrusted response content and is wrapped defensively anyway: one bad
+    control must not take down a batch of otherwise-good ones, same discipline as this module's own
+    Tesseract `try` (module docstring).
 
     Rebuilds the crop rather than threading it through from the caller's own `try` -- keeps that
     block's existing exception handling untouched, at the cost of one redundant `_ocr_crop` call
@@ -400,7 +400,13 @@ def _try_vlm_fallback(
     except Exception:
         return None
 
-    result = ocr_vlm.read_control_number(image_bytes, model=cfg.ocr_fallback.model)
+    fallback = cfg.ocr_fallback
+    if fallback.provider == "ollama":
+        result = ocr_vlm_ollama.read_control_number(
+            image_bytes, model=fallback.model, base_url=fallback.base_url
+        )
+    else:
+        result = ocr_vlm.read_control_number(image_bytes, model=fallback.model)
     if result.outcome is not ocr_vlm.Outcome.READ:
         return None
     try:

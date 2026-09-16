@@ -37,6 +37,10 @@ dev = [
 ocr_vlm = [
     "anthropic>=1.0",
 ]
+# T116/ADR-040: the local Ollama backend's SDK, same non-base treatment as `ocr_vlm` above.
+ocr_vlm_ollama = [
+    "ollama>=0.4",
+]
 
 [project.scripts]
 rogaine = "rogaine.cli:app"

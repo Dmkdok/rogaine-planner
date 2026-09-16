@@ -321,8 +321,11 @@ class OcrFallbackSettings(BaseModel):
     """Opt-in VLM OCR fallback for control-*number* reading only (T114, SPEC F23, ADR-039) --
     circle/position detection stays 100% classical CV, untouched by this section. Disabled by
     shipped default; wiring and the trigger condition live in `vision/ocr.py`, this class is only
-    the config surface. Both `enabled` AND a configured `ANTHROPIC_API_KEY` (never stored here or
-    in any committed file) are required before `vision/ocr_vlm.py` makes any network call."""
+    the config surface. When `provider="anthropic"`, both `enabled` AND a configured
+    `ANTHROPIC_API_KEY` (never stored here or in any committed file) are required before
+    `vision/ocr_vlm.py` makes any network call. When `provider="ollama"` (T116, ADR-040), `enabled`
+    plus a reachable local server at `base_url` are required instead -- no key involved, and the
+    call never leaves the machine."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -333,6 +336,11 @@ class OcrFallbackSettings(BaseModel):
     #: second, network-costing attempt is worth making at all.
     trigger_confidence: float = Field(ge=0.0, le=1.0)
     model: str = Field(min_length=1)
+    #: Which backend `vision/ocr.py::_try_vlm_fallback` dispatches to (T116, ADR-040) -- additive
+    #: to T113/T114's Anthropic-only path, not a replacement of it.
+    provider: Literal["anthropic", "ollama"]
+    #: Only consulted when `provider="ollama"`; ignored otherwise.
+    base_url: str = Field(min_length=1)
 
 
 class GraphSettings(BaseModel):

@@ -465,6 +465,14 @@ trigger_confidence = 0.6
 # vision/ocr_vlm.py's own DEFAULT_MODEL comment) -- kept independently configurable here rather
 # than hardcoded, in case a future model swap suits this task better.
 model = "claude-haiku-4-5"
+# Which backend the fallback calls (T116, ADR-040): "anthropic" (vision/ocr_vlm.py, needs
+# ANTHROPIC_API_KEY) or "ollama" (vision/ocr_vlm_ollama.py, needs a reachable local server, no
+# key, $0). Shipped as "anthropic" so this addition changes no existing behaviour or test; switch
+# to "ollama" (and set `model` to a locally-installed vision model, e.g. "qwen2.5vl:7b") to run
+# the fallback for free.
+provider = "anthropic"
+# Only consulted when provider = "ollama".
+base_url = "http://localhost:11434"
 
 # --------------------------------------------------------------------------------------------
 # Cost field and graph (T030, T031, T032)
