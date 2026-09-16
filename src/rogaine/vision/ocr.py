@@ -387,12 +387,22 @@ def _try_vlm_fallback(
     control must not take down a batch of otherwise-good ones, same discipline as this module's own
     Tesseract `try` (module docstring).
 
+    T115's own real-scan measurement found a control whose crop has zero ink at all (every pixel
+    stripped by `_ocr_crop`'s own ring-erase/thin-ink/largest-cluster steps -- there was never a
+    real number here for Tesseract to miss either) gets sent to the VLM anyway, and a small local
+    model (qwen2.5vl:7b) confabulates a plausible-looking digit string for it at self-reported
+    confidence 1.0, every time -- silently wrong, exactly what F8/F23/ADR-009 exist to prevent.
+    Skipping the call entirely on a blank crop closes this for both backends, not just Ollama's;
+    nothing here suggests Anthropic's model is immune, and this is cheap insurance either way.
+
     Rebuilds the crop rather than threading it through from the caller's own `try` -- keeps that
     block's existing exception handling untouched, at the cost of one redundant `_ocr_crop` call
     on this already-rare "Tesseract couldn't read it" path.
     """
     try:
         crop = _ocr_crop(image, control, dpi, cfg)
+        if not np.any(crop == 0):
+            return None  # no ink at all -- nothing to read, don't ask a model to guess
         ok, encoded = cv2.imencode(".png", crop)
         if not ok:
             return None

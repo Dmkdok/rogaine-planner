@@ -89,6 +89,15 @@ def _with_ocr_fallback(cfg: AppConfig, **overrides: object) -> AppConfig:
     return cfg.model_copy(update={"ocr_fallback": cfg.ocr_fallback.model_copy(update=overrides)})
 
 
+def _crop_with_one_junk_pixel(*_args: object, **_kwargs: object) -> np.ndarray:
+    """A crop with a single ink pixel -- enough to pass `_try_vlm_fallback`'s blank-crop guard
+    (T115's own finding: a truly blank crop must never reach a VLM at all) while still being far
+    too sparse for Tesseract to read as a real digit."""
+    crop = np.full((10, 10), 255, dtype=np.uint8)
+    crop[5, 5] = 0
+    return crop
+
+
 def _nearest_truth(control: Control, truth: list[Control]) -> Control:
     return min(truth, key=lambda t: (t.x - control.x) ** 2 + (t.y - control.y) ** 2)
 
@@ -712,9 +721,13 @@ class TestVlmFallback:
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """(a) Tesseract empty + fallback succeeds -> number set, distinct marking present, flag
-        reflects a successful read, not "no digits"."""
+        reflects a successful read, not "no digits". `_ocr_crop` is monkeypatched to a
+        one-junk-pixel crop (T115's blank-crop guard would otherwise skip the VLM call entirely
+        for a location with genuinely zero ink, like the real blank corner this used to use)."""
         sm = clean_synthetic_map
         cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        monkeypatch.setattr(ocr_module, "_ocr_crop", _crop_with_one_junk_pixel)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("", 0.0))
         spy = MagicMock(
             return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
         )
@@ -757,9 +770,12 @@ class TestVlmFallback:
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """(c) fallback enabled but returns NO_ANSWER -> exactly F8's existing null+flag
-        behaviour, no crash."""
+        behaviour, no crash. `_ocr_crop` monkeypatched to a one-junk-pixel crop, same reason as
+        test (a) above."""
         sm = clean_synthetic_map
         cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        monkeypatch.setattr(ocr_module, "_ocr_crop", _crop_with_one_junk_pixel)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("", 0.0))
         spy = MagicMock(return_value=VlmOcrResult.no_answer())
         monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
         blank_area_control = Control(id=999, x=15.0, y=15.0)
@@ -821,7 +837,9 @@ class TestVlmFallback:
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """T116/ADR-040: `[ocr_fallback].provider="ollama"` calls `ocr_vlm_ollama`, passing
-        `base_url` through, and never touches the Anthropic client module."""
+        `base_url` through, and never touches the Anthropic client module. `_ocr_crop`
+        monkeypatched to a one-junk-pixel crop so T115's blank-crop guard doesn't short-circuit
+        before either backend is ever reached."""
         sm = clean_synthetic_map
         cfg = _with_ocr_fallback(
             default_config(),
@@ -830,6 +848,8 @@ class TestVlmFallback:
             provider="ollama",
             base_url="http://localhost:11434",
         )
+        monkeypatch.setattr(ocr_module, "_ocr_crop", _crop_with_one_junk_pixel)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("", 0.0))
         ollama_spy = MagicMock(
             return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
         )
@@ -853,10 +873,13 @@ class TestVlmFallback:
     ) -> None:
         """The shipped `config/default.toml` provider stays "anthropic" (T116/ADR-040 is purely
         additive) -- enabling the fallback without selecting `provider="ollama"` must not touch
-        `ocr_vlm_ollama` at all, so every pre-T116 test's own behaviour is unchanged."""
+        `ocr_vlm_ollama` at all, so every pre-T116 test's own behaviour is unchanged. `_ocr_crop`
+        monkeypatched to a one-junk-pixel crop, same reason as the test above."""
         sm = clean_synthetic_map
         assert default_config().ocr_fallback.provider == "anthropic"
         cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        monkeypatch.setattr(ocr_module, "_ocr_crop", _crop_with_one_junk_pixel)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("", 0.0))
         anthropic_spy = MagicMock(
             return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
         )
@@ -869,3 +892,40 @@ class TestVlmFallback:
 
         anthropic_spy.assert_called_once()
         ollama_spy.assert_not_called()
+
+    @pytest.mark.parametrize("provider", ["anthropic", "ollama"])
+    def test_a_genuinely_blank_crop_never_calls_either_vlm_backend(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        """T115's own real-scan measurement: a control whose crop has zero ink at all (every
+        pixel stripped by `_ocr_crop`'s ring-erase/thin-ink/largest-cluster steps -- there was
+        never a real number there for Tesseract to miss either) must never reach a VLM at all.
+        Measured on `ogps-8620`/`kkm-toksovo`/`lembolovo-kkm`: a local qwen2.5vl:7b model asked to
+        read a blank crop confabulates a plausible digit string (mostly "201") at self-reported
+        confidence 1.0 every time -- exactly the "silently wrong" outcome F8/F23/ADR-009 exist to
+        prevent, and nothing here suggests a different backend is immune. Parametrized over both
+        providers: the guard sits ahead of the dispatch, so it protects either one."""
+        sm = clean_synthetic_map
+        cfg = _with_ocr_fallback(
+            default_config(), enabled=True, trigger_confidence=0.6, provider=provider
+        )
+        blank_crop = np.full((10, 10), 255, dtype=np.uint8)
+        monkeypatch.setattr(ocr_module, "_ocr_crop", lambda *a, **k: blank_crop)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("", 0.0))
+        anthropic_spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="201", confidence=1.0)
+        )
+        ollama_spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="201", confidence=1.0)
+        )
+        monkeypatch.setattr(ocr_vlm, "read_control_number", anthropic_spy)
+        monkeypatch.setattr(ocr_vlm_ollama, "read_control_number", ollama_spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
+
+        anthropic_spy.assert_not_called()
+        ollama_spy.assert_not_called()
+        assert updated.number is None
+        assert updated.number_source is None
+        assert flag is not None and "found no digits" in flag
