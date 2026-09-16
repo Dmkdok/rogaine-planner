@@ -22,6 +22,12 @@ columns first, in the DoD's own order, with the two structurally-required column
 than interleaved, so a CSV built from the DoD's literal example is a strict prefix of what this
 module writes.
 
+T114/ADR-039/F23 appends a ninth column, `number_source` (`"tesseract"`/`"vlm"`, blank for a still-
+unread number or the hub) — the same auditability requirement as `source` above: F23 requires a
+VLM-resolved number to stay "marked distinctly ... so a human reviewing the output can see which
+numbers were VLM-assisted", and that marking is only real if it survives export, not just the
+in-memory `Control`. Appended last for the same strict-prefix reason `is_hub` was.
+
 `confidence` itself is the other half of the discrepancy: T005's original `read_controls` (moved
 here from `io/corpus.py`) hardcoded every parsed row's `confidence` to `1.0` and `source` to
 `"manual"`, because at the time nothing produced any other value. T020's Hough ring-coverage score
@@ -29,14 +35,15 @@ and T021's `min(detection, ocr)` combination now do, and a route exported and re
 that number rather than silently resetting it to `1.0` — so this module reads and writes the real
 value.
 
-**Hand-editing stays ergonomic.** `number`, `points`, `confidence`, `source` and `is_hub` all
-default when their cell — or the whole column — is blank: `number`/`points` to `None` (the existing
-convention: blank means "let the config's points rule decide"), `confidence` to `1.0` and `source`
-to `"manual"` (the same values the old hardcoded behaviour always produced, so a bare
-`id,x,y,number,points,is_hub` file — `data/README.md`'s documented example — still reads exactly as
-it always has). `id`, `x` and `y` are not defaulted: a control with no position is not a control,
-and a missing or malformed one of those three raises with the offending line number, same as any
-other malformed row.
+**Hand-editing stays ergonomic.** `number`, `points`, `confidence`, `source`, `is_hub` and
+`number_source` all default when their cell — or the whole column — is blank: `number`/`points` to
+`None` (the existing convention: blank means "let the config's points rule decide"), `confidence`
+to `1.0`, `source` to `"manual"` (the same values the old hardcoded behaviour always produced, so a
+bare `id,x,y,number,points,is_hub` file — `data/README.md`'s documented example — still reads
+exactly as it always has), and `number_source` to `None` (a hand-typed number has no OCR
+provenance at all — neither Tesseract's nor the VLM fallback's). `id`, `x` and `y` are not
+defaulted: a control with no position is not a control, and a missing or malformed one of those
+three raises with the offending line number, same as any other malformed row.
 
 Malformed rows (a non-numeric field, an out-of-range `confidence`, an invalid `source`, a missing
 `id`/`x`/`y` column) raise `ValueError(f"{csv_path} line {N}: ...")`, matching the convention
@@ -53,7 +60,7 @@ from rogaine.models import Control
 
 #: Header written to disk and accepted on read. The DoD's own six columns, in the DoD's own order,
 #: plus the two this module's docstring explains are structurally required for a lossless round
-#: trip.
+#: trip, plus `number_source` (T114/ADR-039/F23's auditability column).
 FIELDNAMES: tuple[str, ...] = (
     "id",
     "x",
@@ -63,6 +70,7 @@ FIELDNAMES: tuple[str, ...] = (
     "confidence",
     "source",
     "is_hub",
+    "number_source",
 )
 
 
@@ -81,6 +89,7 @@ def read_controls(csv_path: Path) -> list[Control]:
             raw_confidence = (row.get("confidence") or "").strip()
             confidence = float(raw_confidence) if raw_confidence else 1.0
             raw_source = (row.get("source") or "").strip().lower()
+            raw_number_source = (row.get("number_source") or "").strip().lower()
             controls.append(
                 Control(
                     id=int(row["id"]),
@@ -91,6 +100,7 @@ def read_controls(csv_path: Path) -> list[Control]:
                     confidence=confidence,
                     source=raw_source or "manual",
                     is_hub=(row.get("is_hub") or "").strip().lower() in {"true", "1", "yes"},
+                    number_source=raw_number_source or None,
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -126,5 +136,6 @@ def write_controls(csv_path: Path, controls: list[Control]) -> None:
                     "confidence": control.confidence,
                     "source": control.source,
                     "is_hub": "true" if control.is_hub else "false",
+                    "number_source": control.number_source or "",
                 }
             )

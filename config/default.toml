@@ -449,6 +449,24 @@ points_constant = 1
 min_ocr_confidence = 0.6
 
 # --------------------------------------------------------------------------------------------
+# Opt-in VLM OCR fallback for control numbers only (T114, SPEC F23, ADR-039)
+# --------------------------------------------------------------------------------------------
+[ocr_fallback]
+# Off by shipped default (ADR-039): both this flag AND a configured ANTHROPIC_API_KEY (env var
+# only, never stored here) are required before any network call -- see vision/ocr_vlm.py's own
+# docstring for the full inertness guarantee, and vision/ocr.py's read_control_number for the
+# trigger condition this section only configures.
+enabled = false
+# A Tesseract read below this floor (or empty) triggers one fallback attempt on the same crop.
+# Deliberately separate from [detector].min_ocr_confidence above, which gates Tesseract's own
+# accept/reject decision, not whether a second, network-costing attempt is worth making.
+trigger_confidence = 0.6
+# Cost/latency tier matches reading 1-3 printed digits from a small cropped circle (see
+# vision/ocr_vlm.py's own DEFAULT_MODEL comment) -- kept independently configurable here rather
+# than hardcoded, in case a future model swap suits this task better.
+model = "claude-haiku-4-5"
+
+# --------------------------------------------------------------------------------------------
 # Cost field and graph (T030, T031, T032)
 # --------------------------------------------------------------------------------------------
 [graph]

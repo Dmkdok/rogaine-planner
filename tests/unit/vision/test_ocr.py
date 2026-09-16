@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -27,6 +28,8 @@ from PIL import Image
 from rogaine.config import AppConfig, default_config
 from rogaine.io.raster import load_raster, resolve_dpi
 from rogaine.models import Control
+from rogaine.vision import ocr as ocr_module
+from rogaine.vision import ocr_vlm
 from rogaine.vision.controls import detect_controls
 from rogaine.vision.ocr import (
     _CROP_MARGIN_FACTOR,
@@ -35,6 +38,7 @@ from rogaine.vision.ocr import (
     read_control_number,
     read_control_numbers,
 )
+from rogaine.vision.ocr_vlm import Outcome, VlmOcrResult
 
 # The one fixture control close enough to the course boundary that its number is unreadable even
 # with this module's widened crop margin (see the module docstring above and ocr.py's own).
@@ -79,6 +83,10 @@ _OGPS_6802_PATH = (
 
 def _with_detector(cfg: AppConfig, **overrides: object) -> AppConfig:
     return cfg.model_copy(update={"detector": cfg.detector.model_copy(update=overrides)})
+
+
+def _with_ocr_fallback(cfg: AppConfig, **overrides: object) -> AppConfig:
+    return cfg.model_copy(update={"ocr_fallback": cfg.ocr_fallback.model_copy(update=overrides)})
 
 
 def _nearest_truth(control: Control, truth: list[Control]) -> Control:
@@ -673,3 +681,138 @@ class TestRealScanReadRateFloor:
         assert control_72.number in (None, 72), (
             f"control near (1175,2475) read {control_72.number}, want None or 72"
         )
+
+
+class TestVlmFallback:
+    """T114/ADR-039/F23: opt-in VLM retry for exactly the controls Tesseract's own logic already
+    flags unreadable. `default_config().ocr_fallback.enabled` is `False` (the shipped default,
+    `config/default.toml`'s own `[ocr_fallback]` section) -- every other test in this file uses
+    that default and never touches `ocr_vlm`, which is the main proof "zero new network-capable
+    code reachable at the shipped default" holds; `test_disabled_by_default...` below asserts it
+    explicitly with a spy.
+    """
+
+    def test_disabled_by_default_never_calls_the_vlm_module(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sm = clean_synthetic_map
+        assert default_config().ocr_fallback.enabled is False
+        spy = MagicMock()
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, default_config())
+
+        spy.assert_not_called()
+        assert updated.number is None
+        assert updated.number_source is None
+        assert flag is not None and "found no digits" in flag
+
+    def test_empty_tesseract_read_triggers_a_successful_fallback(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(a) Tesseract empty + fallback succeeds -> number set, distinct marking present, flag
+        reflects a successful read, not "no digits"."""
+        sm = clean_synthetic_map
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="42", confidence=0.9)
+        )
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
+
+        spy.assert_called_once()
+        assert spy.call_args.kwargs["model"] == cfg.ocr_fallback.model
+        assert updated.number == 42
+        assert updated.number_source == "vlm"
+        assert updated.points == _apply_points_rule(42, cfg.detector)
+        assert flag is not None and "found no digits" not in flag and "read '42'" in flag
+
+    def test_low_confidence_tesseract_read_triggers_a_successful_fallback(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(b) Tesseract below `trigger_confidence` (not empty -- a real, if low-confidence, digit
+        string) + fallback succeeds -> same shape as (a). `_read_digits` is monkeypatched directly
+        so this does not depend on the fixture's own real OCR confidence landing in some range."""
+        sm = clean_synthetic_map
+        control = sm.controls[1]
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("31", 0.3))
+        spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="17", confidence=0.95)
+        )
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+
+        updated, flag = read_control_number(sm.image, control, sm.dpi, cfg)
+
+        spy.assert_called_once()
+        assert updated.number == 17
+        assert updated.number_source == "vlm"
+        assert updated.points == _apply_points_rule(17, cfg.detector)
+        assert flag is not None and "found no digits" not in flag and "read '17'" in flag
+
+    def test_no_answer_from_the_fallback_falls_through_to_f8s_null_flagged_behaviour(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(c) fallback enabled but returns NO_ANSWER -> exactly F8's existing null+flag
+        behaviour, no crash."""
+        sm = clean_synthetic_map
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        spy = MagicMock(return_value=VlmOcrResult.no_answer())
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+        blank_area_control = Control(id=999, x=15.0, y=15.0)
+
+        updated, flag = read_control_number(sm.image, blank_area_control, sm.dpi, cfg)
+
+        spy.assert_called_once()
+        assert updated.number is None
+        assert updated.points is None
+        assert updated.number_source is None
+        assert flag is not None and f"control {updated.id}" in flag
+
+    def test_already_above_trigger_confidence_never_invokes_the_fallback(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(d) fallback enabled, Tesseract read already above `trigger_confidence` (i.e. Tesseract's
+        own logic never flagged it) -> the fallback is never invoked at all -- only what Tesseract
+        could not already do gets retried."""
+        sm = clean_synthetic_map
+        control = sm.controls[1]  # reads cleanly under default_config()'s own floor
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.6)
+        spy = MagicMock()
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+
+        updated, flag = read_control_number(sm.image, control, sm.dpi, cfg)
+
+        spy.assert_not_called()
+        assert updated.number == control.number
+        assert updated.number_source == "tesseract"
+        assert flag is None
+
+    def test_trigger_confidence_above_min_ocr_confidence_still_retries_an_accepted_read(
+        self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`trigger_confidence` gates the fallback on its own -- independent of
+        `[detector].min_ocr_confidence` (module docstring). A Tesseract read that already clears
+        `min_ocr_confidence` (so Tesseract's own accept/reject logic sets `number` and leaves
+        `flag=None`) must still be retried when `trigger_confidence` is configured *higher* than
+        `min_ocr_confidence` and the read falls in the gap between the two -- the two floors gate
+        different decisions and must not be coupled through whether Tesseract's own flag fired."""
+        sm = clean_synthetic_map
+        control = sm.controls[1]
+        cfg = _with_ocr_fallback(default_config(), enabled=True, trigger_confidence=0.9)
+        assert cfg.detector.min_ocr_confidence < 0.75 < cfg.ocr_fallback.trigger_confidence
+        monkeypatch.setattr(ocr_module, "_read_digits", lambda crop: ("31", 0.75))
+        spy = MagicMock(
+            return_value=VlmOcrResult(outcome=Outcome.READ, digit_string="17", confidence=0.95)
+        )
+        monkeypatch.setattr(ocr_vlm, "read_control_number", spy)
+
+        updated, flag = read_control_number(sm.image, control, sm.dpi, cfg)
+
+        spy.assert_called_once()
+        assert updated.number == 17
+        assert updated.number_source == "vlm"
+        assert flag is not None and "read '17'" in flag

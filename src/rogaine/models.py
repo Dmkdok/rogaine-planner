@@ -77,6 +77,11 @@ def terrain_class(label: int) -> TerrainClass:
 # --------------------------------------------------------------------------------------------
 
 ControlSource = Literal["detected", "manual"]
+#: Provenance of `Control.number` specifically -- distinct from `ControlSource`, which is about
+#: *position* detection (T114/ADR-039/F23: `None` for the hub and for any unread number, so a
+#: reader can tell "read by Tesseract" apart from "resolved by the opt-in VLM fallback" apart from
+#: "never read at all", auditably, in the final output -- not just in memory).
+NumberSource = Literal["tesseract", "vlm"]
 SolverName = Literal["exact", "heuristic"]
 
 
@@ -109,6 +114,14 @@ class Control(BaseModel):
     )
     source: ControlSource = "detected"
     is_hub: bool = Field(default=False, description="start and finish; exactly one per run")
+    number_source: NumberSource | None = Field(
+        default=None,
+        description=(
+            "who read `number` (T114/ADR-039/F23): 'tesseract' for the default reader, 'vlm' for "
+            "the opt-in fallback's own successful read; None for the hub and for any control whose "
+            "number is still unread"
+        ),
+    )
 
 
 class Leg(BaseModel):

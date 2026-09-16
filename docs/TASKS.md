@@ -2633,7 +2633,7 @@ the implementer's self-report.
   small crop). The 3 test failures noted at pause never reproduced this session — 11/11
   `test_ocr_vlm.py` pass cleanly in the container, all mocked end to end, no real network call.
   `ruff check .` clean, full suite **537 passed** (see T109's own entry for the combined count).
-- [ ] **T114** — Wire the fallback into the OCR pipeline; amend SPEC/NFR — paths:
+- [x] **T114** — Wire the fallback into the OCR pipeline; amend SPEC/NFR — paths:
   `src/rogaine/vision/ocr.py` or `vision/controls.py` (trigger condition only), `config/
   default.toml` (new `[ocr_fallback]` section: `enabled`, `trigger_confidence`, model id), `tests/
   unit/vision/test_ocr.py` — deps: T113 — DoD: `[ocr_fallback].enabled=false` (shipped default)
@@ -2644,6 +2644,48 @@ the implementer's self-report.
   missing API key or a client error with the fallback enabled degrades to F8's existing
   null-flagged behaviour, never a crash, never blocking a route; `docs/SPEC.md`'s Summary/
   Integrations/Non-goals/NFR-Security/F8/Risks#4 lines amended per this iteration's doc (ADR-039).
+
+  **Landed.** `docs/SPEC.md`'s amendment was already in place from I7's own delta-intake commit
+  (`d57ea35`, before implementation started) — verified, not re-touched. New `[ocr_fallback]`
+  section in `config/default.toml` (`enabled=false` shipped, `trigger_confidence=0.6`,
+  `model="claude-haiku-4-5"`) backed by a new `OcrFallbackSettings` (`config.py`), required on
+  `AppConfig` the same way every other settings block is. `Control` gained `number_source:
+  Literal["tesseract","vlm"] | None` (`models.py`) — distinct from the existing `source` field,
+  which is about *position* detection provenance, not number-reading provenance — and it round-trips
+  through `io/controls_csv.py`'s ninth column (blank on a hand-typed number, matching the existing
+  ergonomic-defaulting convention for `confidence`/`source`).
+
+  `vision/ocr.py::read_control_number` calls `ocr_vlm.read_control_number` (T113, unmodified) once
+  per control, gated purely on `[ocr_fallback].enabled and (not digits or ocr_confidence <
+  trigger_confidence)` — deliberately independent of `[detector].min_ocr_confidence`, so a caller
+  can set `trigger_confidence` above `min_ocr_confidence` to also double-check a Tesseract read that
+  already cleared its own floor, per ADR-039's literal text ("triggers only when Tesseract's own
+  read... is empty or below trigger_confidence", no mention of `min_ocr_confidence` as a
+  prerequisite). **Review caught a real bug in the first-pass wiring**: it additionally required
+  `flag is not None` (Tesseract's own accept/reject verdict) before checking `trigger_confidence` at
+  all, which silently no-ops the fallback exactly when an operator configures `trigger_confidence >
+  min_ocr_confidence` — the one case that setting exists to enable. Fixed by dropping that extra
+  condition; a new regression test
+  (`TestVlmFallback::test_trigger_confidence_above_min_ocr_confidence_still_retries_an_accepted_read`)
+  pins a Tesseract read that clears `min_ocr_confidence` (so Tesseract's own logic sets `number` and
+  leaves `flag=None`) but sits below a higher `trigger_confidence`, and confirms the fallback still
+  fires and overwrites the result.
+
+  On a successful fallback read: `number`/`points` overwritten, `number_source="vlm"`, `flag`
+  rewritten to name the VLM-sourced read (never left claiming "no digits found" on a control that
+  was, in fact, read). On `NO_ANSWER` (disabled, no key, network error, genuinely unreadable):
+  falls through to F8's original null-flagged behaviour unchanged. `_try_vlm_fallback` wraps
+  `int(digit_string)` defensively (untrusted network-response content) even though
+  `ocr_vlm.read_control_number` itself never raises — one bad control must not take down a batch.
+
+  Six new tests, `TestVlmFallback` in `test_ocr.py`, all injecting a mocked `ocr_vlm.read_control_number`
+  (never a real client/network call): disabled-by-default (spy unreachable), empty-read fallback
+  success, low-confidence-read fallback success, `NO_ANSWER` falls through safely, already-above-
+  `trigger_confidence` never invokes the fallback, and the `trigger_confidence`-independence
+  regression above. Every pre-existing test in the file is untouched — the gating is additive by
+  construction. Full suite **545 passed** (539 + 6 new), `ruff check .` clean — this session's own
+  foreground run, not trusted from an intermediate/backgrounded one (a first attempt at this task
+  backgrounded its own verification run and had to be stopped and re-verified directly).
 - [ ] **T115** — Measure the fallback on real scans — paths: none (measurement script under
   `data/maps/`, gitignored) — deps: T114 — DoD: with the fallback enabled and a real API key, run
   against `ogps-8620_502cda4f6c774e8ecb86d063a71895f6` and confirm every one of the owner's

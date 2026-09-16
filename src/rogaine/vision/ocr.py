@@ -15,6 +15,19 @@ weak: ADR-009's whole point is that OCR quality never gates a route. Concretely 
   bad control must not take down a batch of otherwise-good ones -- see `read_control_number`'s
   `try`.
 
+**T114/ADR-039/F23: an opt-in VLM fallback for exactly this "unreadable" outcome.** `ocr_vlm.py`
+(T113) is a standalone client; this module owns the trigger. `[ocr_fallback].enabled` is `false`
+shipped, so by default nothing below changes: `read_control_number` only ever calls into `ocr_vlm`
+when the Tesseract read itself is empty or below `[ocr_fallback].trigger_confidence` -- a floor
+gated purely on `trigger_confidence`, deliberately independent of `det.min_ocr_confidence` above
+(one gates Tesseract's own accept/reject decision, the other gates whether a second,
+network-costing attempt is worth making at all, and a caller may configure `trigger_confidence`
+*higher* than `min_ocr_confidence` to also double-check a Tesseract read that already cleared its
+own floor). A successful fallback read sets `Control.number_source` to `"vlm"` (`"tesseract"` for
+the default path, `None` while still unread) so the final output stays auditable (SPEC F23); any
+fallback failure -- disabled, no key, network error, a genuinely-unreadable model response --
+degrades to exactly this module's original null-flagged behaviour, never a crash.
+
 **Resolving the DoD's own ambiguity (T021 task notes).** The DoD says "unreadable numbers emit
 `points: null` and a flag, never a guess", stated as a blanket rule. But ADR-009's decision text
 already carves out an exception in the same breath it states the rule: "Unread numbers produce
@@ -97,7 +110,8 @@ import numpy as np
 import pytesseract
 
 from rogaine.config import AppConfig, DetectorSettings, default_config
-from rogaine.models import Control
+from rogaine.models import Control, NumberSource
+from rogaine.vision import ocr_vlm
 from rogaine.vision.controls import purple_mask
 
 # A number crop holds one short line of digits, not a page -- psm 7 ("treat the image as a single
@@ -360,6 +374,41 @@ def _apply_points_rule(number: int | None, det: DetectorSettings) -> int | None:
     return number // 10
 
 
+def _try_vlm_fallback(
+    image: np.ndarray, control: Control, dpi: float, cfg: AppConfig
+) -> int | None:
+    """One opt-in VLM retry for a control whose Tesseract read is empty or below
+    `[ocr_fallback].trigger_confidence` (T114/ADR-039/F23). Returns the read number, or `None` for
+    absolutely anything else -- no usable model answer, a crop that fails to rebuild or encode, an
+    unexpected `digit_string` -- which the caller already treats identically to "still unread" (it
+    has Tesseract's own flag in hand either way). `ocr_vlm.read_control_number` itself never raises
+    (T113's own contract), but
+    `int(digit_string)` is untrusted network-response content and is wrapped defensively anyway:
+    one bad control must not take down a batch of otherwise-good ones, same discipline as this
+    module's own Tesseract `try` (module docstring).
+
+    Rebuilds the crop rather than threading it through from the caller's own `try` -- keeps that
+    block's existing exception handling untouched, at the cost of one redundant `_ocr_crop` call
+    on this already-rare "Tesseract couldn't read it" path.
+    """
+    try:
+        crop = _ocr_crop(image, control, dpi, cfg)
+        ok, encoded = cv2.imencode(".png", crop)
+        if not ok:
+            return None
+        image_bytes = encoded.tobytes()
+    except Exception:
+        return None
+
+    result = ocr_vlm.read_control_number(image_bytes, model=cfg.ocr_fallback.model)
+    if result.outcome is not ocr_vlm.Outcome.READ:
+        return None
+    try:
+        return int(result.digit_string)
+    except (TypeError, ValueError):
+        return None
+
+
 def read_control_number(
     image: np.ndarray, control: Control, dpi: float, config: AppConfig | None = None
 ) -> tuple[Control, str | None]:
@@ -371,6 +420,14 @@ def read_control_number(
     Tesseract both happen inside one `try`: any failure in either step (a malformed crop, a
     missing Tesseract binary, a timeout) is treated exactly like a clean "no text found" result,
     never raised -- "OCR failure degrades the run, never aborts it" (SPEC F8, ADR-009).
+
+    T114/ADR-039/F23: once that Tesseract-based verdict is in, an opt-in fallback
+    (`_try_vlm_fallback`) gets one retry on the same crop whenever the read is empty or below
+    `[ocr_fallback].trigger_confidence` -- see the module docstring for the exact gating (gated on
+    `trigger_confidence` alone, independent of whether Tesseract's own `min_ocr_confidence` floor
+    already produced a flag). A successful retry overwrites `number`/`flag` and marks
+    `number_source="vlm"`; anything else leaves this function's output exactly as Tesseract alone
+    produced it.
     """
     if control.is_hub:
         return control, None
@@ -397,10 +454,25 @@ def read_control_number(
     else:
         number = int(digits)
 
+    number_source: NumberSource | None = "tesseract" if number is not None else None
+
+    fallback = cfg.ocr_fallback
+    if fallback.enabled and (not digits or ocr_confidence < fallback.trigger_confidence):
+        vlm_number = _try_vlm_fallback(image, control, dpi, cfg)
+        if vlm_number is not None:
+            number = vlm_number
+            number_source = "vlm"
+            flag = f"control {control.id}: OCR fallback (VLM) read '{vlm_number}'"
+
     overall_confidence = min(control.confidence, ocr_confidence)
     points = _apply_points_rule(number, det)
     updated = control.model_copy(
-        update={"number": number, "points": points, "confidence": overall_confidence}
+        update={
+            "number": number,
+            "points": points,
+            "confidence": overall_confidence,
+            "number_source": number_source,
+        }
     )
     return updated, flag
 

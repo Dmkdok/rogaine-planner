@@ -317,6 +317,24 @@ class DetectorSettings(BaseModel):
         return (r * (1.0 - tol), r * (1.0 + tol))
 
 
+class OcrFallbackSettings(BaseModel):
+    """Opt-in VLM OCR fallback for control-*number* reading only (T114, SPEC F23, ADR-039) --
+    circle/position detection stays 100% classical CV, untouched by this section. Disabled by
+    shipped default; wiring and the trigger condition live in `vision/ocr.py`, this class is only
+    the config surface. Both `enabled` AND a configured `ANTHROPIC_API_KEY` (never stored here or
+    in any committed file) are required before `vision/ocr_vlm.py` makes any network call."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+    #: A control's Tesseract read below this floor (or empty) is what triggers the fallback
+    #: attempt -- deliberately its own value, not reused from `DetectorSettings.min_ocr_confidence`
+    #: above: that one gates Tesseract's own accept/reject decision, this one gates whether a
+    #: second, network-costing attempt is worth making at all.
+    trigger_confidence: float = Field(ge=0.0, le=1.0)
+    model: str = Field(min_length=1)
+
+
 class GraphSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -356,6 +374,7 @@ class AppConfig(BaseModel):
     slope: SlopeSettings
     proximity: ProximitySettings
     detector: DetectorSettings
+    ocr_fallback: OcrFallbackSettings
     graph: GraphSettings
     solver: SolverSettings
     rules: RuleSettings
