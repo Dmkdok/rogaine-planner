@@ -134,3 +134,28 @@ was partly so M14 could close and ship without waiting on M15's larger review.
 - [ ] `docs/SPEC.md`/`docs/DECISIONS.md` amendments for both milestones committed as part of the
       approved delta, before any code
 - [ ] Baseline suites (522 passed) still green at close, or better
+
+## Addendum — local Ollama backend for the OCR fallback (owner request, 2026-09-16)
+
+- **Source:** Owner, in-chat 2026-09-16. T115 was blocked on the owner needing a real
+  `ANTHROPIC_API_KEY` and explicit consent to real API cost (`docs/STATUS.md`'s 2026-09-16
+  handoff). Asked how the reference article did it and whether a free alternative exists; on
+  learning `qwen2.5vl:7b` is already installed locally via Ollama, decided: "Давай использовать
+  ollama. Локальные модели установлены уже на этом компьютере."
+- **In:** T116 (new) — a selectable local Ollama backend for the T113/T114 OCR VLM fallback,
+  additive to the existing Anthropic path. T115's DoD widened to accept either backend.
+- **Out:** Replacing the Anthropic path — rejected, kept as an available option (ADR-040). A
+  corpus-wide accuracy comparison between the two backends — not asked for; T115 measures whichever
+  backend is configured for that run, not both.
+- **Impact map:**
+
+  | Item | Touches | SPEC: changes / preserves | Existing coverage | Class | Regression proof |
+  |------|---------|---------------------------|--------------------|-------|-------------------|
+  | T116 add Ollama backend | New `vision/ocr_vlm_ollama.py`; `vision/ocr.py::_try_vlm_fallback` (new dispatch branch); `config.py::OcrFallbackSettings` (new `provider`/`base_url` fields); `config/default.toml` (`[ocr_fallback]` new keys, shipped `provider="anthropic"`); `pyproject.toml` (new optional dependency group) | adds to F23 (backend choice), NFR-Security/Integrations (already amended above, ADR-040); preserves F23/F8's existing behaviour byte-for-byte since the shipped `provider` is unchanged | `tests/unit/vision/test_ocr.py`'s existing fallback tests (`_with_ocr_fallback`, built on `default_config()`) — must stay green untouched | Local (new file; `ocr.py`'s existing `provider="anthropic"` branch is unmodified logic, just now reached via an explicit dispatch) | New `test_ocr_vlm_ollama.py` mirrors T113's mocked-client pattern (ADR-010, no real network call); every existing `test_ocr.py` fallback test re-run unmodified and green |
+  | T115 (re-scoped) | none (measurement script, gitignored) | same F23 acceptance line, now satisfiable via either backend | — | Local | Ollama run: read-rate before/after on `ogps-8620` plus the broader corpus sample, cost recorded as $0 |
+
+- **Ordering:** T116 depends on T114 (already landed); T115 depends on T116. Independent of every
+  M14 item.
+- **Expectations that change:** none — this delta is additive by construction (see impact map).
+- **Exit criteria:** T116 lands with the full suite green and every existing OCR fallback test
+  unmodified; T115 then closes using the Ollama backend, recording read-rate and $0 cost.

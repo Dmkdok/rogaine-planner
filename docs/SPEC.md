@@ -70,14 +70,15 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 | F20 | Non-terrain map ink (grid lines, magnetic-north lines) is never misread as a real terrain feature | On a real scan with full-height grid lines (I1, `data/maps/grid-lines-red-controls/`): the grid columns classify as `unknown`, not `water_uncrossable`; a real water body in the same fixture family still classifies as water |
 | F21 | Best-effort automatic scale detection (reuses `vision/calibrate.py::calibrate_map`'s scale-bar / grid / circle-diameter tiers), offered as an explicit opt-in action in both the CLI and the web viewer, alongside the existing manual paths (F2/F3) (I3, ADR-022) | On a map where a tier fires: CLI/viewer report which tier (`scale_bar`/`grid`/`circle`) and the resulting mpp/dpi. On a map where none fires: a clear "auto-detection unavailable, enter manually" outcome, never a crash or a silently guessed value. Auto-detection only runs on explicit user action and never overrides an explicit `--scale`/`--calibrate` (CLI) or `scale`/`calibrate` (viewer) value |
 | F22 | Web viewer auto-fills a control's points from its number using the `first_digit` rule (all digits but the last), editable; a manual points edit is sticky and survives further number edits (I4, ADR-024) | Typing/editing a freshly-detected or never-points-edited control's number auto-fills points (`123` -> `12`, `45` -> `4`); once points has been hand-edited for that control, further number edits no longer overwrite it. Resets to auto-fill on reload/re-import (CSV import already overrides detection wholesale, F9) |
-| F23 | Opt-in VLM OCR fallback for control numbers only (I7, ADR-039, amends ADR-009): when `[ocr_fallback].enabled=true` and an API key is configured, a control whose Tesseract read is empty or below `[ocr_fallback].trigger_confidence` is retried against a configured vision API before falling back to F8's existing null-flagged behaviour | Disabled by default — F8's existing behaviour is byte-for-byte unchanged with the fallback off, and it is off in every test that does not explicitly enable it. No API key or no network reachability degrades gracefully to F8's existing behaviour, never a crash. A control resolved by the fallback is marked distinctly (not indistinguishable from a Tesseract read) so a human reviewing the output can see which numbers were VLM-assisted. On `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6` with the fallback enabled: every one of the owner's originally-reported unread numbers is either read or still explicitly flagged, never silently wrong |
+| F23 | Opt-in VLM OCR fallback for control numbers only (I7, ADR-039, amends ADR-009): when `[ocr_fallback].enabled=true` and a backend is configured (I7/ADR-040: a cloud vision API key, or a reachable local Ollama server), a control whose Tesseract read is empty or below `[ocr_fallback].trigger_confidence` is retried against that backend before falling back to F8's existing null-flagged behaviour | Disabled by default — F8's existing behaviour is byte-for-byte unchanged with the fallback off, and it is off in every test that does not explicitly enable it. No API key or no network reachability degrades gracefully to F8's existing behaviour, never a crash. A control resolved by the fallback is marked distinctly (not indistinguishable from a Tesseract read) so a human reviewing the output can see which numbers were VLM-assisted. On `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6` with the fallback enabled: every one of the owner's originally-reported unread numbers is either read or still explicitly flagged, never silently wrong |
 
 ## Non-functional
 - Performance on a 4000x3000 map at 1:10000, CPU only: segmentation at most 30 s, all-pairs travel
   times for 60 controls at most 60 s, heuristic solve at most 30 s.
 - Security: no network calls at runtime, **except** F23's OCR fallback (I7/ADR-039), which is
-  disabled by default and requires both an explicit config flag and a configured API key to make any
-  call at all — the guarantee holds unconditionally whenever the fallback is off or unconfigured. The
+  disabled by default and requires both an explicit config flag and a configured backend (a cloud
+  vision API key, or a reachable local Ollama server, I7/ADR-040) to make any call at all — the
+  guarantee holds unconditionally whenever the fallback is off or unconfigured. The
   viewer binds to `127.0.0.1` only; uploaded files stay in a run directory under the project; nothing
   shells out to user-controlled strings.
 - A11y: viewer is keyboard-operable, focus is visible, controls are labelled, legible in light and dark.
@@ -94,8 +95,9 @@ Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
 - `RunConfig` — speed, time limit, penalty, solver choice and budget, seed.
 
 ## Integrations
-None by default. No external APIs, no telemetry. **Exception (I7/F23/ADR-039):** an opt-in,
-disabled-by-default OCR fallback may call a configured external vision API (HTTPS), sending only a
+None by default. No external APIs, no telemetry. **Exception (I7/F23/ADR-039, backend choice
+I7/ADR-040):** an opt-in, disabled-by-default OCR fallback may call a configured vision backend —
+either an external API over HTTPS, or a local Ollama server — sending only a
 single control's cropped ink region — never the full map, never any other field — and only when
 Tesseract's own read is empty or low-confidence. No telemetry beyond that one API call; no data is
 sent anywhere when the fallback is disabled or unconfigured (the shipped default).

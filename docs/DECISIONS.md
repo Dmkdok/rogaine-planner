@@ -1783,3 +1783,42 @@ style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR ou
   stays free/deterministic/offline but is real, unstarted model-development effort with no assurance
   of closing the gap either — the owner chose the narrower, faster, opt-in VLM path over building
   and training a new classifier this round.
+
+## ADR-040 — `[ocr_fallback]` gains a selectable local Ollama backend, amending ADR-039's provider
+- Date: 2026-09-16
+- Status: accepted
+- Context: T115 (measure the fallback on real scans, M15/I7) is blocked on the owner needing a real
+  `ANTHROPIC_API_KEY` and explicit consent to real API cost (`docs/STATUS.md`'s own 2026-09-16
+  handoff, "Next concrete actions" #1). The owner already has a vision-capable model installed
+  locally via Ollama (`qwen2.5vl:7b`) and asked directly to use it instead: "Давай использовать
+  ollama. Локальные модели установлены уже на этом компьютере." T113/T114's `ocr_vlm.py` is
+  hardcoded to the Anthropic SDK and its forced-tool-use response shape (`ocr_vlm.py:184-208`),
+  so satisfying this without touching that module means adding a second, sibling backend rather
+  than reusing it directly.
+- Decision: `OcrFallbackSettings` (`config.py`) gains `provider: Literal["anthropic", "ollama"]`
+  and `base_url: str`. Shipped `config/default.toml` sets `provider = "anthropic"` — the field is
+  purely additive, so `[ocr_fallback].enabled=false`'s existing offline guarantee and every
+  existing `test_ocr.py` fallback test are byte-for-byte unchanged. A new sibling module,
+  `vision/ocr_vlm_ollama.py`, implements the exact same `VlmOcrResult`/`Outcome` contract as
+  `ocr_vlm.py` (T113's types, imported rather than duplicated) against a local Ollama server
+  (default `http://localhost:11434`), using Ollama's structured-output support to get the same
+  `{digit_string, confidence}` shape T113 built for the Anthropic tool call. `vision/
+  ocr.py::_try_vlm_fallback` dispatches on `cfg.ocr_fallback.provider`. Ollama's Python client is a
+  new `pyproject.toml` optional dependency group (`ocr_vlm_ollama`), not a base dependency — same
+  inertness guarantee as T113: a base install/`docker compose run --rm tests` pulls in zero new
+  network-capable code. T115 selects `provider = "ollama"` via `load_config`'s `overrides` (or a
+  local, gitignored config) when it runs — no change to T115's own "paths: none" scope. `docs/
+  SPEC.md`'s F23 row, NFR-Security and Integrations lines are amended in place to describe the
+  backend generically (a cloud vision API key, **or** a reachable local Ollama server) rather than
+  implicitly cloud-only.
+- Consequences: T115 no longer needs a paid `ANTHROPIC_API_KEY` or owner spend consent to close —
+  a local Ollama server satisfies its DoD at $0 marginal cost, using compute already on the owner's
+  machine. The Anthropic path (T113/T114) is unmodified and stays available for whoever later wants
+  a paid, potentially more accurate model — this is additive, not a replacement; nothing about
+  ADR-039's own accepted trade-off (cost/network/determinism, opt-in, disabled by default) changes
+  for an owner who keeps `provider = "anthropic"`. A local 7B vision model may read printed digits
+  less reliably than Claude Haiku — T115's own measurement is what settles that, per map, not an
+  assumption made here. Rejected alternative: replacing the Anthropic path entirely with Ollama —
+  rejected because the Anthropic client is already built and tested, and removing it would foreclose
+  the higher-accuracy option for no benefit (the local path is genuinely additive, not a cost saving
+  on a shared code path).

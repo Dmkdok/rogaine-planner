@@ -2686,10 +2686,29 @@ the implementer's self-report.
   construction. Full suite **545 passed** (539 + 6 new), `ruff check .` clean — this session's own
   foreground run, not trusted from an intermediate/backgrounded one (a first attempt at this task
   backgrounded its own verification run and had to be stopped and re-verified directly).
+- [ ] **T116** — Local Ollama backend for the OCR VLM fallback, amending ADR-039 — paths:
+  `src/rogaine/vision/ocr_vlm_ollama.py` (new), `src/rogaine/vision/ocr.py` (`_try_vlm_fallback`
+  dispatches on `cfg.ocr_fallback.provider`), `src/rogaine/config.py` (`OcrFallbackSettings` gains
+  `provider: Literal["anthropic", "ollama"]` and `base_url: str`), `config/default.toml`
+  (`[ocr_fallback]` gains `provider = "anthropic"` and `base_url = "http://localhost:11434"` —
+  shipped `provider` stays `"anthropic"`, so no existing behaviour changes), `pyproject.toml` (new
+  optional dependency group `ocr_vlm_ollama`, not the base install), `tests/unit/vision/
+  test_ocr_vlm_ollama.py` (new) — deps: T114 — DoD: same typed `VlmOcrResult`/`Outcome` contract as
+  T113's Anthropic client (imported from `ocr_vlm.py`, not duplicated); a local Ollama server that
+  is unreachable, errors, or returns a malformed response degrades to `VlmOcrResult.no_answer()`,
+  same as T113's contract, never raises; unit tests exercise the module entirely against a fake/
+  mocked client, no real network/Ollama call anywhere in the default suite (ADR-010); base `pip
+  install`/`docker compose run --rm tests` makes zero new network-capable code reachable (optional
+  dependency group, same inertness guarantee as T113); every pre-existing `test_ocr.py` fallback
+  test stays green unmodified (`provider="anthropic"` shipped default is byte-for-byte what those
+  tests already exercise).
 - [ ] **T115** — Measure the fallback on real scans — paths: none (measurement script under
-  `data/maps/`, gitignored) — deps: T114 — DoD: with the fallback enabled and a real API key, run
-  against `ogps-8620_502cda4f6c774e8ecb86d063a71895f6` and confirm every one of the owner's
+  `data/maps/`, gitignored) — deps: T114, T116 — DoD: with the fallback enabled against either
+  backend (a real `ANTHROPIC_API_KEY`, or a local Ollama server per T116 — owner's choice,
+  2026-09-16: use Ollama, `qwen2.5vl:7b` already installed), run against
+  `ogps-8620_502cda4f6c774e8ecb86d063a71895f6` and confirm every one of the owner's
   originally-reported unread numbers is either read or still explicitly flagged (never silently
   wrong); run against a broader owner-corpus sample and record the before/after read-rate; record
-  the API call count and an estimated cost per map in this task's own entry — the concrete evidence
-  the iteration's exit criteria and F23's acceptance line are judged against.
+  the API call count and an estimated cost per map in this task's own entry (Ollama: $0, local
+  compute only) — the concrete evidence the iteration's exit criteria and F23's acceptance line are
+  judged against.
