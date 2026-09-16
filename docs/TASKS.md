@@ -2686,7 +2686,7 @@ the implementer's self-report.
   construction. Full suite **545 passed** (539 + 6 new), `ruff check .` clean — this session's own
   foreground run, not trusted from an intermediate/backgrounded one (a first attempt at this task
   backgrounded its own verification run and had to be stopped and re-verified directly).
-- [ ] **T116** — Local Ollama backend for the OCR VLM fallback, amending ADR-039 — paths:
+- [x] **T116** — Local Ollama backend for the OCR VLM fallback, amending ADR-039 — paths:
   `src/rogaine/vision/ocr_vlm_ollama.py` (new), `src/rogaine/vision/ocr.py` (`_try_vlm_fallback`
   dispatches on `cfg.ocr_fallback.provider`), `src/rogaine/config.py` (`OcrFallbackSettings` gains
   `provider: Literal["anthropic", "ollama"]` and `base_url: str`), `config/default.toml`
@@ -2702,7 +2702,14 @@ the implementer's self-report.
   dependency group, same inertness guarantee as T113); every pre-existing `test_ocr.py` fallback
   test stays green unmodified (`provider="anthropic"` shipped default is byte-for-byte what those
   tests already exercise).
-- [ ] **T115** — Measure the fallback on real scans — paths: none (measurement script under
+  **Landed** (`1208c2d`). `ocr_vlm_ollama.read_control_number` mirrors T113 exactly, reusing
+  `ocr_vlm.py`'s `_TOOL_SCHEMA["input_schema"]` verbatim as Ollama's structured-output `format`
+  (`ollama.Client(host=base_url).chat(model=..., messages=[{"images": [image_bytes]}],
+  format=schema)`) — one schema, not two hand-kept copies. Real end-to-end smoke test against the
+  owner's local `qwen2.5vl:7b` server confirmed the integration before the broader T115 run (a
+  WebFetch-researched API shape, verified against the real SDK rather than trusted blind). Full
+  suite 558 passed (545 + 13 new), `ruff check .` clean.
+- [x] **T115** — Measure the fallback on real scans — paths: none (measurement script under
   `data/maps/`, gitignored) — deps: T114, T116 — DoD: with the fallback enabled against either
   backend (a real `ANTHROPIC_API_KEY`, or a local Ollama server per T116 — owner's choice,
   2026-09-16: use Ollama, `qwen2.5vl:7b` already installed), run against
@@ -2712,3 +2719,41 @@ the implementer's self-report.
   the API call count and an estimated cost per map in this task's own entry (Ollama: $0, local
   compute only) — the concrete evidence the iteration's exit criteria and F23's acceptance line are
   judged against.
+  **Landed**, in two passes (`data/maps/_t115_ocr_fallback_measure.py`, gitignored). **First pass**
+  against `ogps-8620` + a 5-map broader sample (`pervomayskoe`, `novo-kavgolovsky-lesopark`,
+  `kkm-toksovo`, `lembolovo-kkm`, `ogps-6802` — every other real scan this project already has a
+  named read-rate floor for) reported a 100% post-fallback read rate (175/175) — which turned out
+  **false**. Visual inspection of the underlying crops (`data/maps/_t115_dump_crops.py`) found 16
+  of the 43 "successful" reads (37%) came from a crop with **zero ink pixels at all** — there was
+  never a real number there for Tesseract to miss either. `qwen2.5vl:7b` confabulated a
+  plausible-looking digit string for every one of these (mostly `"201"`), at self-reported
+  confidence **1.0 every single time** — exactly the "silently wrong" outcome F8/ADR-009 and
+  F23/ADR-039 exist to prevent, quantified precisely by `data/maps/_t115_analyze_blanks.py` (16
+  hallucinated / 27 genuine, split per-map in that script's own output). Fixed same-session as
+  ADR-041: `_try_vlm_fallback` now skips the VLM call entirely when the crop has no ink,
+  independent of provider — protects the Anthropic path exactly as much as Ollama's, since nothing
+  in the finding is Ollama-specific. **Second pass**, post-fix, is the real result:
+
+  | Map | Circles | Before | After | Real calls | Elapsed |
+  |---|---|---|---|---|---|
+  | `ogps-8620` | 33 | 23 | 27 (6 still unread, correctly flagged) | 4 | 19.2s |
+  | `pervomayskoe` | 41 | 32 | 41 | 9 | 20.0s |
+  | `novo-kavgolovsky-lesopark` | 21 | 18 | 21 | 3 | 6.4s |
+  | `kkm-toksovo` | 24 | 12 | 17 (7 still unread, correctly flagged) | 5 | 9.7s |
+  | `lembolovo-kkm` | 21 | 14 | 18 (3 still unread, correctly flagged) | 4 | 8.0s |
+  | `ogps-6802` | 35 | 33 | 35 | 2 | 7.1s |
+  | **total** | 175 | 132 | **159 (91%)** | **27** | **70.5s** |
+
+  `ogps-8620` (the owner's named map, "≥6 unread numbers" originally reported): baseline measured
+  **10** actually unread (23/33), not just the reported floor; 4 genuinely resolved (`3`, `52`,
+  `38`, `50` — all visually confirmed against the real crop ink), the remaining 6 correctly stay
+  unread with `"OCR found no digits"` flags, never a silent wrong number — the DoD's exact
+  requirement. Every one of the 27 real Ollama calls in the second pass succeeded with real ink
+  present; **cost: $0** (local compute, no per-call charge, confirmed by `ollama --version`/local
+  server already running throughout). The 16 blank-crop controls (6 on `ogps-8620`, 7 on
+  `kkm-toksovo`, 3 on `lembolovo-kkm`) are a **separate, undiagnosed gap**: the ink-isolation
+  pipeline (`_ocr_crop`'s `purple_mask`/`_strip_thin_ink`/`_keep_largest_ink_cluster` steps) is
+  stripping real printed numbers down to nothing on these specific controls, on two different real
+  scans — no VLM fallback of any kind can read ink that was already erased before the crop reached
+  it. Not fixed here (out of T115/T116's own scope, which was measuring the fallback and adding a
+  backend, not re-tuning crop masking); flagged in `docs/STATUS.md` for a future task.

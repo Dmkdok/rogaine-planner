@@ -127,10 +127,13 @@ was partly so M14 could close and ship without waiting on M15's larger review.
 - [ ] T112: if T111 found a safe signal, ЛЭП ink no longer costed as a normal path on `ogps-8620`;
       genuine roads/tracks/footpaths unaffected
 - [ ] T110 (config): `veg_fight` excluded from the graph on every map, not only `ogps-8620`
-- [ ] T113/T114: OCR fallback lands disabled by default; existing full suite green with it disabled;
+- [x] T113/T114: OCR fallback lands disabled by default; existing full suite green with it disabled;
       mocked-client tests green with it enabled
-- [ ] T115: measured read-rate improvement on `ogps-8620` (the >=6 previously-unread numbers) and a
-      broader corpus sample, with API-call/cost numbers recorded
+- [x] T115/T116: measured read-rate improvement on `ogps-8620` (10 actually-unread, exceeding the
+      owner's ">=6" report; 4 resolved, 6 correctly flagged, never silently wrong) and a 5-map
+      broader sample (132/175 -> 159/175, 91%), via the local Ollama backend (T116/ADR-040) at $0
+      cost, 27 real calls. Found and fixed a real hallucination bug along the way (ADR-041) — see
+      the Addendum below
 - [ ] `docs/SPEC.md`/`docs/DECISIONS.md` amendments for both milestones committed as part of the
       approved delta, before any code
 - [ ] Baseline suites (522 passed) still green at close, or better
@@ -158,4 +161,14 @@ was partly so M14 could close and ship without waiting on M15's larger review.
   M14 item.
 - **Expectations that change:** none — this delta is additive by construction (see impact map).
 - **Exit criteria:** T116 lands with the full suite green and every existing OCR fallback test
-  unmodified; T115 then closes using the Ollama backend, recording read-rate and $0 cost.
+  unmodified; T115 then closes using the Ollama backend, recording read-rate and $0 cost. **Met**,
+  in two passes — see T115's own `docs/TASKS.md` entry for the full account. T115's first pass
+  reported a false 100% read rate; visual inspection of the underlying crops found 16 of 43
+  "successful" reads (37%) were the local model confabulating a digit string for a completely
+  blank crop at self-reported confidence 1.0 every time. Fixed same-session, unplanned but directly
+  in scope of F23's own "never silently wrong" line: **ADR-041** — `_try_vlm_fallback` now skips
+  the VLM call entirely on a blank crop, for both backends, not just Ollama's. Full suite 560
+  passed (558 + 2 new parametrized cases), `ruff check .` clean, before T115's real (second-pass)
+  numbers were measured. The 16 blank-crop controls themselves are a separate, undiagnosed
+  ink-isolation gap on two real scans (`ogps-8620`, `kkm-toksovo`) — flagged in `docs/STATUS.md`
+  for a future task, not fixed here (out of this addendum's own scope).

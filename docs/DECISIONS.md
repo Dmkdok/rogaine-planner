@@ -1822,3 +1822,36 @@ style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR ou
   rejected because the Anthropic client is already built and tested, and removing it would foreclose
   the higher-accuracy option for no benefit (the local path is genuinely additive, not a cost saving
   on a shared code path).
+
+## ADR-041 — A blank OCR crop is never sent to the VLM fallback, on either backend
+- Date: 2026-09-16
+- Status: accepted
+- Context: T115's real-scan measurement (`ogps-8620` plus a 5-map broader sample) initially
+  reported a 100% post-fallback read rate via T116's new Ollama backend. Visual inspection of the
+  underlying crops (`data/maps/_t115_dump_crops.py`) found 16 of the 43 "successful" reads (37%)
+  came from a crop with **zero ink pixels at all** — every pixel already stripped by
+  `_ocr_crop`'s own ring-erase/thin-ink/largest-cluster steps, so there was never a real number
+  there for Tesseract to miss either. `qwen2.5vl:7b` confabulated a plausible-looking digit string
+  for every one of these (mostly `"201"`), at self-reported confidence **1.0 every single time**
+  (`data/maps/_t115_analyze_blanks.py` quantifies this precisely: 16 hallucinated / 27 genuine) —
+  the confidence field carried no signal distinguishing a real read from a hallucination. This is
+  exactly the "silently wrong" outcome F8 (ADR-009) and F23 (ADR-039) were built to prevent, and
+  nothing about the finding is Ollama-specific: `ocr.py::_try_vlm_fallback` never checked whether
+  the crop had any content at all before sending it to whichever backend was configured — the same
+  blank crop would reach the Anthropic path exactly as readily.
+- Decision: `_try_vlm_fallback` checks `np.any(crop == 0)` immediately after building the crop and
+  returns `None` (no fallback attempted, same as any other "couldn't read it" outcome) when the
+  crop is entirely ink-free, before either backend's `read_control_number` is ever called. This
+  sits ahead of ADR-040's provider dispatch, so it protects the Anthropic and Ollama paths equally.
+  A new parametrized regression test, `test_a_genuinely_blank_crop_never_calls_either_vlm_backend`
+  (`tests/unit/vision/test_ocr.py`), pins this for both `provider` values.
+- Consequences: T115's real numbers on the 6-map sample dropped from a false 100% to a true
+  159/175 (91%) — see T115's own `docs/TASKS.md` entry for the exact per-map counts — with the
+  remaining 16 controls now correctly flagged unread rather than silently wrong. Those 16 controls'
+  crops being genuinely blank is itself a separate, real, undiagnosed gap (the ink-isolation
+  pipeline is stripping real printed numbers on these specific controls, on two different real
+  scans) — not fixed here, since re-tuning `_ocr_crop`'s masking was never T115/T116's scope;
+  flagged in `docs/STATUS.md` for a future task. Rejected alternative: filtering on the VLM's own
+  reported confidence instead of an ink-presence guard — rejected because the measurement showed
+  confidence was uniformly 1.0 regardless of whether the read was real, so it carries no usable
+  signal for this specific failure mode.
