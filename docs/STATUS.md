@@ -18,62 +18,44 @@ current: Iteration I7 (M14+M15) — M14 complete (T108-T112), M15's automatable 
 
 ## Resume here
 
-**2026-09-16: M14 and M15's automatable half both closed out this session.** Branch
-`iteration/I2-vision-recognition-fix`, tree clean, 78 commits ahead of `master` / 0 behind. Full
-suite **545 passed**, `ruff check .` clean — this session's own foreground run (`docker compose run
---rm tests`, not piped through `tail`), commit `5f43df6`.
+**2026-09-16, paused mid-writeup.** Branch `iteration/I2-vision-recognition-fix`, tree committed
+**unverified** at `a52008c` (docs-only pause snapshot — not re-run, see below for why that's safe).
 
-**T110** (`1b6bc26`) — lake crossing on `ogps-8620` shares `_consolidate_banked_water`'s territory
-(T101), not T109's region-closure mechanism: retuned `min_bank_fraction` 0.3→0.23 plus a new
-`min_component_area_px=500` guard, verified against all four real scans the function touches.
-`veg_fight` (ISOM 410) reclassified impassable per ADR-037 (owner ruling). Full account:
-`docs/TASKS.md` T110's own entry.
+**All code for M15 (T113-T116) is already done, committed, and verified** — the pause hit while
+writing the *docs narrative* up, not mid-code. In order this session: T116 (local Ollama backend,
+commit `1208c2d`) landed clean; T115's real-scan measurement then found a real bug (a blank/no-ink
+crop was being sent to the VLM, which confabulated a digit at confidence 1.0 every time — 16 of 43
+"successful" reads in the first pass were this, not genuine); fixed same-session as **ADR-041**
+(`_try_vlm_fallback` now skips the VLM call entirely on a blank crop, both backends, commit
+`c130129`). **Suite at `c130129`: 560 passed, `ruff check .` clean** — this session's own foreground
+run, not piped through `tail`. The docs-only pause commit `a52008c` on top changed no code, so that
+result still holds; nothing needs re-running.
 
-**T114** (`5f43df6`) — wired T113's VLM OCR fallback behind `[ocr_fallback]`
-(`enabled=false` shipped). **Caught and fixed a real bug in review before committing**: the
-first-pass wiring gated the fallback on Tesseract's own `min_ocr_confidence` flag in addition to
-`trigger_confidence`, which silently no-ops the fallback whenever an operator configures
-`trigger_confidence` above `min_ocr_confidence` — exactly the case that setting exists to enable.
-Fixed (dropped the extra gate) with a new regression test pinning it. Full account: `docs/TASKS.md`
-T114's own entry.
+**Next concrete action:** `docs/TASKS.md` (T115/T116 entries) and `docs/DECISIONS.md` (ADR-041) are
+already fully written (part of `a52008c`) — just read them, they're complete. What's still missing
+is `docs/STATUS.md` itself: the "Iteration I7" progress checklist below (the 2026-09-16 addendum's
+own mini-checklist, steps 4/5/6/7/8 still show `[ ]` and need updating to reflect T116+T115 both
+landed) and the "## Test report" section (still shows the stale 545-passed number, needs bumping to
+560 @ `c130129`). Also worth adding there: a new **deferred, undiagnosed finding** from T115 — 16
+controls across `ogps-8620` (6), `kkm-toksovo` (7) and `lembolovo-kkm` (3) have a crop with
+*zero ink at all* after `_ocr_crop`'s masking, meaning the ink-isolation pipeline itself is erasing
+real printed numbers on these specific real scans (no VLM of any kind can read ink already gone
+before it's sent) — not fixed, out of scope for T115/T116, needs its own future task. Full context
+for all of this: `docs/TASKS.md` T115's own entry and `docs/DECISIONS.md` ADR-041, both already
+written in full.
 
-**Both landing sessions hit the same background-test-run failure mode flagged at the 2026-09-15
-pause** (a dispatched subagent backgrounds `docker compose run --rm tests` and ends its own turn
-before the result lands) — T110's implementer avoided it, T114's implementer repeated it and had
-to be stopped (`TaskStop`) mid-loop; its remaining work (the bug above, the final verification,
-docs) was finished directly in this session instead of re-dispatched. Third occurrence of this
-exact pattern across three sessions — worth a standing rule in `CLAUDE.md` if a fourth happens.
+After that STATUS.md tidy-up, M14+M15 (T108-T116) are fully landed and I7 could get its
+milestone-level `reviewer` pass (same pattern as every prior iteration's own step 6, see
+`docs/status-archive.md`'s Iteration I3-I6 entries) — not yet run, not started.
 
-**2026-09-16, later same day: T115's owner blocker resolved by adding a second backend instead of
-paying for one.** Owner asked how the reference article did OCR and whether a free alternative
-exists; `qwen2.5vl:7b` is already installed locally via Ollama, so the owner chose it over an
-Anthropic API key ("Давай использовать ollama. Локальные модели установлены уже на этом
-компьютере."). Ran through `iterate-product`'s delta pipeline (this is a real decision reversal of
-ADR-039's provider, not a trivial tweak): **ADR-040** written (amends ADR-039 — `[ocr_fallback]`
-gains `provider: "anthropic" | "ollama"` + `base_url`, shipped default stays `provider="anthropic"`
-so every existing test is untouched), **T116** inserted into M15 ahead of T115 (`docs/TASKS.md`),
-SPEC F23/NFR-Security/Integrations amended to describe the backend generically. Gate presented and
-approved by the owner same session («Утверждаю»). Full account: `docs/iterations/
-I7-real-map-routing-correctness-and-ocr-vlm-fallback.md`'s own "Addendum" section.
+No subagents or background commands were running when the pause hit — nothing was killed, nothing
+needs rerunning.
 
-**Next concrete actions, in order:**
-1. **T116** — implement `vision/ocr_vlm_ollama.py` (mirrors T113's `VlmOcrResult`/`Outcome`
-   contract against a local Ollama server), wire the `provider` dispatch into
-   `vision/ocr.py::_try_vlm_fallback`, add `provider`/`base_url` to
-   `config.py::OcrFallbackSettings` and `config/default.toml` (shipped `provider="anthropic"`,
-   unchanged behaviour), new optional dependency group in `pyproject.toml`, offline-mocked tests
-   (ADR-010) — not yet started.
-2. **T115** (M15 close-out) — once T116 lands, run the fallback with `provider="ollama"` against
-   `ogps-8620_502cda4f6c774e8ecb86d063a71895f6` and a broader corpus sample; record read-rate and
-   cost ($0 — local compute). No longer blocked on the owner.
-3. M14 (T108-T112) is fully landed and could get its own milestone-level `reviewer` pass now,
-   independent of M15 — same pattern as every prior iteration's own step 6 (see
-   `docs/status-archive.md`'s Iteration I3-I6 entries). Not yet run.
-4. Three older, unrelated manual owner sign-offs remain open in parallel, none blocking I7 (see
-   "Blocked on the owner" below) — no session action, just don't forget them when the owner is next
-   asked for input.
+Three older, unrelated manual owner sign-offs remain open in parallel, none blocking I7 — see
+"Blocked on the owner" below, unchanged by this pause.
 
-Iteration I7's own live progress checklist is below, under "Iteration I7".
+Iteration I7's own live progress checklist is below, under "Iteration I7" (itself due for the
+same update as the "Next concrete action" above).
 
 ## Iteration I7: real-map routing correctness (out-of-bounds/water/ЛЭП/olive) and an opt-in VLM OCR fallback (M14 complete, M15 7/8 landed, branch `iteration/I2-vision-recognition-fix`)
 
