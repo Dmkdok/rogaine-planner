@@ -426,6 +426,70 @@ class TestOutOfBoundsClosureOnRealScan:
             "cross it"
         )
 
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_second_and_third_polygon_interiors_are_out_of_bounds(self) -> None:
+        """T108's diagnosis found three real out-of-bounds polygons on this map, not one -- the
+        fix above was measured against only the largest.
+        `data/maps/_t109_verify_all_polygons.py` (gitignored) re-derives all of
+        `classify_labels`' purple/magenta hatch components and pins
+        each real polygon's own deepest interior point (max distance from its boundary): the
+        smaller two measured 48.25% and 36.21% raw hatch-ink density respectively (both above
+        `_close_out_of_bounds_regions`'s `min_density_fraction` floor, same mechanism as the
+        largest), and both closed to a fully `out_of_bounds` 10x10 probe box.
+        """
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        labels = classify_palette(normalize(image), cfg, dpi)
+
+        oob = terrain_label(TerrainClass.OUT_OF_BOUNDS)
+
+        # component #2 (density 48.25%), deepest point (x=1994, y=284), depth 33.0px
+        probe_2 = labels[279:289, 1989:1999]
+        assert (probe_2 == oob).all(), (
+            f"second polygon's interior probe not fully out_of_bounds: "
+            f"oob={int((probe_2 == oob).sum())}/{probe_2.size}"
+        )
+
+        # component #3 (density 36.21%), deepest point (x=2491, y=473), depth 94.9px
+        probe_3 = labels[468:478, 2486:2496]
+        assert (probe_3 == oob).all(), (
+            f"third polygon's interior probe not fully out_of_bounds: "
+            f"oob={int((probe_3 == oob).sum())}/{probe_3.size}"
+        )
+
+    @pytest.mark.skipif(
+        not _OGPS_8620_PATH.is_file(),
+        reason="data/maps/ogps-8620.../map.jpg absent (ADR-010: gitignored real scan)",
+    )
+    def test_unrelated_purple_symbol_is_not_closed_to_out_of_bounds(self) -> None:
+        """False-positive guard, T108's own flagged risk: this map also carries one small,
+        unrelated purple symbol (a start-triangle fragment, same `purple_100` ink as
+        `out_of_bounds`) that measured only 15.35% raw hatch-ink density inside its own closed
+        interior -- below `_close_out_of_bounds_regions`'s `min_density_fraction` floor (0.25), so
+        the closure step must leave it alone rather than force-fill it solid `out_of_bounds` the
+        way it does the three real polygons above. Its own deepest interior point classifies
+        `road` both raw and fixed; a small probe box around it stays mostly non-`out_of_bounds`
+        (measured 8/100px, `data/maps/_t109_verify_all_polygons.py`).
+        """
+        dpi = resolve_dpi(_OGPS_8620_PATH, user_dpi=None)
+        image = load_raster(_OGPS_8620_PATH, dpi=dpi)
+        cfg = default_config()
+        labels = classify_palette(normalize(image), cfg, dpi)
+
+        oob = terrain_label(TerrainClass.OUT_OF_BOUNDS)
+
+        # component #1 (density 15.35%), deepest point (x=2589, y=139), depth 22.6px
+        probe = labels[134:144, 2584:2594]
+        oob_count = int((probe == oob).sum())
+        assert oob_count < probe.size // 2, (
+            f"unrelated purple symbol's interior was force-filled out_of_bounds: "
+            f"oob={oob_count}/{probe.size} (false positive in the closure step's density guard)"
+        )
+
 
 class TestIouReportOnFixture:
     """`iou_report` measured on the same fixture and with the same sampleable exclusions

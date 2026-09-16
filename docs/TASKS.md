@@ -2413,15 +2413,58 @@ the implementer's self-report.
   remaining 16-19% pixel-level hole; T109's acceptance check must measure interior composition the
   way this diagnosis did, not eyeball the label map. Script: `data/maps/_t108_diagnose_oob.py`
   (gitignored, not committed).
-- [ ] **T109** — Close hatched-polygon interiors for out-of-bounds classification — paths:
-  `src/rogaine/vision/palette.py`, `tests/unit/vision/test_segment.py`, possibly
-  `config/default.toml` (`[palette]`) — deps: T108 — DoD: per T108's design, a region-closure step
-  in `classify_palette` makes the whole enclosed `out_of_bounds` polygon interior classify
-  consistently (ADR-036); `rogaine plan`/`detect` on `ogps-8620` no longer routes through the
-  reported polygon; every existing synthetic-fixture IoU floor unchanged; a new real-scan test pins
-  a probe point deep inside the polygon as `out_of_bounds`/impassable, skipped when the gitignored
-  scan is absent; full suite green before T110/T112 start (shared-primitive ordering, ADR-036).
-  ⏸ paused mid-work — see STATUS.md
+- [x] **T109** — Close hatched-polygon interiors for out-of-bounds classification — paths:
+  `src/rogaine/vision/palette.py`, `tests/unit/vision/test_segment.py` — deps: T108 — DoD: per
+  T108's design, a region-closure step in `classify_palette` makes the whole enclosed
+  `out_of_bounds` polygon interior classify consistently (ADR-036); `rogaine plan`/`detect` on
+  `ogps-8620` no longer routes through the reported polygon; every existing synthetic-fixture IoU
+  floor unchanged; a new real-scan test pins a probe point deep inside the polygon as
+  `out_of_bounds`/impassable, skipped when the gitignored scan is absent; full suite green before
+  T110/T112 start (shared-primitive ordering, ADR-036).
+  **Landed.** `_close_out_of_bounds_regions` (`vision/palette.py`) wired into `classify_palette`
+  ahead of `_consolidate_banked_water`/`fill_unknown`, per T108's design: close the raw hatch mask
+  with a `hatch_close_mm`-derived kernel, fill each closed component's external contour, promote to
+  `out_of_bounds` only past two density guards (`min_density_fraction=0.25`,
+  `min_closed_fraction=0.70`). Verified against all three of `ogps-8620`'s real polygons, not just
+  T108's own largest measurement target: component densities 48.25%/36.21%/56.75%, all three close
+  to a fully `out_of_bounds` 10x10 probe box at each polygon's own deepest interior point
+  (`data/maps/_t109_verify_all_polygons.py`, gitignored). The unrelated purple start-triangle
+  fragment T108 flagged (density 15.35%) correctly stays unclosed (8/100px in the same probe size,
+  not force-filled) — the false-positive guard holds. Two new real-scan tests added to
+  `TestOutOfBoundsClosureOnRealScan` in `test_segment.py` pinning the second/third polygon and the
+  false-positive case, alongside the two pre-existing tests for the largest polygon (pixel probe +
+  routing-graph block-passability). 26/26 `test_segment.py` real-scan tests pass.
+
+  **Second finding, caught by the full suite this session (not by the killed prior session, which
+  never ran it to completion): a real regression on the synthetic fixture's own IoU floor.**
+  `test_palette.py::TestPaletteIoUAgainstFixture::test_area_classes_on_the_clean_render` failed
+  post-fix: `open_land` IoU dropped to 0.9020 (floor 0.95). Diagnosed
+  (`data/maps/_t109_diagnose_fixture_regression.py`, deleted after use) to one specific cause: the
+  fixture's course-overprint controls share `purple_100` ink with `out_of_bounds` (same real-world
+  ambiguity `config/default.toml` already documents), and one control on this fixture's seeded
+  layout (`seed=20260819`) happens to land close enough to the fixture's own out-of-bounds blob (a
+  few px of raw-ink gap) that the closing kernel bridges the two into one component. The merged
+  "dumbbell" measured density 0.319 / closed_fraction 0.847 — statistically indistinguishable from
+  a genuine large polygon (`ogps-8620`'s own largest measured 0.567/1.0) — so neither existing guard
+  can reject it; T108's own diagnosis had flagged exactly this untested edge case (`ogps-8620`'s
+  controls print red, never exercising the purple-shared-ink collision against a real polygon).
+
+  Tried and rejected: switching the fill mechanism from "trace external contour, fill solid" to
+  proper topological hole-filling (`scipy.ndimage.binary_fill_holes`) — measured no improvement
+  (`data/maps/_t109_test_fillholes_fix.py`, deleted after use): the contamination comes from
+  `cv2.MORPH_CLOSE`'s own dilate-then-erode smoothing the boundary where the two ink sources are
+  close, not from the subsequent fill step, so changing the fill step alone doesn't help.
+
+  **Fix: a third guard, `min_solidity_fraction=0.70`** (`filled_area / convex_hull_area` of the same
+  contour). Bridging two separate ink blobs across a gap leaves a concave waist between them that a
+  single chunky polygon's own irregular-but-continuous boundary does not — measured
+  (`data/maps/_t109_test_solidity_guard.py`, deleted after use) on `ogps-8620`: the three real
+  polygons solidity 0.786-0.893, the rejected purple fragment 0.904 (already excluded on density);
+  the bridged fixture false positive 0.598. `0.70` sits with comfortable margin on every side.
+  Re-verified after the fix: `test_palette.py` 31/31 pass (IoU floors restored), `test_segment.py`
+  26/26 pass (all three real polygons still close correctly, solidity guard does not reject them),
+  full suite **537 passed** (522 baseline + 4 new closure tests + T113's 11), `ruff check .` clean
+  — this session's own run, not trusted from any intermediate measurement alone.
 - [ ] **T110** — Fix lake crossing on `ogps-8620`, and reclassify `veg_fight` impassable — paths:
   `src/rogaine/vision/palette.py` (lake fix, if T108/T109 don't already cover it), `config/
   default.toml` (`veg_fight.passable`), `tests/unit/cost/test_field.py`/`test_graph.py`,
@@ -2496,7 +2539,7 @@ the implementer's self-report.
 > of every M14 task (disjoint files) — may run in parallel with M14 or after it; the owner's own
 > choice to split into two milestones was partly so M14 could close without waiting on M15.
 
-- [ ] **T113** — VLM OCR client module — paths: `src/rogaine/vision/ocr_vlm.py` (new),
+- [x] **T113** — VLM OCR client module — paths: `src/rogaine/vision/ocr_vlm.py` (new),
   `pyproject.toml` (new optional dependency group for the VLM client SDK, not the base install),
   `tests/unit/vision/test_ocr_vlm.py` (new) — deps: none — DoD: a client wrapper that takes a
   control's cropped ink region and returns a structured (digit string, confidence) result or a
@@ -2505,7 +2548,18 @@ the implementer's self-report.
   fake/mocked client — no real network call anywhere in the test suite (ADR-010/ADR-039); base
   `pip install`/`docker compose run --rm tests` makes zero new network-capable code reachable
   (optional dependency group).
-  ⏸ paused mid-work — see STATUS.md
+  **Landed.** `read_control_number(image_bytes, *, model=DEFAULT_MODEL, client=None)` forces tool
+  use with a strict schema (`digit_string`, `confidence`); no `ANTHROPIC_API_KEY` (or an empty one)
+  returns `VlmOcrResult.no_answer()` before ever constructing `anthropic.Anthropic()`; every client
+  failure (rate limit, connection, other API status, malformed tool response) degrades to the same
+  typed no-answer outcome via a most-specific-first exception chain, never raises. `anthropic` is
+  imported in a `try`/`except ImportError` so the module and its test file both collect cleanly
+  whether or not the optional `ocr_vlm` extra (`anthropic>=1.0`, `pyproject.toml`) is installed.
+  `DEFAULT_MODEL = "claude-haiku-4-5"` confirmed current (no date suffix) against the live model
+  table this session, cost/latency tier matches this task's own niche (1-3 printed digits from a
+  small crop). The 3 test failures noted at pause never reproduced this session — 11/11
+  `test_ocr_vlm.py` pass cleanly in the container, all mocked end to end, no real network call.
+  `ruff check .` clean, full suite **537 passed** (see T109's own entry for the combined count).
 - [ ] **T114** — Wire the fallback into the OCR pipeline; amend SPEC/NFR — paths:
   `src/rogaine/vision/ocr.py` or `vision/controls.py` (trigger condition only), `config/
   default.toml` (new `[ocr_fallback]` section: `enabled`, `trigger_confidence`, model id), `tests/

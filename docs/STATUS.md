@@ -139,48 +139,41 @@ session's edit, doesn't touch the `tests` service, left alone; owner has not sai
 commit or revert it).
 
 ## Resume here
-**PAUSED 2026-09-15, mid-implementation of Iteration I7 M14+M15. Branch
-`iteration/I2-vision-recognition-fix`, tree committed unverified at `050a11a` (pause: session
-snapshot) — no test run since. Gate was approved this session («Утверждаю, продолжи»); T108/T111/T112
-landed and committed clean (see below); T109 and T113 were mid-work when paused, kill checkpoints
-below. Next concrete action: pick up T109 first (it's the shared-primitive blocker for T110/T112 in
-M14) — read the current diff in `src/rogaine/vision/palette.py`/`tests/unit/vision/test_segment.py`,
-finish verifying the fix against all three of `ogps-8620`'s real out_of_bounds polygons (T108's
-diagnosis named all three) plus the purple-symbol fragment (false-positive check), run
-`docker compose run --rm tests` **in the foreground, not backgrounded** (~500s, use a >=600000ms
-timeout — do not use run_in_background/Monitor for this, subagents got stuck waiting on their own
-async notification twice this session), then write T109's own `docs/TASKS.md` entry (checkbox +
-findings) before touching T110. In parallel or after, pick up T113 the same way: it left 3 unresolved
-test failures in `tests/unit/vision/test_ocr_vlm.py`/`src/rogaine/vision/ocr_vlm.py` — get the actual
-failure output first (foreground run, same reasoning), diagnose, fix, re-verify green + `ruff check .`
-clean, then write T113's own entry. Both T109 and T113's `docs/TASKS.md` bullets carry an inline
-`⏸ paused mid-work — see STATUS.md` marker.
+**2026-09-16: T109 and T113 both landed and verified this session** (picked up from the
+2026-09-15 pause below, which is now historical — kept for the failure-mode record). Branch
+`iteration/I2-vision-recognition-fix`, tree not yet committed this session (see next action).
+Full suite **537 passed**, `ruff check .` clean, this session's own foreground run (522 baseline +
+4 new `test_segment.py` closure tests + T113's 11 `test_ocr_vlm.py` tests). Full account in
+`docs/TASKS.md`'s own T109/T113 entries.
 
-**Killed subagents (stopped via TaskStop mid-task, both stuck in the same pattern — launching a
-background/Monitor-tracked test run then ending their own turn before its notification arrived back
-to them, rather than running it inline):**
-- **T109** ("fix out-of-bounds region closure"): had already confirmed the fix works 100% on
-  `ogps-8620`'s main/largest polygon (T108's own measurement target) on the real scan. Was about to
-  check the other two smaller polygons and the purple-symbol fragment T108 flagged as an untested
-  edge case (this map's own controls print red, not purple, so the purple/out_of_bounds ink-sharing
-  collision `config/default.toml` warns about was never exercised), then intended to delete two
-  throwaway gitignored diagnostic scripts and run the full suite. Files already edited:
-  `src/rogaine/vision/palette.py` (+91 lines), `tests/unit/vision/test_segment.py` (+75 lines) —
-  `config/default.toml` untouched (unclear if a new `[palette]` tunable was needed or not — check the
-  diff). Suite not run to completion in my sight; needs a fresh, inline `docker compose run --rm
-  tests` before trusting green.
-- **T113** ("build VLM OCR client module"): `src/rogaine/vision/ocr_vlm.py`,
-  `tests/unit/vision/test_ocr_vlm.py`, and a new `pyproject.toml` optional-dependency group
-  (`ocr_vlm`, `anthropic>=1.0`) were already written. An earlier, incomplete suite run showed 3
-  failures — never diagnosed, tracebacks never seen by me. Design given to the agent (for context if
-  resuming from the diff cold): `read_control_number(image_bytes, *, model="claude-haiku-4-5",
-  client=None)`, forced tool-use with a strict schema for (digit_string, confidence), reads
-  `ANTHROPIC_API_KEY` directly (not the SDK's broader credential chain) and returns a typed
-  no-answer/unavailable outcome without ever constructing a real client when the key is absent, never
-  raises to its caller.
+**T109**: verified against all three of `ogps-8620`'s real polygons (not just T108's own largest
+measurement target) plus the purple-fragment false-positive check the prior session's kill
+checkpoint had flagged as still outstanding. That verification surfaced a real second finding: a
+synthetic-fixture IoU regression (`open_land` 0.9020, floor 0.95) caused by a course-overprint
+control bridging into the real polygon via shared `purple_100` ink (the exact untested edge case
+T108 had flagged) — fixed with a third guard, `min_solidity_fraction=0.70` (convex-hull solidity;
+a bridged two-blob "dumbbell" measures far lower than any genuine polygon). Re-verified clean.
 
-Test status: **not run this session's pause** — last known-green baseline is still 522 passed (see
-"Baseline I7" below), from before T108-T113 started. Everything since is unverified.
+**T113**: the 3 test failures the prior session's kill checkpoint reported never reproduced this
+session — `test_ocr_vlm.py` is 11/11 green in a fresh container run, `DEFAULT_MODEL =
+"claude-haiku-4-5"` confirmed current against the live model table.
+
+**Next concrete action**: commit this session's work (T109's `palette.py`/`test_segment.py`
+changes, T113 was already committed in the prior session's `050a11a` pause snapshot with no
+further code changes needed — confirm via `git status`/`git diff` before writing a commit message
+that claims more than actually changed), then pick up **T110** (M14: fix the lake crossing on
+`ogps-8620` + reclassify `veg_fight` impassable, ADR-037 owner ruling for the second half) — it
+depends on T109 (lands now) for the lake half only; the `veg_fight` half is independent and may
+land first. In parallel or after, pick up **T114** (M15: wire T113's VLM fallback into the OCR
+pipeline behind `[ocr_fallback].enabled=false`) — independent of M14, disjoint files.
+
+**2026-09-15 pause (historical — the kill-checkpoint failure mode this fixed):** paused
+mid-implementation with T108/T111/T112 landed and T109/T113 mid-work, both killed subagents having
+stuck in the same pattern — launching a background/Monitor-tracked test run then ending their own
+turn before its notification arrived back to them, rather than running it inline. T109 had already
+confirmed the fix on the largest polygon alone; T113 had an earlier, never-diagnosed 3-failure
+suite run. Both were resolved this session as described above — logging the pattern here as the
+reason this session's own equivalent runs were kept in the foreground / explicitly awaited instead.
 
 ---
 
@@ -306,9 +299,12 @@ Progress (M14+M15 in `docs/TASKS.md`, T108-T115):
 - [x] 3 docs amended (SPEC F4/F5/F8/F10/Summary/Integrations/Non-goals/NFR-Security/Risks#4
   extended, F23 added; DECISIONS ADR-036..039; TASKS M14 T108-T112 + M15 T113-T115)
 - [x] GATE — approved by the owner 2026-09-15 («Утверждаю, продолжи»)
-- [ ] 4 implementation — starting: T108/T111/T113 (no shared-file conflicts, dispatched together);
-  T109 depends on T108's diagnosis landing first (shared-primitive, serial); T110 depends on T109;
-  T112 depends on T111; T114/T115 depend on T113, strictly serial
+- [ ] 4 implementation — **5/8 landed**: T108, T109, T111, T112, T113 (see each task's own
+  `docs/TASKS.md` entry for the full diagnosis/fix/measurement account; T109 includes a
+  synthetic-fixture regression found and fixed this session, third guard `min_solidity_fraction`).
+  Full suite 537 passed, `ruff check .` clean, 2026-09-16 this session's own run. Remaining: T110
+  (M14, depends on T109 which has now landed), T114/T115 (M15, depend on T113 which has now
+  landed, strictly serial)
 - [ ] 5 verification
 - [ ] 6 review
 - [ ] 7 closed

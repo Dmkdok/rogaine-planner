@@ -192,6 +192,7 @@ def _close_out_of_bounds_regions(
     hatch_close_mm: float = 2.4,
     min_density_fraction: float = 0.25,
     min_closed_fraction: float = 0.70,
+    min_solidity_fraction: float = 0.70,
 ) -> np.ndarray:
     """Fill a hatched ``out_of_bounds`` polygon's whole enclosed interior (T109, ADR-036, F4).
 
@@ -235,6 +236,20 @@ def _close_out_of_bounds_regions(
       overlaps the real polygon's own density there (0.319) -- but the two are cleanly separable
       on ``min_closed_fraction`` alone (real polygon 0.847 vs. every ring+digit false positive
       0.537-0.608), so this second guard is load-bearing, not redundant.
+    * ``min_solidity_fraction`` -- ``filled_area / convex_hull_area`` of the same filled contour.
+      Added after the synthetic fixture's own IoU floor caught a case the two guards above cannot
+      separate: a course-overprint control that happens to land close enough to the real polygon's
+      own hatch to bridge directly into it (closing's kernel does not require them to touch, only
+      to come within its own radius) rather than sitting elsewhere on the map as its own isolated
+      component. That merged "dumbbell" measured density 0.319 and closed_fraction 0.847 --
+      statistically indistinguishable from a genuine large polygon (ogps-8620's own largest measured
+      0.567/1.0) -- because the control's own solid ink pulls both figures up to par. What it cannot
+      fake is shape: bridging two separate blobs across a real (if narrow) gap leaves a concave
+      waist between them, so the filled area covers noticeably less of its own convex hull than a
+      single chunky polygon does. Measured on ``ogps-8620``: the three real polygons (component
+      density 0.36-0.57) solidity 0.786-0.893, and even the rejected purple fragment (component
+      density 0.15, already excluded above) solidity 0.904; the bridged fixture false positive
+      0.598. 0.70 sits with comfortable margin on every side of that gap.
 
     ``hatch_close_mm`` is a paper distance, converted to pixels via *dpi* like every sibling
     geometric tunable in this project (never a hardcoded pixel count) -- calibration point:
@@ -265,7 +280,13 @@ def _close_out_of_bounds_regions(
             continue
         density = float(np.count_nonzero(raw & filled_mask)) / area
         closed_fraction = float(np.count_nonzero(closed & filled_mask)) / area
-        if density >= min_density_fraction and closed_fraction >= min_closed_fraction:
+        hull_area = cv2.contourArea(cv2.convexHull(contour))
+        solidity = area / hull_area if hull_area > 0 else 0.0
+        if (
+            density >= min_density_fraction
+            and closed_fraction >= min_closed_fraction
+            and solidity >= min_solidity_fraction
+        ):
             out[filled_mask] = oob
     return out
 
