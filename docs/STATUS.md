@@ -3,12 +3,13 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: Iteration I7 (M14+M15) — M14 and M15 both complete, all of T108-T116 landed (T116's local
-  Ollama backend at `1208c2d`; T115's real-scan measurement found and drove the ADR-041 blank-crop
-  fix at `c130129`). Suite: 560 passed, `ruff check .` clean. Remaining before I7 closes: the
-  milestone-level `reviewer` pass (not yet run) and STATUS/TASKS closure bookkeeping. Three older,
-  unrelated manual owner sign-offs also remain open (none block I7) — see "Blocked on the owner".
-  Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
+current: Iteration I7 (M14+M15) — **closed**. All of T108-T116 landed; milestone-level `reviewer`
+  pass 2026-09-17 (own live run): **PASS WITH WAIVERS**, no Critical findings, one High (H-1) filed
+  as open follow-up task **T117** in `docs/TASKS.md` (not blocking, unreachable at the shipped
+  `[ocr_fallback].enabled=false` default — but `provider="anthropic"` must not be turned on in a
+  real run until T117 lands). Suite: 560 passed, `ruff check .` clean, this session's own live run.
+  Three older, unrelated manual owner sign-offs remain open (none block I7) — see "Blocked on the
+  owner". Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
 
 ## Baseline I7
 `docker compose run --rm tests` — **522 passed**, exit 0, 491.89s, 1 warning (pre-existing
@@ -17,23 +18,28 @@ current: Iteration I7 (M14+M15) — M14 and M15 both complete, all of T108-T116 
 
 ## Resume here
 
-**2026-09-17.** Branch `iteration/I2-vision-recognition-fix`, tree at `a52008c` (docs-only pause
-snapshot) plus this session's STATUS.md tidy-up (uncommitted). **M14+M15 (T108-T116) are fully
-landed** — T116 (local Ollama backend, `1208c2d`) and T115 (real-scan measurement, drove the
-ADR-041 blank-crop fix, `c130129`) both done and verified last session. `docs/TASKS.md` and
-`docs/DECISIONS.md` (ADR-041) were already fully written; this session only brought `docs/STATUS.md`
-itself into agreement with the tree (checklist steps 4/5 flipped to `[x]`, test-report bumped to
-560 @ `c130129`, the deferred zero-ink finding recorded under the checklist).
+**2026-09-17, Iteration I7 closed.** Branch `iteration/I2-vision-recognition-fix`, 85 commits ahead
+of `master` (`master` untouched), tree clean. **M14+M15 (T108-T116) are fully landed and reviewed.**
+The milestone-level `reviewer` pass ran this session (own live suite/lint run, not trusted from
+prose): **PASS WITH WAIVERS** — no Critical, one High (H-1), four Medium, six Low. H-1 plus two of
+the Medium findings (M-1, M-2) are filed as open follow-up **T117** in `docs/TASKS.md` (M15
+section) — not started, not blocking closure (unreachable at the shipped `enabled=false` default).
+The remaining two Medium (T109's real-scan-only test coverage; no dedicated `OcrFallbackSettings`
+config tests) and six Low findings are recorded in the review narrative below, waived as documented
+debt, no task filed.
 
-**Next concrete action:** commit this STATUS.md update, then run I7's milestone-level `reviewer`
-pass over M14+M15 (T108-T116) — checklist step 6, same pattern as every prior iteration's own step 6
-(see `docs/status-archive.md`'s Iteration I3-I6 entries). Not yet started. After a clean review,
-steps 7 (closed) and 8 (deploy, optional) remain.
+**Next concrete actions, in order:**
+1. T117 (`docs/TASKS.md`, M15) — stop the OCR fallback from leaking into circle/scale detection via
+   `controls.py`'s scale gates, and harden a successful VLM read's own outcome. Do this before ever
+   setting `[ocr_fallback].provider="anthropic"` in a real run.
+2. The three older owner sign-offs below are still open in parallel, unaffected by this closure —
+   pick them up if the owner responds first.
+3. No new iteration is open. Deploy (I7 checklist step 8) was never decided as in-scope — ask the
+   owner if/when it matters, otherwise I7's own work is done.
 
-No subagents or background commands are running. Three older, unrelated manual owner sign-offs
-remain open in parallel, none blocking I7 — see "Blocked on the owner" below.
+No subagents or background commands are running.
 
-## Iteration I7: real-map routing correctness (out-of-bounds/water/ЛЭП/olive) and an opt-in VLM OCR fallback (M14 complete, M15 7/8 landed, branch `iteration/I2-vision-recognition-fix`)
+## Iteration I7: real-map routing correctness (out-of-bounds/water/ЛЭП/olive) and an opt-in VLM OCR fallback (closed, M14+M15/T108-T116 landed and reviewed, branch `iteration/I2-vision-recognition-fix`)
 
 Owner report, in-chat 2026-09-14, two screenshot crops from
 `data/maps/ogps-8620_502cda4f6c774e8ecb86d063a71895f6`: a solved route crossing a magenta ISOM 709
@@ -80,9 +86,36 @@ Progress (M14+M15 in `docs/TASKS.md`, T108-T116):
   2026-09-16 @ `c130129`.
 - [x] 5 verification — same run, this session's own foreground result (see "Resume here" and
   "Test report")
-- [ ] 6 review — milestone-level `reviewer` pass over M14+M15 (T108-T116), not yet run
-- [ ] 7 closed
-- [ ] 8 deploy (optional, not yet decided)
+- [x] 6 review — milestone-level `reviewer` pass over M14+M15 (T108-T116), 2026-09-17. **Verdict:
+  PASS WITH WAIVERS.** Own live suite run: 560 passed, exit 0, 538.70s; own live `ruff check .`:
+  clean. No Critical. Every T108-T116 DoD independently confirmed satisfied, including the two
+  points scrutinised hardest: the ADR-041 blank-crop guard (`ocr.py:404-406`, sits once before
+  dispatch to *either* backend, pinned by a parametrized regression test over both providers) and
+  the T114 `trigger_confidence` fix (`ocr.py:476`, genuinely decoupled from `min_ocr_confidence`,
+  pinned by its own regression test). One High: **H-1** — `controls.py`'s scale-selection gates
+  (`_ocr_gate_sub_base_scale`/`_ocr_gate_tied_scales`) call the OCR fallback too, so with
+  `[ocr_fallback].enabled=true` a VLM's answers can influence circle *position*/scale selection,
+  against SPEC Non-goals, and fan out an unmeasured number of paid calls over known-junk candidate
+  sets on `provider="anthropic"`; not reachable at the shipped `enabled=false` default. Filed as
+  **T117** (`docs/TASKS.md`, M15) along with two Medium findings that share its fix site: **M-1** a
+  successful VLM read is still reported as "unreadable" via the `flag` field (`ocr.py:478-481`,
+  contradicts `read_control_number`'s own docstring); **M-2** the model's returned digit string
+  isn't validated client-side before `int()` — Ollama's structured output doesn't reliably enforce
+  the schema's `^[0-9]{1,3}$` pattern the way Anthropic's `strict: True` does
+  (`ocr_vlm.py:172`, `ocr_vlm_ollama.py:65`, `ocr.py:422`). Waived, no task filed: **M-3** T109's
+  out-of-bounds closure fix has only negative test coverage without the gitignored real-scan corpus
+  present (the false-terrain-swallow direction is genuinely covered; the true-positive direction
+  isn't, on a clean checkout); **M-4** `OcrFallbackSettings` has no dedicated config-level tests.
+  Six Low, recorded not actioned: a stale "two guards" comment (`palette.py:216`, there are three
+  now); a potentially expensive per-contour full-raster allocation on maps with heavy purple
+  overprint (`palette.py:277-281`); `number_source` isn't cleared on a manual number edit
+  (`web/app.py:499`, consistent with the existing `source` field's own behaviour, not a regression);
+  no `.env`/`*.key` entry in `.gitignore`; SPEC F23's "byte-for-byte unchanged" wording slightly
+  overclaims (a 9th CSV column is always added, harmlessly); a missing Tesseract binary triggers the
+  fallback for an entire map. Full findings: this session's reviewer subagent transcript (not
+  separately filed — T117 and this entry are the durable record).
+- [x] 7 closed
+- [ ] 8 deploy (optional, not yet decided — ask the owner if/when relevant)
 
 Deferred, undiagnosed finding from T115 (not fixed, out of T115/T116's own scope): 16 controls
 across `ogps-8620` (6), `kkm-toksovo` (7) and `lembolovo-kkm` (3) have a crop with *zero ink at all*
@@ -98,10 +131,12 @@ this file's own "Resume here" is authoritative for current state.
 
 ## Test report
 
-`docker compose run --rm tests` — **560 passed**, exit 0, `ruff check .` clean. 2026-09-16, branch
-`iteration/I2-vision-recognition-fix` @ `c130129`, tree clean — this session's own foreground run,
-not piped through `tail`/trusted from a subagent's report. (T116's Ollama backend landed clean at
-`1208c2d`; T115's real-scan measurement then found the blank-crop bug fixed by ADR-041, `c130129`.)
+`docker compose run --rm tests` — **560 passed**, exit 0, 535.33s, 1 warning (pre-existing
+`httpx`/`starlette` deprecation notice, unrelated); `ruff check .` clean. 2026-09-17, branch
+`iteration/I2-vision-recognition-fix` @ `e26b9fb` (code unchanged since `c130129`; `e26b9fb` is
+docs-only), tree clean — this session's own foreground run, not piped through `tail`. Independently
+reproduced a second time the same session by the milestone `reviewer` subagent (560 passed, 538.70s,
+own separate run) before it wrote its verdict.
 
 Earlier entries (2026-08-19 through 2026-09-14): `docs/status-archive.md`.
 
@@ -145,6 +180,13 @@ Historical corpus-arrival/harvest/deleted-file detail (all resolved): `docs/stat
 
 ## Notes
 
+- 2026-09-17: I7's milestone review (T117/H-1) found that `config.ocr_fallback` propagates
+  unconditionally to every `read_control_numbers` caller, including `controls.py`'s scale-selection
+  probes — which exist purely to pick a scale/candidate-set from Tesseract's own read-count signal,
+  not to read numbers for real. Any future code path that calls into OCR machinery for a
+  detection/scoring purpose (not the final read) needs to force `ocr_fallback.enabled=False` on its
+  own probe config explicitly — the fallback being "opt-in, disabled by default" at the top level
+  does not stop it from firing inside an internal probe once the owner has opted in for real reads.
 - 2026-09-16: a subagent dispatched to implement a task, told explicitly (in its own prompt) to run
   the full test suite inline and wait for it, instead backgrounded `docker compose run --rm tests`
   and ended its own turn before the result came back — then kept re-notifying in a loop ("waiting
