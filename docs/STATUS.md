@@ -3,12 +3,11 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: Iteration I7 (M14+M15) — M14 complete (T108-T112), M15's automatable half complete
-  (T113/T114). T115 was blocked on a real `ANTHROPIC_API_KEY`; owner instead chose a local Ollama
-  backend (`qwen2.5vl:7b`, already installed) — ADR-040 amends ADR-039, adds **T116** (Ollama
-  backend) ahead of T115 in M15, gate approved 2026-09-16 («Утверждаю»). T115 is unblocked, no
-  longer needs owner API-key consent; T116 implementation is next. Three older, unrelated manual
-  owner sign-offs also remain open (none block I7) — see "Blocked on the owner".
+current: Iteration I7 (M14+M15) — M14 and M15 both complete, all of T108-T116 landed (T116's local
+  Ollama backend at `1208c2d`; T115's real-scan measurement found and drove the ADR-041 blank-crop
+  fix at `c130129`). Suite: 560 passed, `ruff check .` clean. Remaining before I7 closes: the
+  milestone-level `reviewer` pass (not yet run) and STATUS/TASKS closure bookkeeping. Three older,
+  unrelated manual owner sign-offs also remain open (none block I7) — see "Blocked on the owner".
   Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
 
 ## Baseline I7
@@ -18,44 +17,21 @@ current: Iteration I7 (M14+M15) — M14 complete (T108-T112), M15's automatable 
 
 ## Resume here
 
-**2026-09-16, paused mid-writeup.** Branch `iteration/I2-vision-recognition-fix`, tree committed
-**unverified** at `a52008c` (docs-only pause snapshot — not re-run, see below for why that's safe).
+**2026-09-17.** Branch `iteration/I2-vision-recognition-fix`, tree at `a52008c` (docs-only pause
+snapshot) plus this session's STATUS.md tidy-up (uncommitted). **M14+M15 (T108-T116) are fully
+landed** — T116 (local Ollama backend, `1208c2d`) and T115 (real-scan measurement, drove the
+ADR-041 blank-crop fix, `c130129`) both done and verified last session. `docs/TASKS.md` and
+`docs/DECISIONS.md` (ADR-041) were already fully written; this session only brought `docs/STATUS.md`
+itself into agreement with the tree (checklist steps 4/5 flipped to `[x]`, test-report bumped to
+560 @ `c130129`, the deferred zero-ink finding recorded under the checklist).
 
-**All code for M15 (T113-T116) is already done, committed, and verified** — the pause hit while
-writing the *docs narrative* up, not mid-code. In order this session: T116 (local Ollama backend,
-commit `1208c2d`) landed clean; T115's real-scan measurement then found a real bug (a blank/no-ink
-crop was being sent to the VLM, which confabulated a digit at confidence 1.0 every time — 16 of 43
-"successful" reads in the first pass were this, not genuine); fixed same-session as **ADR-041**
-(`_try_vlm_fallback` now skips the VLM call entirely on a blank crop, both backends, commit
-`c130129`). **Suite at `c130129`: 560 passed, `ruff check .` clean** — this session's own foreground
-run, not piped through `tail`. The docs-only pause commit `a52008c` on top changed no code, so that
-result still holds; nothing needs re-running.
+**Next concrete action:** commit this STATUS.md update, then run I7's milestone-level `reviewer`
+pass over M14+M15 (T108-T116) — checklist step 6, same pattern as every prior iteration's own step 6
+(see `docs/status-archive.md`'s Iteration I3-I6 entries). Not yet started. After a clean review,
+steps 7 (closed) and 8 (deploy, optional) remain.
 
-**Next concrete action:** `docs/TASKS.md` (T115/T116 entries) and `docs/DECISIONS.md` (ADR-041) are
-already fully written (part of `a52008c`) — just read them, they're complete. What's still missing
-is `docs/STATUS.md` itself: the "Iteration I7" progress checklist below (the 2026-09-16 addendum's
-own mini-checklist, steps 4/5/6/7/8 still show `[ ]` and need updating to reflect T116+T115 both
-landed) and the "## Test report" section (still shows the stale 545-passed number, needs bumping to
-560 @ `c130129`). Also worth adding there: a new **deferred, undiagnosed finding** from T115 — 16
-controls across `ogps-8620` (6), `kkm-toksovo` (7) and `lembolovo-kkm` (3) have a crop with
-*zero ink at all* after `_ocr_crop`'s masking, meaning the ink-isolation pipeline itself is erasing
-real printed numbers on these specific real scans (no VLM of any kind can read ink already gone
-before it's sent) — not fixed, out of scope for T115/T116, needs its own future task. Full context
-for all of this: `docs/TASKS.md` T115's own entry and `docs/DECISIONS.md` ADR-041, both already
-written in full.
-
-After that STATUS.md tidy-up, M14+M15 (T108-T116) are fully landed and I7 could get its
-milestone-level `reviewer` pass (same pattern as every prior iteration's own step 6, see
-`docs/status-archive.md`'s Iteration I3-I6 entries) — not yet run, not started.
-
-No subagents or background commands were running when the pause hit — nothing was killed, nothing
-needs rerunning.
-
-Three older, unrelated manual owner sign-offs remain open in parallel, none blocking I7 — see
-"Blocked on the owner" below, unchanged by this pause.
-
-Iteration I7's own live progress checklist is below, under "Iteration I7" (itself due for the
-same update as the "Next concrete action" above).
+No subagents or background commands are running. Three older, unrelated manual owner sign-offs
+remain open in parallel, none blocking I7 — see "Blocked on the owner" below.
 
 ## Iteration I7: real-map routing correctness (out-of-bounds/water/ЛЭП/olive) and an opt-in VLM OCR fallback (M14 complete, M15 7/8 landed, branch `iteration/I2-vision-recognition-fix`)
 
@@ -89,10 +65,9 @@ Progress (M14+M15 in `docs/TASKS.md`, T108-T116):
 - [x] 3 docs amended (SPEC extended + F23 added; DECISIONS ADR-036..039; TASKS M14 T108-T112 + M15
   T113-T115)
 - [x] GATE — approved by the owner 2026-09-15 («Утверждаю, продолжи»)
-- [ ] 4 implementation — **7/9 landed**: T108, T109, T110, T111, T112 (M14, complete), T113, T114
-  (M15). See each task's own `docs/TASKS.md` entry for the full diagnosis/fix/measurement account.
-  Full suite 545 passed, `ruff check .` clean, 2026-09-16. **Remaining: T116, T115** (M15 — see
-  "Resume here" above; T115 no longer blocked on the owner, just on T116 landing first).
+- [x] 4 implementation — **9/9 landed**: T108, T109, T110, T111, T112 (M14, complete), T113, T114,
+  T116, T115 (M15, complete). See each task's own `docs/TASKS.md` entry for the full diagnosis/fix/
+  measurement account. Full suite 560 passed, `ruff check .` clean, 2026-09-16 @ `c130129`.
 
 **2026-09-16 addendum (ADR-040, T116, T115 rescoped):**
 - [x] 1 delta intake agreed — iteration doc's own "Addendum" section
@@ -100,11 +75,20 @@ Progress (M14+M15 in `docs/TASKS.md`, T108-T116):
 - [x] 3 docs amended (SPEC F23/NFR-Security/Integrations amended; DECISIONS ADR-040; TASKS T116
   inserted, T115 deps/DoD widened)
 - [x] GATE — approved by the owner 2026-09-16 («Утверждаю»)
-- [ ] 4 implementation — not started
-- [ ] 5 verification
-- [ ] 6 review
+- [x] 4 implementation — **9/9 landed**: T116 (local Ollama backend, `1208c2d`), T115 (real-scan
+  measurement, found and drove the ADR-041 fix). Full suite 560 passed, `ruff check .` clean,
+  2026-09-16 @ `c130129`.
+- [x] 5 verification — same run, this session's own foreground result (see "Resume here" and
+  "Test report")
+- [ ] 6 review — milestone-level `reviewer` pass over M14+M15 (T108-T116), not yet run
 - [ ] 7 closed
 - [ ] 8 deploy (optional, not yet decided)
+
+Deferred, undiagnosed finding from T115 (not fixed, out of T115/T116's own scope): 16 controls
+across `ogps-8620` (6), `kkm-toksovo` (7) and `lembolovo-kkm` (3) have a crop with *zero ink at all*
+after `_ocr_crop`'s masking — the ink-isolation pipeline itself is erasing real printed numbers on
+these specific real scans, before any VLM (of either backend) ever sees the crop. Needs its own
+future task. Full context: `docs/TASKS.md` T115's own entry.
 
 ## History
 Full project narrative through Iteration I6 (M0-M13), every closed iteration's own progress
@@ -114,10 +98,10 @@ this file's own "Resume here" is authoritative for current state.
 
 ## Test report
 
-`docker compose run --rm tests` — **545 passed**, exit 0 (539 baseline + 6 new `TestVlmFallback`
-tests), 614.03s, 1 warning (pre-existing `httpx`/`starlette` deprecation, unrelated); `ruff check .`
-clean. 2026-09-16, branch `iteration/I2-vision-recognition-fix` @ `5f43df6`, tree clean — this
-session's own foreground run, not piped through `tail`/trusted from a subagent's report.
+`docker compose run --rm tests` — **560 passed**, exit 0, `ruff check .` clean. 2026-09-16, branch
+`iteration/I2-vision-recognition-fix` @ `c130129`, tree clean — this session's own foreground run,
+not piped through `tail`/trusted from a subagent's report. (T116's Ollama backend landed clean at
+`1208c2d`; T115's real-scan measurement then found the blank-crop bug fixed by ADR-041, `c130129`.)
 
 Earlier entries (2026-08-19 through 2026-09-14): `docs/status-archive.md`.
 
