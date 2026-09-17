@@ -2757,3 +2757,35 @@ the implementer's self-report.
   scans — no VLM fallback of any kind can read ink that was already erased before the crop reached
   it. Not fixed here (out of T115/T116's own scope, which was measuring the fallback and adding a
   backend, not re-tuning crop masking); flagged in `docs/STATUS.md` for a future task.
+- [ ] **T117** — Stop the OCR VLM fallback from leaking into circle/scale detection; harden a
+  successful VLM read's own outcome — paths: `src/rogaine/vision/controls.py`
+  (`_ocr_gate_sub_base_scale`, `_ocr_gate_tied_scales`), `src/rogaine/vision/ocr.py`
+  (`_try_vlm_fallback`), `src/rogaine/vision/ocr_vlm.py`, `src/rogaine/vision/ocr_vlm_ollama.py`,
+  `tests/unit/vision/test_controls.py`, `tests/unit/vision/test_ocr.py` — deps: T114, T116 — found
+  by I7's own milestone-level `reviewer` pass (2026-09-17, M14+M15/T108-T116, verdict PASS WITH
+  WAIVERS) — DoD, three findings folded into one task because the fix sites overlap:
+  - **H-1 (blocking — `[ocr_fallback].enabled=true`/`provider="anthropic"` must not be turned on in
+    a real run until this lands):** `controls.py:427`/`:429`'s scale-selection gates
+    (`_ocr_gate_sub_base_scale`, `_ocr_gate_tied_scales`) call `read_control_numbers` with the
+    caller's full config, so with the fallback enabled a VLM's answers help choose the winning scale
+    and can drop a whole candidate set (`controls.py:517,526`) — control **position**/circle
+    detection is supposed to stay classical CV (SPEC Non-goals), and these gates already run over
+    known-junk candidate sets (up to ~93% unread by `_SUB_BASE_JUNK_UNREAD_FRACTION`'s own
+    docstring), so this is also an unmeasured, potentially costly fan-out of paid calls on
+    `provider="anthropic"`. Fix: build a `probe_cfg` with `ocr_fallback.enabled` forced `False`
+    (`config.model_copy(update={"ocr_fallback": config.ocr_fallback.model_copy(update=
+    {"enabled": False})})`) and pass that into `read_control_numbers` from both gates — scale
+    selection only ever needed Tesseract's own signal. New test: neither backend spy fires during
+    `detect_controls` with `[ocr_fallback].enabled=true` in the passed config.
+  - **M-1:** a *successful* VLM read still gets counted and surfaced as unreadable — `ocr.py:478-481`
+    sets `flag` on the success path too, and `cli.py:336` prints it under "unreadable numbers",
+    contradicting `read_control_number`'s own docstring (`flag` is `None` when the number was read).
+    Fix: leave `flag=None` on a successful fallback read; the distinct VLM-sourced marking F23
+    requires already lives in `number_source`, so nothing needs the flag channel too.
+  - **M-2:** the model's returned digit string is trusted past the provider boundary without
+    client-side validation — `ocr_vlm.py:172`/`ocr_vlm_ollama.py:65` pass it through as-is, and
+    `ocr.py:422`'s `int(digit_string)` will accept anything Python's `int()` accepts. Anthropic
+    enforces `_TOOL_SCHEMA`'s `^[0-9]{1,3}$|^$` pattern via `strict: True`; Ollama's structured
+    `format=` does not reliably enforce `pattern`, so a malformed string can reach `int()` uncaught.
+    Fix: `re.fullmatch(r"[0-9]{1,3}", digit_string)` before parsing, in both parsers — ADR-041's own
+    premise (a VLM's self-report carries no trust) already covers this case, this just closes it.
