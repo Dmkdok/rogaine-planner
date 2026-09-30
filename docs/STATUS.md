@@ -3,13 +3,11 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: Iteration I7 (M14+M15) — **closed**. All of T108-T116 landed; milestone-level `reviewer`
-  pass 2026-09-17 (own live run): **PASS WITH WAIVERS**, no Critical findings, one High (H-1) filed
-  as open follow-up task **T117** in `docs/TASKS.md` (not blocking, unreachable at the shipped
-  `[ocr_fallback].enabled=false` default — but `provider="anthropic"` must not be turned on in a
-  real run until T117 lands). Suite: 560 passed, `ruff check .` clean, this session's own live run.
-  Three older, unrelated manual owner sign-offs remain open (none block I7) — see "Blocked on the
-  owner". Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
+current: Iteration I7 (M14+M15) — **closed**, and its review follow-up **T117 landed** 2026-09-30
+  (`8ecae40`, `reviewer` PASS). The OCR VLM fallback no longer reaches circle/scale detection, so
+  `[ocr_fallback].provider="anthropic"` is no longer blocked. Suite: 588 passed, ruff clean.
+  Three older, unrelated manual owner sign-offs remain open — see "Blocked on the owner".
+  Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
 
 ## Baseline I7
 `docker compose run --rm tests` — **522 passed**, exit 0, 491.89s, 1 warning (pre-existing
@@ -18,24 +16,20 @@ current: Iteration I7 (M14+M15) — **closed**. All of T108-T116 landed; milesto
 
 ## Resume here
 
-**2026-09-17, Iteration I7 closed.** Branch `iteration/I2-vision-recognition-fix`, 85 commits ahead
-of `master` (`master` untouched), tree clean. **M14+M15 (T108-T116) are fully landed and reviewed.**
-The milestone-level `reviewer` pass ran this session (own live suite/lint run, not trusted from
-prose): **PASS WITH WAIVERS** — no Critical, one High (H-1), four Medium, six Low. H-1 plus two of
-the Medium findings (M-1, M-2) are filed as open follow-up **T117** in `docs/TASKS.md` (M15
-section) — not started, not blocking closure (unreachable at the shipped `enabled=false` default).
-The remaining two Medium (T109's real-scan-only test coverage; no dedicated `OcrFallbackSettings`
-config tests) and six Low findings are recorded in the review narrative below, waived as documented
-debt, no task filed.
+**2026-09-30, T117 landed.** Branch `iteration/I2-vision-recognition-fix`, tree clean. T117 (the
+I7 milestone review's H-1 + M-1 + M-2, owner-approved «Утверждаю» 2026-09-30) is implemented in
+`8ecae40`: scale gates probe with the VLM fallback forced off, a successful VLM read no longer sets
+a flag, VLM digit strings are validated client-side. `reviewer` **PASS**, two Low waived (see the
+T117 entry in `docs/TASKS.md`). Iteration I7's remaining waived debt (two Medium, six Low) is
+unchanged — see the review narrative below.
 
 **Next concrete actions, in order:**
-1. T117 (`docs/TASKS.md`, M15) — stop the OCR fallback from leaking into circle/scale detection via
-   `controls.py`'s scale gates, and harden a successful VLM read's own outcome. Do this before ever
-   setting `[ocr_fallback].provider="anthropic"` in a real run.
-2. The three older owner sign-offs below are still open in parallel, unaffected by this closure —
-   pick them up if the owner responds first.
-3. No new iteration is open. Deploy (I7 checklist step 8) was never decided as in-scope — ask the
-   owner if/when it matters, otherwise I7's own work is done.
+1. The three older owner sign-offs below are still open — pick them up if the owner responds.
+2. No iteration is open. Deploy (I7 checklist step 8) was never decided as in-scope — ask the
+   owner if/when it matters.
+3. Known undiagnosed gap (from T116): the ink-isolation steps in `_ocr_crop` erase real printed
+   numbers on 16 controls across `ogps-8620`/`kkm-toksovo`/`lembolovo-kkm` — candidate for a
+   future task if the owner wants more numbers read.
 
 No subagents or background commands are running.
 
@@ -131,12 +125,11 @@ this file's own "Resume here" is authoritative for current state.
 
 ## Test report
 
-`docker compose run --rm tests` — **560 passed**, exit 0, 535.33s, 1 warning (pre-existing
-`httpx`/`starlette` deprecation notice, unrelated); `ruff check .` clean. 2026-09-17, branch
-`iteration/I2-vision-recognition-fix` @ `e26b9fb` (code unchanged since `c130129`; `e26b9fb` is
-docs-only), tree clean — this session's own foreground run, not piped through `tail`. Independently
-reproduced a second time the same session by the milestone `reviewer` subagent (560 passed, 538.70s,
-own separate run) before it wrote its verdict.
+`docker compose run --rm tests` — **588 passed**, exit 0, 580.23s, 1 warning (pre-existing
+`httpx`/`starlette` deprecation notice, unrelated); `ruff check src tests` clean. 2026-09-30,
+T117's working tree (committed unchanged as `8ecae40`) — run by the `implementer` subagent, not
+re-run in the main thread; the `reviewer` independently ran the four touched test files (124
+passed, exit 0) and ruff. Previous full run: 560 passed, 2026-09-17 @ `e26b9fb`.
 
 Earlier entries (2026-08-19 through 2026-09-14): `docs/status-archive.md`.
 

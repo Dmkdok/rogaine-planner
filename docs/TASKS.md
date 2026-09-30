@@ -2757,7 +2757,7 @@ the implementer's self-report.
   scans — no VLM fallback of any kind can read ink that was already erased before the crop reached
   it. Not fixed here (out of T115/T116's own scope, which was measuring the fallback and adding a
   backend, not re-tuning crop masking); flagged in `docs/STATUS.md` for a future task.
-- [ ] **T117** — Stop the OCR VLM fallback from leaking into circle/scale detection; harden a
+- [x] **T117** — Stop the OCR VLM fallback from leaking into circle/scale detection; harden a
   successful VLM read's own outcome — paths: `src/rogaine/vision/controls.py`
   (`_ocr_gate_sub_base_scale`, `_ocr_gate_tied_scales`), `src/rogaine/vision/ocr.py`
   (`_try_vlm_fallback`), `src/rogaine/vision/ocr_vlm.py`, `src/rogaine/vision/ocr_vlm_ollama.py`,
@@ -2789,3 +2789,11 @@ the implementer's self-report.
     `format=` does not reliably enforce `pattern`, so a malformed string can reach `int()` uncaught.
     Fix: `re.fullmatch(r"[0-9]{1,3}", digit_string)` before parsing, in both parsers — ADR-041's own
     premise (a VLM's self-report carries no trust) already covers this case, this just closes it.
+  **Done 2026-09-30** (`8ecae40`): `_probe_config` in `controls.py` feeds all three gate reads;
+  success-path `flag=None`; `re.fullmatch` in both parsers, `ValueError` folded into `NO_ANSWER` by
+  the backends' `except Exception` (`.strip()` dropped, so `" 7"` is now rejected — fails safe).
+  New tests: `TestOcrGatesDisableVlmFallback` (verified red on the old code by the reviewer: 6
+  Anthropic calls), malformed/valid digit-string parametrizations in both backend test files.
+  Suite 588 passed, ruff clean. `reviewer`: **PASS**, two Low, waived — L-1 whitespace-padded Ollama
+  answers now unread (recover with a `\s*`-tolerant capture if a real run shows them); L-2 CLI no
+  longer reports VLM-assisted reads (only the CSV `number_source` column shows them).
