@@ -670,6 +670,95 @@ class TestHubFoundOnOzeroShchuche:
         )
 
 
+class TestOcrGatesDisableVlmFallback:
+    """T117/H-1: the scale-selection gates must never let the opt-in VLM fallback run -- circle
+    detection stays classical CV, and these gates probe known-junk candidate sets."""
+
+    @staticmethod
+    def _capturing_stub(seen: list):
+        def stub(image, controls, dpi, config):
+            seen.append(config.ocr_fallback.enabled)
+            return [c.model_copy(update={"number": 1}) for c in controls], []
+
+        return stub
+
+    @staticmethod
+    def _enabled_config(provider: str):
+        cfg = default_config()
+        return cfg.model_copy(
+            update={
+                "ocr_fallback": cfg.ocr_fallback.model_copy(
+                    update={"enabled": True, "provider": provider}
+                )
+            }
+        )
+
+    @pytest.mark.parametrize("provider", ["anthropic", "ollama"])
+    def test_sub_base_gate_probes_with_fallback_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_sub_base_scale
+
+        seen: list[bool] = []
+        monkeypatch.setattr(ocr_module, "read_control_numbers", self._capturing_stub(seen))
+        cfg = self._enabled_config(provider)
+        sub_base = [(10.0, 10.0, 5.0, 0.9)]
+        production = [(30.0, 30.0, 5.0, 0.9)]
+
+        _ocr_gate_sub_base_scale(
+            np.zeros((10, 10, 3), dtype=np.uint8),
+            200.0,
+            cfg,
+            [(0.5, sub_base), (1.0, production)],
+            sub_base,
+        )
+
+        assert len(seen) == 2 and not any(seen)  # sub-1.0 probe and production probe
+        assert cfg.ocr_fallback.enabled is True  # caller's config not mutated
+
+    @pytest.mark.parametrize("provider", ["anthropic", "ollama"])
+    def test_tied_scales_gate_probes_with_fallback_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        import rogaine.vision.ocr as ocr_module
+        from rogaine.vision.controls import _ocr_gate_tied_scales
+
+        seen: list[bool] = []
+        monkeypatch.setattr(ocr_module, "read_control_numbers", self._capturing_stub(seen))
+        cfg = self._enabled_config(provider)
+        cands = [(10.0, 10.0, 5.0, 0.9)]
+
+        _ocr_gate_tied_scales(
+            np.zeros((10, 10, 3), dtype=np.uint8),
+            200.0,
+            cfg,
+            [(2.0, cands), (2.5, list(cands))],
+            cands,
+        )
+
+        assert len(seen) == 2 and not any(seen)
+
+    @pytest.mark.parametrize("provider", ["anthropic", "ollama"])
+    def test_no_backend_fires_during_detect_controls(
+        self, synthetic_map, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        """End to end: with the fallback enabled, neither backend is ever called by detection."""
+        from unittest.mock import MagicMock
+
+        from rogaine.vision import ocr_vlm, ocr_vlm_ollama
+
+        anthropic_spy, ollama_spy = MagicMock(), MagicMock()
+        monkeypatch.setattr(ocr_vlm, "read_control_number", anthropic_spy)
+        monkeypatch.setattr(ocr_vlm_ollama, "read_control_number", ollama_spy)
+        sm = synthetic_map
+
+        detect_controls(sm.image, sm.dpi, self._enabled_config(provider))
+
+        anthropic_spy.assert_not_called()
+        ollama_spy.assert_not_called()
+
+
 class TestOcrGateSubBaseScale:
     """T090/ADR-031 (independent review finding H2): `_ocr_gate_sub_base_scale`'s branches,
     driven directly with a stubbed `read_control_numbers` -- its only prior coverage was three

@@ -741,7 +741,7 @@ class TestVlmFallback:
         assert updated.number == 42
         assert updated.number_source == "vlm"
         assert updated.points == _apply_points_rule(42, cfg.detector)
-        assert flag is not None and "found no digits" not in flag and "read '42'" in flag
+        assert flag is None
 
     def test_low_confidence_tesseract_read_triggers_a_successful_fallback(
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
@@ -764,7 +764,7 @@ class TestVlmFallback:
         assert updated.number == 17
         assert updated.number_source == "vlm"
         assert updated.points == _apply_points_rule(17, cfg.detector)
-        assert flag is not None and "found no digits" not in flag and "read '17'" in flag
+        assert flag is None
 
     def test_no_answer_from_the_fallback_falls_through_to_f8s_null_flagged_behaviour(
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
@@ -831,7 +831,7 @@ class TestVlmFallback:
         spy.assert_called_once()
         assert updated.number == 17
         assert updated.number_source == "vlm"
-        assert flag is not None and "read '17'" in flag
+        assert flag is None
 
     def test_provider_ollama_dispatches_to_the_ollama_module_not_anthropic(
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch
@@ -866,7 +866,7 @@ class TestVlmFallback:
         anthropic_spy.assert_not_called()
         assert updated.number == 42
         assert updated.number_source == "vlm"
-        assert flag is not None and "read '42'" in flag
+        assert flag is None
 
     def test_provider_anthropic_shipped_default_never_calls_the_ollama_module(
         self, clean_synthetic_map, monkeypatch: pytest.MonkeyPatch

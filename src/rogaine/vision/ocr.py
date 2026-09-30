@@ -478,7 +478,7 @@ def read_control_number(
         if vlm_number is not None:
             number = vlm_number
             number_source = "vlm"
-            flag = f"control {control.id}: OCR fallback (VLM) read '{vlm_number}'"
+            flag = None  # read successfully; the VLM marking lives in `number_source`
 
     overall_confidence = min(control.confidence, ocr_confidence)
     points = _apply_points_rule(number, det)

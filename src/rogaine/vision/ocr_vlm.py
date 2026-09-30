@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -169,10 +170,12 @@ def _parse_tool_response(response: Any) -> VlmOcrResult:
         )
         if is_target_tool_use:
             tool_input = dict(block.input)
-            digit_string = str(tool_input["digit_string"]).strip()
+            digit_string = str(tool_input["digit_string"])
             confidence = float(tool_input["confidence"])
-            if not digit_string:
+            if not digit_string.strip():
                 return VlmOcrResult.no_answer()
+            if not re.fullmatch(r"[0-9]{1,3}", digit_string):
+                raise ValueError(f"malformed digit_string: {digit_string!r}")
             return VlmOcrResult(
                 outcome=Outcome.READ,
                 digit_string=digit_string,

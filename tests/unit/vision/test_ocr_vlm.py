@@ -131,6 +131,25 @@ class TestCouldNotRead:
         assert could_not_read.outcome is Outcome.NO_ANSWER
         assert could_not_read.digit_string is None
 
+    @pytest.mark.parametrize("malformed", ["12a", " 7", "1234", "-5", "٣", "7 ", "1.5"])
+    def test_malformed_digit_string_is_treated_as_unread(self, malformed: str) -> None:
+        """T117/M-2: the model's digit string is validated client-side (`[0-9]{1,3}`); anything
+        else is the same typed no-answer as any other malformed response, never a READ."""
+        client = _FakeClient(result=_tool_response(malformed, 0.9))
+
+        result = read_control_number(_IMAGE_BYTES, client=client)
+
+        assert result.outcome is Outcome.NO_ANSWER
+        assert result.digit_string is None
+
+    @pytest.mark.parametrize("ok", ["0", "7", "42", "201"])
+    def test_one_to_three_ascii_digits_still_read(self, ok: str) -> None:
+        client = _FakeClient(result=_tool_response(ok, 0.9))
+        result = read_control_number(_IMAGE_BYTES, client=client)
+
+        assert result.outcome is Outcome.READ
+        assert result.digit_string == ok
+
 
 class TestMissingApiKey:
     """(c) no `ANTHROPIC_API_KEY` -> no-answer, and no client is ever constructed or called."""

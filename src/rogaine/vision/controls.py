@@ -434,6 +434,18 @@ def _detect_circles(
     return [c for c in selected if c[3] >= _AUTO_PLACEMENT_CONFIDENCE_FLOOR]
 
 
+def _probe_config(config: AppConfig) -> AppConfig:
+    """T117/H-1: `config` with `[ocr_fallback].enabled` forced off, for the scale-selection gates.
+
+    Those gates only ever need Tesseract's own read/unread signal to choose between candidate
+    sets; letting a VLM answer there would leak a paid/opt-in model into circle detection (which
+    stays classical CV) and fan out calls over known-junk candidate sets.
+    """
+    return config.model_copy(
+        update={"ocr_fallback": config.ocr_fallback.model_copy(update={"enabled": False})}
+    )
+
+
 def _ocr_gate_sub_base_scale(
     image: np.ndarray,
     dpi: float,
@@ -497,8 +509,9 @@ def _ocr_gate_sub_base_scale(
             for i, (x, y, r, coverage) in enumerate(candidates, start=1)
         ]
 
+    probe_cfg = _probe_config(config)
     sub_updated, _flags = read_control_numbers(
-        image, _controls_for(sub_base_candidates), dpi, config
+        image, _controls_for(sub_base_candidates), dpi, probe_cfg
     )
     filtered_sub = [
         cand
@@ -517,7 +530,7 @@ def _ocr_gate_sub_base_scale(
         return filtered_sub if junk_dominated else sub_base_candidates
 
     prod_updated, _flags = read_control_numbers(
-        image, _controls_for(production_candidates), dpi, config
+        image, _controls_for(production_candidates), dpi, probe_cfg
     )
     prod_ok = sum(1 for c in prod_updated if c.number is not None)
 
@@ -577,8 +590,10 @@ def _ocr_gate_tied_scales(
             for i, (x, y, r, coverage) in enumerate(candidates, start=1)
         ]
 
+    probe_cfg = _probe_config(config)
+
     def _read_count(candidates: list[tuple[float, float, float, float]]) -> int:
-        updated, _flags = read_control_numbers(image, _controls_for(candidates), dpi, config)
+        updated, _flags = read_control_numbers(image, _controls_for(candidates), dpi, probe_cfg)
         return sum(1 for c in updated if c.number is not None)
 
     best_candidates = tied[0]

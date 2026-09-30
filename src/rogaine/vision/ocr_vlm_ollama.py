@@ -25,6 +25,7 @@ guarantee:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 try:
@@ -62,10 +63,12 @@ def _parse_chat_response(response: Any) -> VlmOcrResult:
     as a connection failure, never propagating a parse error to the caller.
     """
     payload = json.loads(response.message.content)
-    digit_string = str(payload["digit_string"]).strip()
+    digit_string = str(payload["digit_string"])
     confidence = float(payload["confidence"])
-    if not digit_string:
+    if not digit_string.strip():
         return VlmOcrResult.no_answer()
+    if not re.fullmatch(r"[0-9]{1,3}", digit_string):
+        raise ValueError(f"malformed digit_string: {digit_string!r}")
     return VlmOcrResult(
         outcome=Outcome.READ,
         digit_string=digit_string,
