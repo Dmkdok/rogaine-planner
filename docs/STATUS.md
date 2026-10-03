@@ -21,6 +21,22 @@ current: Iteration I8 (M16-M19) — **delta written, awaiting owner approval** (
 
 ## Resume here
 
+**2026-10-03, T119 labelling session paused (`/pause`, second session).** 16 of 20 maps have
+`data/maps/<map>/truth.toml` (gitignored): toksovo-zubry, ogps-9905/6802/7302/8078/8620,
+history-race-2024-michurinskoe, history-race-primorsk, kkm-3-2020, ozero-shchuche (byte-identical
+copy), kkm-5-2020, kkm-toksovo, lembolovo-kkm, michurinskoe, novo-kavgolovsky-lesopark, pervomayskoe.
+Source of truth for labels = `data/_t119/labels.py` (per-map corrections over detector drafts in
+`data/_t119/drafts/*.json`); regenerate all truth files with `.venv/Scripts/python data/_t119/build.py`.
+Helpers there: `tiles.py`, `crop.py`, `crops.py`, `sheet.py`, `probes.py`, `lines.py`, `verify.py`,
+`showbar.py`; drafts were made with `docker compose run --rm tests python data/_t119/draft.py ...`
+(tesseract is only in Docker). meta.toml written by hand for the owner maps (scale bar / printed
+scale; pervomayskoe has no scale -> assumed 1:7500 @300dpi, flagged for the owner).
+**Next action:** pervomayskoe class sheet was just reviewed — in `data/_t119/labels.py` drop its
+probes 0,1,3 (forest on blank paper outside the map) and 6 (open on a dot), rebuild; then label
+toksovo-1 and treugolnoe, pick two more ogps maps for print variety (draft them in Docker), write
+`data/bench.toml` (`maps = [...]`), run `rogaine evaluate --vlm off|auto` in Docker and record the
+baseline in the T119 entry of `docs/TASKS.md`. Tests: not run, paused 2026-10-03.
+
 **2026-10-03, paused (`/pause`).** Branch `iteration/I8-recognition-overhaul`, head `ecc5b74`; tree
 had nothing tracked to commit. Per git log the GATE is passed: `0287c12` (I8 docs) and `ecc5b74`
 (T118 truth.toml schema + `rogaine evaluate`) are committed — the checklist below is stale on that.
