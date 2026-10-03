@@ -21,6 +21,15 @@ current: Iteration I8 (M16-M19) — **delta written, awaiting owner approval** (
 
 ## Resume here
 
+**2026-10-03, paused (`/pause`).** Branch `iteration/I8-recognition-overhaul`, head `ecc5b74`; tree
+had nothing tracked to commit. Per git log the GATE is passed: `0287c12` (I8 docs) and `ecc5b74`
+(T118 truth.toml schema + `rogaine evaluate`) are committed — the checklist below is stale on that.
+In progress: T119 (Claude labels ~20 maps, records baseline). Untracked `data/_t119/` (291 files,
+~441 MB, working data) deliberately left out of the commit — not gitignored, do not `git add -A`.
+**Next action:** inspect `data/_t119/` to see how many maps already have a truth.toml, then continue
+labelling per T119 in `docs/TASKS.md` (M16). Tests: not run, paused 2026-10-03.
+No subagents or background commands are running.
+
 **2026-10-02, Iteration I8 delta written, GATE pending.** Branch `iteration/I8-recognition-overhaul`.
 The owner reported (`toksovo-zubry`: fence routed as a road, black-banked river crossed;
 `ogps-9905`: 7 numbers unread) that ten iterations patched symptoms without converging. Root-cause
