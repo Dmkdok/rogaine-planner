@@ -502,3 +502,71 @@ def _degrade(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     if not ok:  # pragma: no cover — cv2 does not fail at this without a broken build
         return out
     return cv2.imdecode(buf, cv2.IMREAD_COLOR)[:, :, ::-1].copy()
+
+
+#: Which family a probe point of a fixture class is labelled with. Classes with no entry (contour,
+#: unknown) are never probed; thin linear classes are probed only where the stroke is wide enough.
+_PROBE_FAMILY: dict[TerrainClass, str] = {
+    TerrainClass.OPEN_LAND: "open",
+    TerrainClass.ROUGH_OPEN: "open",
+    TerrainClass.FOREST_RUNNABLE: "forest",
+    TerrainClass.VEG_SLOW_RUN: "vegetation",
+    TerrainClass.VEG_WALK: "vegetation",
+    TerrainClass.VEG_FIGHT: "vegetation",
+    TerrainClass.MARSH: "marsh",
+    TerrainClass.WATER_SHALLOW: "water",
+    TerrainClass.WATER_UNCROSSABLE: "impassable",
+    TerrainClass.BARE_ROCK: "rock",
+    TerrainClass.PAVED_AREA: "paved",
+    TerrainClass.OUT_OF_BOUNDS: "out_of_bounds",
+}
+
+
+def make_truth(sm: SyntheticMap, *, margin_px: int = 6, inset_px: int = 8):
+    """The `truth.toml` content (an `rogaine.eval.truth.Truth`) for *sm*: its hub and controls, one
+    class probe per terrain class at the point deepest inside that class's largest clear region
+    (>= `margin_px` from any other class, contour or map-text ink), and one barrier probe across
+    the largest uncrossable-water body (a on its west side, b on its east, barrier = the outline of
+    its core, `inset_px` inside the shore: a path that merely hugs the shore is not a crossing,
+    one that wades into the lake is).
+    """
+    from rogaine.eval.truth import BarrierProbe, ClassProbe, Truth, TruthControl, TruthPoint
+
+    inked = sm.contour_mask | sm.noise_mask
+    class_probes: list[ClassProbe] = []
+    for cls, family in _PROBE_FAMILY.items():
+        mask = (sm.labels == terrain_label(cls)) & ~inked
+        dist = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
+        if dist.max() < margin_px:
+            continue
+        y, x = np.unravel_index(int(np.argmax(dist)), dist.shape)
+        class_probes.append(ClassProbe(x=float(x), y=float(y), expected=family))
+
+    barrier_probes: list[BarrierProbe] = []
+    water = (sm.labels == terrain_label(TerrainClass.WATER_UNCROSSABLE)).astype(np.uint8)
+    n, comp, stats, _ = cv2.connectedComponentsWithStats(water)
+    if n > 1:
+        k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        core = cv2.erode((comp == k).astype(np.uint8), np.ones((2 * inset_px + 1,) * 2, np.uint8))
+        contours, _h = cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        outline = max(contours, key=cv2.contourArea)[:, 0, :] if contours else None
+        row = int(np.argmax((comp == k).sum(axis=1)))  # the lake's widest row
+        cols = np.nonzero(comp[row] == k)[0]
+        a_x, b_x = int(cols.min()) - 12, int(cols.max()) + 12
+        w = sm.shape[1]
+        if outline is not None and len(outline) >= 2 and 0 <= a_x < w and 0 <= b_x < w:
+            barrier_probes.append(
+                BarrierProbe(
+                    a=(float(a_x), float(row)),
+                    b=(float(b_x), float(row)),
+                    barrier=tuple((float(px), float(py)) for px, py in [*outline, outline[0]]),
+                )
+            )
+
+    hub = sm.hub
+    return Truth(
+        hub=TruthPoint(x=hub.x, y=hub.y),
+        controls=tuple(TruthControl(number=c.number, x=c.x, y=c.y) for c in sm.controls[1:]),
+        barrier_probes=tuple(barrier_probes),
+        class_probes=tuple(class_probes),
+    )

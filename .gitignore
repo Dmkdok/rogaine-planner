@@ -1,5 +1,6 @@
 # Map corpus — never committed (ADR-010)
 data/maps/
+data/bench.toml
 data/**/*.ocd
 data/**/*.png
 data/**/*.jpg

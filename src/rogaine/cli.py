@@ -27,6 +27,8 @@ from rogaine.config import AppConfig, default_config, load_config
 from rogaine.cost.field import compute_cost_field
 from rogaine.cost.graph import build_grid_graph
 from rogaine.cost.travel import build_travel_matrix
+from rogaine.eval.evaluate import Metrics, evaluate_map, load_bench_set, with_vlm
+from rogaine.eval.truth import load_truth
 from rogaine.io.controls_csv import read_controls, write_controls
 from rogaine.io.corpus import CorpusEntry, list_corpus, read_entry
 from rogaine.io.raster import load_raster, resolve_dpi
@@ -644,6 +646,77 @@ def bench(
 
     verdict = "green" if gap <= 0.05 else "red"
     console.print(f"gap: [{verdict}]{gap:.2%}[/] (F13 bar: <= 5.00%)")
+
+
+def _ratio(v: float | None) -> str:
+    return "-" if v is None else f"{v:.3f}"
+
+
+@app.command("evaluate")
+def evaluate_cmd(
+    bench_set: Path = typer.Option(
+        Path("data/bench.toml"), "--set", help="Bench set TOML listing the labelled maps (ADR-042)."
+    ),
+    vlm: str = typer.Option(
+        "off", "--vlm", help="'off' disables the OCR VLM fallback; 'auto' enables it (F23)."
+    ),
+    config: Path | None = typer.Option(None, "--config", help="Config TOML overriding defaults."),
+) -> None:
+    """Score detection, number reading, class probes and barrier probes against labelled
+    `truth.toml` files; print per-map and total metrics (F25, ADR-042)."""
+    try:
+        cfg = with_vlm(load_config(config), vlm)
+        root, map_ids = load_bench_set(bench_set)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title=f"evaluate: {bench_set} (vlm={vlm})")
+    for col in ("map", "recall", "precision", "hub", "num ok", "wrong", "unread", "class acc"):
+        table.add_column(col, justify="left" if col == "map" else "right")
+    table.add_column("barrier crossed", justify="right")
+    table.add_column("crossings", justify="right")
+
+    def add_row(name: str, m: Metrics) -> None:
+        hub = f"{m.hub_found}/{m.hub_truth}"
+        cls = f"{_ratio(m.class_accuracy)} ({m.class_correct}/{m.class_probes})"
+        unreach = f" +{m.barrier_unreachable} unreachable" if m.barrier_unreachable else ""
+        table.add_row(
+            name,
+            f"{_ratio(m.recall)} ({m.matched_circles}/{m.truth_circles})",
+            f"{_ratio(m.precision)} ({m.matched_circles}/{m.detected_circles})",
+            hub,
+            str(m.numbers_correct),
+            str(m.numbers_wrong),
+            str(m.numbers_unread),
+            cls,
+            f"{m.barrier_crossed}/{m.barrier_probes}{unreach}",
+            str(m.barrier_crossings),
+        )
+
+    total = Metrics()
+    failed: list[str] = []
+    for map_id in map_ids:
+        try:
+            entry = read_entry(root / map_id)
+            truth = load_truth(root / map_id / "truth.toml")
+            mpp = entry.meters_per_pixel
+            if entry.raster is None or mpp is None:
+                raise ValueError(f"not plannable: missing {', '.join(entry.missing[:2])}")
+            dpi = resolve_dpi(entry.raster, user_dpi=entry.dpi)
+            image = load_raster(entry.raster, dpi=dpi)
+            m = evaluate_map(image, dpi, mpp, truth, cfg)
+        except (ValueError, OSError) as exc:
+            failed.append(f"{map_id}: {exc}")
+            continue
+        add_row(map_id, m)
+        total = total + m
+    add_row("TOTAL", total)
+    console.print(table)
+    for msg in failed:
+        console.print(f"[red]skipped {msg}[/]")
+    if failed:
+        raise typer.Exit(code=1)
 
 
 @app.command("serve")

@@ -2803,7 +2803,7 @@ the implementer's self-report.
 > Lands first: every later I8 milestone is accepted against `rogaine evaluate` numbers (ADR-042).
 > Truth files and the set list are gitignored (ADR-010); only code and tests are committed.
 
-- [ ] **T118** — Truth schema and evaluator — paths: `src/rogaine/eval/` (new), `src/rogaine/cli.py`
+- [x] **T118** — Truth schema and evaluator — paths: `src/rogaine/eval/` (new), `src/rogaine/cli.py`
   (`evaluate` command only), `tests/unit/eval/` (new), `tests/fixtures/synth_map.py` (truth-file
   emitter only) — deps: none — DoD: `truth.toml` schema (controls `number,x,y`; hub; barrier probes
   `a, b, barrier polyline`; class probes `x, y, expected family`) is validated by pydantic;
