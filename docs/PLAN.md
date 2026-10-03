@@ -10,7 +10,9 @@ viewer. See [SPEC.md](SPEC.md) for requirement IDs (F1-F19) referenced by the ta
 - **Chosen:** Python 3.12 (in Docker) · numpy · opencv-python-headless · scipy (`sparse.csgraph`) ·
   scikit-image · Pillow · pypdfium2 · pydantic v2 · typer + rich · FastAPI + uvicorn ·
   vanilla JS + Canvas 2D for the viewer · pytest + pytest-cov · Playwright · uv for dependency
-  management · Tesseract (system package, only for control numbers).
+  management · Tesseract (system package, only for control numbers; I8/ADR-045 replaces it with
+  RapidOCR — PP-OCR models on onnxruntime, baked into the image — once the benchmark shows parity) ·
+  optional local Ollama VLM for the tiled control/number pass (I8/ADR-046, mode `auto`).
   Optional M7 only: PyTorch 2.12 + transformers (SegFormer MiT-B4), CUDA on the local RTX 3060 Ti.
 - **Alternatives considered:**
   - *Neural segmentation first (the article's path).* Rejected as the primary route: ISOM colours are
@@ -24,7 +26,8 @@ viewer. See [SPEC.md](SPEC.md) for requirement IDs (F1-F19) referenced by the ta
   - *React + Vite viewer.* Rejected: a node toolchain for one canvas page. Vanilla JS keeps the whole
     product a single `pip install` and one process.
   - *EasyOCR / a VLM for numbers.* Rejected: torch or a paid API for two digits, when OCR is
-    explicitly non-load-bearing and hand-editable.
+    explicitly non-load-bearing and hand-editable. *Reversed by I8 (ADR-045/ADR-046):* seven rounds
+    of Tesseract tuning did not converge; RapidOCR (no torch) and a local, cached VLM replace it.
   - *Python 3.14 on the host.* Rejected as the run target: it is two minor versions ahead of most CV
     wheels. Docker pins 3.12; host use stays best-effort.
 
@@ -88,7 +91,9 @@ pydantic models, overridable by `--config` and by individual CLI flags (F18).
     vision/contours.py      contour mask -> density -> slope factor       (F6)
     vision/segment.py       orchestrates the above -> TerrainMap
     vision/controls.py      purple mask, Hough circles, start marker      (F7)
-    vision/ocr.py           digit reading, confidence, fallbacks          (F8)
+    vision/ocr.py           global number words, assignment, reading      (F8)
+    vision/ocr_rapid.py     RapidOCR recogniser wrapper (I8)              (F8)
+    vision/vlm_controls.py  tiled whole-map VLM pass + circle snap (I8)   (F7, F23)
     cost/field.py           TerrainMap + speed -> CostField               (F10)
     cost/graph.py           CostField -> scipy CSR grid graph
     cost/travel.py          multi-source Dijkstra -> TravelMatrix + paths (F11)
@@ -98,7 +103,8 @@ pydantic models, overridable by `--config` and by individual CLI flags (F18).
     solve/alternatives.py   top-K distinct routes                         (F16)
     render/preview.py       terrain preview PNG
     render/overlay.py       route over map PNG                            (F15)
-    cli.py                  typer: segment, detect, plan, bench, serve
+    eval/                   truth files, benchmark metrics (I8)           (F25)
+    cli.py                  typer: segment, detect, plan, bench, evaluate, serve
     web/app.py              FastAPI endpoints                             (F17)
     web/static/             index.html, app.js, style.css (Canvas 2D)
   tests/

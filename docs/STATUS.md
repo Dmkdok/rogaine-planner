@@ -3,11 +3,16 @@
 phase: implement
 approved: true
 approved_at: 2026-08-19
-current: Iteration I7 (M14+M15) — **closed**, and its review follow-up **T117 landed** 2026-09-30
-  (`8ecae40`, `reviewer` PASS). The OCR VLM fallback no longer reaches circle/scale detection, so
-  `[ocr_fallback].provider="anthropic"` is no longer blocked. Suite: 588 passed, ruff clean.
-  Three older, unrelated manual owner sign-offs remain open — see "Blocked on the owner".
+current: Iteration I8 (M16-M19) — **delta written, awaiting owner approval** (2026-10-02).
+  Recognition and routing overhaul: benchmark, graph barriers, positive line identification +
+  manual barriers, global number reading + tiled VLM. `docs/iterations/I8-recognition-and-routing-overhaul.md`.
   Full project history through Iteration I6 (M0-M13): `docs/status-archive.md`.
+
+## Baseline I8
+`docker compose run --rm tests` — **588 passed**, exit 0, 578.11s, 1 warning (pre-existing
+`httpx`/`starlette` deprecation notice); `docker compose run --rm tests ruff check .` clean.
+2026-10-02 21:34, branch `iteration/I8-recognition-overhaul` cut from
+`iteration/I2-vision-recognition-fix` @ `638cdca`, tree clean.
 
 ## Baseline I7
 `docker compose run --rm tests` — **522 passed**, exit 0, 491.89s, 1 warning (pre-existing
@@ -16,20 +21,33 @@ current: Iteration I7 (M14+M15) — **closed**, and its review follow-up **T117 
 
 ## Resume here
 
-**2026-09-30, T117 landed.** Branch `iteration/I2-vision-recognition-fix`, tree clean. T117 (the
-I7 milestone review's H-1 + M-1 + M-2, owner-approved «Утверждаю» 2026-09-30) is implemented in
-`8ecae40`: scale gates probe with the VLM fallback forced off, a successful VLM read no longer sets
-a flag, VLM digit strings are validated client-side. `reviewer` **PASS**, two Low waived (see the
-T117 entry in `docs/TASKS.md`). Iteration I7's remaining waived debt (two Medium, six Low) is
-unchanged — see the review narrative below.
+**2026-10-02, Iteration I8 delta written, GATE pending.** Branch `iteration/I8-recognition-overhaul`.
+The owner reported (`toksovo-zubry`: fence routed as a road, black-banked river crossed;
+`ogps-9905`: 7 numbers unread) that ten iterations patched symptoms without converging. Root-cause
+review found four causes (R1-R4 in `docs/iterations/I8-recognition-and-routing-overhaul.md`); the
+owner chose the fixes (graph B, lines A + manual barriers, numbers A+B+C, VLM `auto`, fence
+crossable with a per-crossing price, Claude labels the benchmark, all four milestones). Amended:
+SPEC F4/F5/F7/F8/F10/F17/F23 + new F24/F25 + Non-goals, ADR-042..049, PLAN stack/repo map,
+TASKS M16-M19 (T118-T131).
 
 **Next concrete actions, in order:**
-1. The three older owner sign-offs below are still open — pick them up if the owner responds.
-2. No iteration is open. Deploy (I7 checklist step 8) was never decided as in-scope — ask the
-   owner if/when it matters.
-3. Known undiagnosed gap (from T116): the ink-isolation steps in `_ocr_crop` erase real printed
-   numbers on 16 controls across `ogps-8620`/`kkm-toksovo`/`lembolovo-kkm` — candidate for a
-   future task if the owner wants more numbers read.
+1. Owner approves the delta («утверждаю») → commit `docs: iteration I8 — recognition and routing overhaul`.
+2. T118 (truth schema + `rogaine evaluate`), then T119 (Claude labels ~20 maps, records baseline).
+3. Strict order M16 → M17 → M18 → M19; each milestone closes with an evaluate run.
+
+```text
+Iteration I8 progress:
+- [x] 0 baseline recorded (branch, suite result, timestamp)
+- [x] 1 delta intake agreed (in / out / deferred)
+- [x] 2 impact map written
+- [x] 3 docs amended (SPEC, DECISIONS, TASKS M16-M19)
+- [ ] GATE approved by the owner
+- [ ] 4 implementation
+- [ ] 5 verification green, baseline suites still green
+- [ ] 6 review clean or waived
+- [ ] 7 closed (STATUS rewritten, milestone ticked)
+- [ ] 8 deploy (optional, only if a real deploy target exists)
+```
 
 No subagents or background commands are running.
 

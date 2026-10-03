@@ -42,6 +42,16 @@
 | 037 | `veg_fight` (ISOM 410, "оливка") is reclassified impassable by owner ruling, not by measurement | accepted |
 | 038 | I7's out-of-bounds/water/ЛЭП real-scan items are diagnosis-first (ADR-026/033 precedent) | accepted |
 | 039 | An opt-in VLM fallback reads control numbers Tesseract can't, amending ADR-009 and narrowing the SPEC VLM non-goal to number-reading only | accepted |
+| 040 | `[ocr_fallback]` gains a selectable local Ollama backend, amending ADR-039's provider | accepted |
+| 041 | A blank OCR crop is never sent to the VLM fallback, on either backend | accepted |
+| 042 | A labelled ~20-map benchmark with `rogaine evaluate` becomes the acceptance gate, superseding ADR-019's spot-check | accepted |
+| 043 | Graph edges are vetoed by a full-resolution line-of-sight barrier check; fence crossings are priced per crossing | accepted |
+| 044 | Linear features are identified positively (dash pattern, ticks, banks); an unidentified solid black line is neutral, never a road | accepted |
+| 045 | Control numbers are found globally (control-ink text blobs, per-map digit height, global assignment) and read by RapidOCR, replacing the fixed-window Tesseract crop | accepted |
+| 046 | A tiled whole-map VLM pass finds controls and numbers, snapped to classical circles, on by default in `auto` mode when a local Ollama is reachable; withdraws the VLM-detection non-goal | accepted |
+| 047 | The owner can draw barrier lines and forbidden polygons in the viewer/CLI; they are rasterised as impassable | accepted |
+| 048 | A fence (ISOM 516) is crossable with a fixed per-crossing time; an uncrossable fence/wall (518/521), when distinguishable, is impassable | accepted |
+| 049 | SegFormer (the article's terrain model) stays deferred until the owner's OCAD corpus exists | accepted |
 
 ---
 
@@ -1855,3 +1865,140 @@ style; `_ocr_gate_tied_scales` resolves ties among `>=1.0` multipliers by OCR ou
   reported confidence instead of an ink-presence guard — rejected because the measurement showed
   confidence was uniformly 1.0 regardless of whether the read was real, so it carries no usable
   signal for this specific failure mode.
+
+## ADR-042 — A labelled ~20-map benchmark with `rogaine evaluate` becomes the acceptance gate, superseding ADR-019's spot-check
+
+- Date: 2026-10-02
+- Status: accepted (supersedes ADR-019)
+- Context: Ten iterations (I1-I7, T117) tuned thresholds against one to three maps each and
+  accepted on an owner spot-check (ADR-019). A fix on one map repeatedly broke another unnoticed;
+  the owner reports no map is ever error-free and the work has stopped converging (I8 source).
+- Decision: Claude labels ~20 maps — the owner's 13 scans plus the `ogps-*` maps behind every
+  reported defect (6802, 7302, 8078, 8620, 9905 and two more chosen for print variety) — with
+  control numbers/positions, the hub, barrier probes (point pairs whose path must not cross a
+  labelled barrier polyline) and class probes (points with an expected class family). Truth lives
+  in `data/maps/<map>/truth.toml`, the set in `data/bench.toml` (both gitignored, ADR-010). The
+  owner spot-checks labels in the viewer. `rogaine evaluate` prints per-map and total metrics;
+  every I8 milestone is accepted against the targets fixed at the I8 gate.
+- Consequences: Regressions become numbers, not anecdotes. Costs one labelling task and makes
+  each later task slower by one evaluate run. Labels made by Claude can be wrong, which is why the
+  owner reviews them. Rejected: labelling all 386 corpus maps (cost without new failure families);
+  keeping spot-checks (the cause of R4 in the I8 doc).
+
+## ADR-043 — Graph edges are vetoed by a full-resolution line-of-sight barrier check; fence crossings are priced per crossing
+
+- Date: 2026-10-02
+- Status: accepted (amends ADR-002's `graph_downsample` consequences)
+- Context: `_aggregate_blocks` marks a block passable when any one of its pixels is passable, and
+  diagonal edges cut corners, so any impassable feature thinner than ~2 blocks disappears from the
+  graph. Measured on `toksovo-zubry`: 5253 impassable river pixels yield 5 fully-impassable 4x4
+  blocks. The module docstring states the inverse guarantee.
+- Decision: Keep block nodes and `graph_downsample` for speed. Before an edge between two blocks
+  is created, test the straight segment between their representative passable pixels against the
+  full-resolution impassable mask (dilated by one pixel so an 8-connected one-pixel line cannot be
+  slipped diagonally); any hit vetoes the edge. The same check, against the fence mask (ADR-048),
+  adds a fixed crossing time instead of a veto. Vectorised over all edges; no Python per-edge loop.
+- Consequences: A barrier of any width holds at any downsample. Narrow real passages (a bridge, a
+  path through a gap) survive as long as their own pixels are passable. Graph build gets slower
+  (budget: within `tests/perf` limits, at most +25%). The golden route may change; it is
+  regenerated only in a commit that explains the diff. Rejected: dilating barriers before
+  downsampling (closes real gaps), downsample 1 (memory/time).
+
+## ADR-044 — Linear features are identified positively (dash pattern, ticks, banks); an unidentified solid black line is neutral, never a road
+
+- Date: 2026-10-02
+- Status: accepted (amends ADR-008: `TerrainClass` gains `fence` and `barrier`, appended)
+- Context: Every elongated black component is assigned road/track/path by width
+  (`extract_linear_features`). ISOM prints many other things as thin solid black: fences (516),
+  walls (518/521), power lines (510/511), river banks (304/305), building and cultivation
+  boundaries. Each surfaced as a separate bug (grid lines, power line, fence, banks).
+- Decision: Invert the rule. A component is a path/track only if its skeleton shows the ISOM dash
+  pattern; a road only if double-lined, filled, or road-width solid; a solid thin line with
+  perpendicular ticks is `fence` (or `barrier` when the uncrossable pattern is distinguishable);
+  black lines flanking a blue linear core are banks and join `water_uncrossable` with it; anything
+  else returns to `unknown` (neutral, no road speed, no proximity bonus). Blue horizontal hatch
+  within marsh is `marsh`, not `water_uncrossable`. `fence` and `barrier` are appended to
+  `TerrainClass`/`TERRAIN_ORDER` (append-only, so saved `terrain.npz` files stay readable).
+- Consequences: Ends the class of "black line became a road" bugs. A real solid path the pattern
+  test misses loses its road speed — measured by the bench's road probes (>=95% target). Rejected:
+  another per-symbol exception (the pattern that produced R1).
+
+## ADR-045 — Control numbers are found globally (control-ink text blobs, per-map digit height, global assignment) and read by RapidOCR, replacing the fixed-window Tesseract crop
+
+- Date: 2026-10-02
+- Status: accepted (supersedes the crop geometry of ADR-023/ADR-031/ADR-032; amends ADR-009's
+  engine choice — OCR stays non-load-bearing)
+- Context: `_ocr_crop` reads a 3.4-radius square and assumes a 4mm digit; five heuristics patch
+  its failures. On `ogps-9905` all 22 circles are found but 11 numbers are read and `71` reads as
+  `7`: the digits are larger and further out than the window. Seven rounds tuned this window.
+- Decision: Extract control-ink components across the whole map once, drop ring pixels of found
+  circles, group the rest into words by height/baseline/gap, estimate this map's digit height from
+  the words themselves, and assign words to circles in one global assignment
+  (`scipy.optimize.linear_sum_assignment`, distance in radii, capped). Each assigned word is read
+  from its own tight crop by RapidOCR (PP-OCR recognition models via `onnxruntime`, models baked
+  into the Docker image, offline). Results are checked for uniqueness and against a legend list
+  when the map prints one; a conflict is flagged, never resolved by guessing. `read_control_numbers`
+  keeps its signature (the scale gates in `controls.py` call it). Tesseract is removed once
+  RapidOCR is at least as good on every bench map; otherwise kept as a second reader and the gap
+  recorded.
+- Consequences: No window to mis-size; the number's position and size are measured, not assumed.
+  Adds an ONNX runtime dependency (~30 MB). Rejected: PaddleOCR proper (paddlepaddle is far
+  heavier for the same models); more Tesseract tuning (seven rounds of evidence).
+
+## ADR-046 — A tiled whole-map VLM pass finds controls and numbers, snapped to classical circles, on by default in `auto` mode when a local Ollama is reachable; withdraws the VLM-detection non-goal
+
+- Date: 2026-10-02
+- Status: accepted (amends ADR-039/ADR-040; withdraws SPEC Non-goal "VLM-based control detection")
+- Context: The reference article's controls come from a VLM over overlapping tiles with CV only
+  refining the centre. Our VLM fallback (ADR-039) sees only the crop the classical path already
+  mis-framed, so it cannot recover R3's failures. Owner chose "auto" as the default.
+- Decision: New `[vlm].mode = "auto" | "on" | "off"` (shipped `auto`). In `auto`, if the
+  configured local Ollama backend answers a health check, the map is cut into overlapping tiles,
+  each returns `{number, x, y, confidence}` items, which are mapped to full-map coordinates,
+  de-duplicated across overlaps and snapped to the nearest classical circle within 1.5 radii (or
+  to a locally re-detected ring). Classical and VLM results are merged: agreement raises
+  confidence; disagreement is flagged for the owner; a VLM-only control with no ring nearby is
+  flagged, not placed silently. Responses are cached by (image hash, tile, model, prompt version),
+  so a re-run is byte-identical (F19). Unreachable backend: classical path only, no error. Scale
+  gates keep running with the VLM off (T117 rule). The Anthropic backend remains selectable. The
+  test suite runs with `mode = "off"` unless a test enables a mocked backend — no network in tests.
+- Consequences: Matches the article's approach where it is strongest. First run of a map costs
+  local GPU time (~tens of seconds); determinism holds via the cache, not via the model. Rejected:
+  VLM always-on via a paid API (owner chose local/auto), VLM only on crops (ADR-039's limit).
+
+## ADR-047 — The owner can draw barrier lines and forbidden polygons in the viewer/CLI; they are rasterised as impassable
+
+- Date: 2026-10-02
+- Status: accepted
+- Context: No automatic recogniser is perfect on every print style (the article's included); the
+  owner needs a fast, reliable override, as the controls CSV already is for controls.
+- Decision: A run carries `barriers.json` (polylines and polygons in map pixels). The viewer gains
+  "draw barrier" and "forbidden zone" tools (click-to-place, armed affordance and pan-safety per
+  F17's I6 rules); the CLI gains `plan --barriers`. Before the graph is built they are rasterised
+  into the impassable mask, which ADR-043's veto then honours at any downsample.
+- Consequences: Any residual recognition miss is fixable in seconds. Rejected: an "allow crossing"
+  tool this round (not requested; can be added on the same file later).
+
+## ADR-048 — A fence (ISOM 516) is crossable with a fixed per-crossing time; an uncrossable fence/wall (518/521), when distinguishable, is impassable
+
+- Date: 2026-10-02
+- Status: accepted (owner ruling at I8 intake)
+- Context: `toksovo-zubry`'s fence was routed along as a footpath. Rogaine rules allow crossing an
+  ordinary fence; ISOM marks uncrossable ones distinctly.
+- Decision: `fence` has no road speed and no proximity bonus; each graph edge whose segment crosses
+  fence pixels pays `[graph].fence_crossing_s` (shipped 12 s). `barrier` is impassable. When the
+  print does not distinguish the two, the line is `fence`.
+- Consequences: Routes stop following fences and cross them only when it pays. Rejected: all
+  fences impassable (can close real passages), fences neutral (no cost to climbing one).
+
+## ADR-049 — SegFormer (the article's terrain model) stays deferred until the owner's OCAD corpus exists
+
+- Date: 2026-10-02
+- Status: accepted (keeps ADR-001's M7 deferral)
+- Context: The article's terrain quality comes from SegFormer trained on ~200 OCAD-rendered maps;
+  we have a handful of `.ocd` files. The owner will collect more.
+- Decision: Not in I8. When the corpus exists, M7 trains on masks rendered from vector symbols
+  (where fences, banks and walls are explicit classes), evaluated on the ADR-042 benchmark against
+  the I8 rule-based segmenter.
+- Consequences: I8's rule-based fixes must stand on their own; the benchmark built here is what a
+  future model is judged by.

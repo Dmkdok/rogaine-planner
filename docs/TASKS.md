@@ -2797,3 +2797,112 @@ the implementer's self-report.
   Suite 588 passed, ruff clean. `reviewer`: **PASS**, two Low, waived — L-1 whitespace-padded Ollama
   answers now unread (recover with a `\s*`-tolerant capture if a real run shows them); L-2 CLI no
   longer reports VLM-assisted reads (only the CSV `number_source` column shows them).
+
+## M16 — Benchmark and metrics (Iteration I8, `docs/iterations/I8-recognition-and-routing-overhaul.md`) *(serial, implementer + Claude labelling)*
+
+> Lands first: every later I8 milestone is accepted against `rogaine evaluate` numbers (ADR-042).
+> Truth files and the set list are gitignored (ADR-010); only code and tests are committed.
+
+- [ ] **T118** — Truth schema and evaluator — paths: `src/rogaine/eval/` (new), `src/rogaine/cli.py`
+  (`evaluate` command only), `tests/unit/eval/` (new), `tests/fixtures/synth_map.py` (truth-file
+  emitter only) — deps: none — DoD: `truth.toml` schema (controls `number,x,y`; hub; barrier probes
+  `a, b, barrier polyline`; class probes `x, y, expected family`) is validated by pydantic;
+  `rogaine evaluate --set data/bench.toml [--vlm off|auto]` prints per-map and total circle
+  recall/precision (match within 0.5 radius), numbers correct/wrong/unread, class-probe accuracy and
+  barrier-probe crossings (shortest path a→b intersecting the polyline); on the synthetic fixture with
+  its generated truth every metric is exact (recall 1.0 where the fixture's own floors say so, 0
+  crossings on a fixture barrier). F25.
+- [ ] **T119** — Label the benchmark and record the I8 baseline — paths: `data/bench.toml`,
+  `data/maps/<map>/truth.toml` (gitignored) — deps: T118 — DoD: ~20 maps labelled (the owner's 13
+  scans plus `ogps-6802`, `-7302`, `-8078`, `-8620`, `-9905` and two more for print variety), each with
+  every control and hub, at least 3 barrier probes where the map has water/fences, and at least 10
+  class probes (fences, banks, real roads/tracks/paths); `rogaine evaluate` baseline (pre-I8 code)
+  recorded in this task entry, per map and total, for both `--vlm off` and `--vlm auto`.
+- [ ] **T120** — Owner spot-check of labels — paths: none (manual) — deps: T119 — DoD: owner opens at
+  least 5 labelled maps in the viewer (truth imported as controls CSV) and confirms or corrects them;
+  corrections applied and the baseline re-run if any changed.
+
+## M17 — Barriers that hold in the graph (Iteration I8) *(serial, implementer)*
+
+> Shared primitive: every route goes through `build_grid_graph`. Lands alone, before M18/M19 touch
+> anything that feeds it. ADR-043, ADR-048.
+
+- [ ] **T121** — Line-of-sight edge veto and fence crossing price — paths: `src/rogaine/cost/graph.py`,
+  `src/rogaine/cost/field.py` (expose the full-res impassable/fence masks only), `config/default.toml`
+  (`[graph].fence_crossing_s = 12`), `tests/unit/cost/test_graph.py`, `tests/perf/test_budgets.py`
+  (only if a budget number must be stated anew, with the measurement) — deps: T120 — DoD: synthetic
+  1px and 2px barriers (horizontal, vertical, 45° and shallow diagonal), at `graph_downsample` 1, 4 and
+  8, are never crossed and a gap of 2 blocks in them is still used; an edge crossing a synthetic fence
+  costs exactly `fence_crossing_s` more; `TestDownsampleAggregation` rewritten to the new guarantee in
+  its own commit (behaviour change, ADR-043); graph build on the largest bench map within +25% of
+  baseline; `rogaine evaluate`: 0 barrier-probe crossings on probes whose barrier is already
+  classified impassable; module docstring corrected.
+- [ ] **T122** — Golden route and bench re-measure — paths: `tests/e2e/golden_route.json` — deps: T121
+  — DoD: if the golden changes, it is regenerated in a separate commit whose message names the vetoed
+  edges that explain the diff; `rogaine evaluate` totals recorded here against T119's baseline.
+
+## M18 — Linear features identified positively, and manual barriers (Iteration I8) *(serial, implementer)*
+
+> T123 before T124 (both own the segmentation contract); T125 after T121 (relies on the veto) and may
+> run in parallel with T123/T124 (disjoint paths). ADR-044, ADR-047, ADR-048.
+
+- [ ] **T123** — Positive identification in `linear.py` — paths: `src/rogaine/vision/linear.py`,
+  `src/rogaine/models.py` (append `FENCE`, `BARRIER` to `TerrainClass` only), `config/default.toml`
+  (`[[terrain]]` fence/barrier rows, `[linear]` pattern tunables), `src/rogaine/cost/proximity.py`
+  (exclude fence/barrier/unknown from the bonus, if not already), `tests/unit/vision/test_linear.py`,
+  `tests/unit/test_models.py`, `tests/unit/test_config.py`, `tests/fixtures/synth_map.py` (draw a
+  ticked fence and a banked river) — deps: T122 — DoD: synthetic dashed line → footpath/track,
+  solid road-width/double line → road, thin solid line → unknown, ticked line → fence, blue core with
+  black flanks → water_uncrossable including the flanks; fixture linear IoU floors (F4) hold;
+  width-only tests that drew solid thin lines as footpaths rewritten to dashed lines in their own
+  commit; `toksovo-zubry` fence by control 25 not road-class, river banks impassable; bench: 0
+  fence/bank probes road-class, ≥95% road/track/path probes still road-class, real-scan floors
+  (`TestGridInkOnRealScan`, `TestRealScanRedInk`) hold.
+- [ ] **T124** — Marsh hatch is not water — paths: `src/rogaine/vision/palette.py`,
+  `tests/unit/vision/test_palette.py` — deps: T123 — DoD: blue horizontal hatch over white/marsh
+  classifies `marsh` on a synthetic fixture and on `toksovo-zubry`'s marsh probes; banked lakes on
+  `ogps-6802`/`-8620` stay `water_uncrossable` (F4's I6/I7 clauses).
+- [ ] **T125** — Manual barrier and forbidden-zone tools — paths: `src/rogaine/web/app.py`
+  (`GET/PUT /api/runs/{id}/barriers`), `src/rogaine/web/static/{index.html,app.js,api.js,style.css}`,
+  `src/rogaine/cli.py` (`plan --barriers`), `src/rogaine/cost/field.py` (rasterise barriers as
+  impassable), `tests/unit/web/`, `tests/unit/test_cli.py`, `tests/e2e/test_viewer.py` — deps: T121 —
+  DoD: Playwright: draw a line across the fixture route, re-plan → route changes and never crosses
+  it; draw a polygon → no route enters it; tools follow F17's armed/pan-safe rules; API and CLI
+  round-trip `barriers.json` losslessly; F24.
+- [ ] **T126** — Bench re-measure for M18 — paths: none (measurement) — deps: T123, T124, T125 — DoD:
+  `rogaine evaluate` totals recorded here against T122.
+
+## M19 — Control numbers found globally; tiled VLM in auto mode (Iteration I8) *(serial, implementer)*
+
+> Contract: `controls.py`'s scale gates call `read_control_numbers`; its signature stays and the gates
+> keep running with the VLM forced off (T117). ADR-045, ADR-046.
+
+- [ ] **T127** — Global number words and assignment — paths: `src/rogaine/vision/ocr.py`,
+  `tests/unit/vision/test_ocr.py` — deps: T126 — DoD: map-wide control-ink words (ring pixels of found
+  circles removed), per-map digit height measured from the words, one global assignment to circles
+  (capped distance in radii); the old crop helpers and their unit tests deleted in their own commit,
+  each deleted test named; synthetic fixture ≥ 11/12; `TestRealScanReadRateFloor` floors hold or rise;
+  `ogps-9905` classical path reads at least 5 of 64/54/92/31/33/63/41 and never reads 71 as 7.
+- [ ] **T128** — RapidOCR recogniser — paths: `src/rogaine/vision/ocr_rapid.py` (new),
+  `src/rogaine/vision/ocr.py` (reader selection only), `pyproject.toml`, `Dockerfile` (models
+  baked in, no runtime download), `config/default.toml` (`[ocr].engine`) — deps: T127 — DoD: offline in
+  the container (network disabled run passes); per-bench-map correct reads ≥ Tesseract's on the same
+  words; Tesseract removed from `Dockerfile`/`pyproject.toml` if so, otherwise kept as second reader
+  with the gap recorded here.
+- [ ] **T129** — Consistency checks — paths: `src/rogaine/vision/ocr.py` (post-pass only),
+  `tests/unit/vision/test_ocr.py` — deps: T128 — DoD: duplicate numbers flagged on both controls;
+  when a legend list (`NN-` / `NN ` lines in control-ink or black text) is found, numbers outside it
+  are flagged; nothing is ever auto-corrected; bench wrong-read rate ≤ 1%.
+- [ ] **T130** — Tiled whole-map VLM pass, `auto` mode — paths: `src/rogaine/vision/vlm_controls.py`
+  (new), `src/rogaine/vision/ocr_vlm_ollama.py`, `src/rogaine/vision/ocr_vlm.py` (tile entry points),
+  `src/rogaine/vision/controls.py` (merge step only; gates untouched), `src/rogaine/config.py`,
+  `config/default.toml` (`[vlm]`: `mode`, tile size/overlap, snap radius, cache dir), `src/rogaine/cli.py`
+  (`detect --vlm`), `src/rogaine/web/app.py` (pass-through only), `tests/unit/vision/test_vlm_controls.py`
+  (new), `tests/conftest.py` (force `mode="off"`) — deps: T129 — DoD: mocked backend: tile coordinates
+  map back exactly, overlap duplicates merge, snap within 1.5 r, disagreement and ring-less VLM-only
+  items are flagged; unreachable backend → classical result, no error; second run served from cache
+  byte-identical (F19); no test reaches a network; `ogps-9905` with local Ollama reads all 7 reported
+  numbers.
+- [ ] **T131** — I8 acceptance measurement and owner sign-off — paths: none (measurement + manual) —
+  deps: T130 — DoD: `rogaine evaluate` for `--vlm off` and `--vlm auto` against every target in the I8
+  doc, each miss named with its value; owner re-checks `toksovo-zubry` and `ogps-9905` in the viewer.
