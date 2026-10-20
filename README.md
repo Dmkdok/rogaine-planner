@@ -1,37 +1,45 @@
 # rogaine-planner
 
-A local, offline tool that turns a rogaine (score-orienteering) map raster into a scored route
-plan. It classifies terrain from ISOM colours, finds the purple/red control circles, builds a
-per-pixel travel-time field for a given runner speed, computes exact travel times between all
-controls, and solves the Orienteering Problem (maximise points inside a time limit, start = finish,
-points lost per minute late). Ships as a Python CLI (`rogaine`) plus a local web viewer.
+![Схематичный пример маршрута рогейна на карте ISOM](assets/route.png)
 
-Full requirements and design: [docs/SPEC.md](docs/SPEC.md), [docs/PLAN.md](docs/PLAN.md),
+[![Тесты](https://github.com/Dmkdok/rogaine-planner/actions/workflows/tests.yml/badge.svg)](https://github.com/Dmkdok/rogaine-planner/actions/workflows/tests.yml)
+
+Локальный офлайн-инструмент, который строит маршрут с подсчётом очков по растровой карте рогейна
+(соревнования по ориентированию на заданное количество очков). Он классифицирует местность по
+цветам ISOM, находит фиолетовые и красные кружки КП, рассчитывает для заданной скорости бегуна
+поле времени прохождения каждого пикселя и точное время между КП, а затем решает задачу
+ориентирования (Orienteering Problem): набрать максимум очков за отведённое время, вернувшись
+на старт; за опоздание начисляется штраф за каждую минуту. В проект входят интерфейс командной
+строки на Python (`rogaine`) и локальный веб-просмотрщик.
+
+Полные требования и описание архитектуры: [docs/SPEC.md](docs/SPEC.md), [docs/PLAN.md](docs/PLAN.md),
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
-## Install
+## Установка
 
-Docker is the only supported runtime (ADR-004) — the image pins Python 3.12 and bundles
-`tesseract-ocr` and the OpenCV/scipy native libs. A host install works but is best-effort.
+Поддерживаемая среда запуска — Docker (ADR-004): образ использует Python 3.12 и включает
+`tesseract-ocr`, а также нативные библиотеки OpenCV и scipy. Установка непосредственно на хост
+возможна, но официально не поддерживается.
 
 ```bash
 docker compose build
 ```
 
-This builds two images from the one `Dockerfile`: `rogaine-planner:base` (the product, `app`
-service) and `rogaine-planner:test` (adds pytest/ruff/Playwright, `tests` service).
+Из одного `Dockerfile` собираются два образа: `rogaine-planner:base` (приложение, сервис `app`)
+и `rogaine-planner:test` (с pytest/ruff/Playwright, сервис `tests`).
 
-### Host install (best-effort)
+### Установка на хосте (не рекомендуется)
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-Requires Python >=3.12 and a system `tesseract-ocr` binary on `PATH` for control-number OCR
-(`pytesseract` only calls out to it, it does not bundle it). On Windows, `pytest` itself hangs —
-always run the suite through `docker compose run --rm tests` regardless of host OS.
+Требуется Python >=3.12 и установленный в системе исполняемый файл `tesseract-ocr` в `PATH` для
+распознавания номеров КП (`pytesseract` только вызывает его, но не включает в себя). В Windows
+сам `pytest` зависает — на любой ОС всегда запускайте тесты командой
+`docker compose run --rm tests`.
 
-## Quick start
+## Быстрый старт
 
 ```bash
 docker compose run --rm app rogaine plan \
@@ -39,145 +47,156 @@ docker compose run --rm app rogaine plan \
   --limit 4h --speed 2.0 --out-dir out
 ```
 
-Writes `out/route.json` and `out/route.png`, and prints a leg-by-leg summary plus top-K
-alternatives to the terminal. `docker compose run --rm app` overrides the `app` service's default
-command (`rogaine serve`, see [Web viewer](#web-viewer)), so any `rogaine …` invocation works the
-same way. The whole repo is bind-mounted (`./:/app`), so paths under `data/`, `config/` and any
-`--out-dir` you choose are the same on the host and in the container.
+Команда создаёт `out/route.json` и `out/route.png`, а также выводит в терминал описание каждого
+участка маршрута и несколько лучших альтернатив. Вызов `docker compose run --rm app` заменяет
+команду сервиса `app` по умолчанию (`rogaine serve`, см. [Веб-интерфейс](#веб-интерфейс)), поэтому
+любую команду `rogaine …` можно запускать таким способом. Весь репозиторий подключён как том
+(`./:/app`), поэтому пути в `data/`, `config/` и выбранном `--out-dir` совпадают на хосте и в
+контейнере.
 
-## CLI commands
+## Команды CLI
 
-Every command accepts `--config <path>` (or `$ROGAINE_CONFIG`) to override
-[`config/default.toml`](config/default.toml) — see [Config reference](#config-reference).
+Для переопределения [`config/default.toml`](config/default.toml) каждая команда принимает
+`--config <path>` (или `$ROGAINE_CONFIG`); подробности — в разделе
+[Справочник по конфигурации](#справочник-по-конфигурации).
 
 ### `rogaine segment`
 
-Classify a map raster into the ISOM terrain classes; writes `terrain.npz` (labels + contour
-density) and `terrain_preview.png`.
+Классифицирует растровую карту по классам местности ISOM и сохраняет `terrain.npz` (метки и
+плотность горизонталей) и `terrain_preview.png`.
 
-| Flag | Default | Meaning |
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--map` | *(required)* | Map raster or PDF. |
-| `--dpi` | probed from file / config | Scan resolution. |
-| `--scale` | — | Map scale denominator `N` in `1:N`; combined with `--dpi` (SPEC F2). |
-| `--calibrate` | — | `x1,y1,x2,y2,meters` two-point calibration instead of `--scale` (SPEC F3). |
-| `--page` | `0` | PDF page, 0-based; ignored for other formats. |
-| `--out-dir` | `.` | Where `terrain.npz`/`terrain_preview.png` land. |
+| `--map` | *(обязательно)* | Растровая карта или PDF. |
+| `--dpi` | определяется по файлу / конфигурации | Разрешение скана. |
+| `--scale` | — | Знаменатель масштаба карты `N` в формате `1:N`; используется вместе с `--dpi` (SPEC F2). |
+| `--calibrate` | — | Калибровка по двум точкам `x1,y1,x2,y2,meters` вместо `--scale` (SPEC F3). |
+| `--page` | `0` | Страница PDF, нумерация с нуля; для других форматов не используется. |
+| `--out-dir` | `.` | Каталог для `terrain.npz` и `terrain_preview.png`. |
 
-Exactly one of `--scale`/`--calibrate` is required.
+Нужно указать ровно один из параметров: `--scale` или `--calibrate`.
 
 ### `rogaine detect`
 
-Detect the hub and control circles, OCR their numbers, write an editable controls CSV.
+Находит стартовый и контрольные кружки, распознаёт номера с помощью OCR и создаёт CSV с КП,
+который можно редактировать.
 
-| Flag | Default | Meaning |
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--map` | *(required)* | Map raster or PDF. |
-| `--dpi` | probed from file / config | Scan resolution. |
-| `--out` | `controls.csv` | Output CSV path (format below). |
+| `--map` | *(обязательно)* | Растровая карта или PDF. |
+| `--dpi` | определяется по файлу / конфигурации | Разрешение скана. |
+| `--out` | `controls.csv` | Путь к выходному CSV (формат описан ниже). |
 
-Exits 1 if no hub (start/finish) circle is found. Unreadable control numbers are written with
-blank `points` and printed as flagged warnings, never guessed (SPEC F8, ADR-009).
+Если стартовый/финишный кружок не найден, команда завершается с кодом 1. Неразборчивые номера КП
+записываются с пустым значением `points` и отмечаются предупреждением — система не пытается
+угадать номер (SPEC F8, ADR-009).
 
 ### `rogaine plan`
 
-Full pipeline: resolve controls (detect, or `--controls` to skip straight to a hand-edited CSV),
-build the cost field and travel matrix, solve, print the route and alternatives, write
-`route.json` + `route.png`.
+Полный конвейер: определяет КП (или пропускает поиск при заданном `--controls` с CSV, изменённым
+вручную), строит поле стоимости и матрицу времени между КП, решает задачу, выводит маршрут и
+альтернативы, сохраняет `route.json` и `route.png`.
 
-| Flag | Default | Meaning |
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--map` | *(required)* | Map raster or PDF. |
-| `--dpi` | probed from file / config | Scan resolution. |
-| `--scale` / `--calibrate` | — | Same as `segment`; exactly one required. |
-| `--controls` | — | Hand-edited `controls.csv`; skips detection entirely (SPEC F9). |
-| `--speed` | `2.0` | Runner base (road) speed, m/s. |
-| `--limit` | `4h` | Time budget: `4h`, `2h30m`, `90s`, or a bare number of seconds. |
-| `--penalty-per-min` | `1.0` | Score penalty per minute over the limit. |
-| `--strategy` | `auto` | `auto` \| `exact` \| `heuristic`. `auto` picks exact under `exact_max_controls`. |
-| `--heuristic-time-budget` | `30.0` | Heuristic solver time budget, seconds. |
-| `--alternatives` | `3` | Top-K structurally distinct alternative routes (max 20). |
-| `--seed` | `0` | Seeds the heuristic solver and alternatives search (deterministic, SPEC F19). |
-| `--out-dir` | `.` | Where `route.json`/`route.png` land. |
+| `--map` | *(обязательно)* | Растровая карта или PDF. |
+| `--dpi` | определяется по файлу / конфигурации | Разрешение скана. |
+| `--scale` / `--calibrate` | — | Как и в `segment`, требуется ровно один параметр. |
+| `--controls` | — | Подготовленный вручную файл `controls.csv`; полностью пропускает поиск КП (SPEC F9). |
+| `--speed` | `2.0` | Базовая скорость бегуна по дороге, м/с. |
+| `--limit` | `4h` | Лимит времени: `4h`, `2h30m`, `90s` или число секунд. |
+| `--penalty-per-min` | `1.0` | Штраф в очках за каждую минуту сверх лимита. |
+| `--strategy` | `auto` | `auto` \| `exact` \| `heuristic`. В режиме `auto` точный метод выбирается при числе КП не больше `exact_max_controls`. |
+| `--heuristic-time-budget` | `30.0` | Лимит времени работы эвристического решателя, секунды. |
+| `--alternatives` | `3` | Число структурно различных альтернативных маршрутов (максимум 20). |
+| `--seed` | `0` | Начальное значение для эвристики и поиска альтернатив (обеспечивает воспроизводимость, SPEC F19). |
+| `--out-dir` | `.` | Каталог для `route.json` и `route.png`. |
 
-Exits 1, writing nothing, if no hub is found or no candidate control is reachable within the time
-limit — only a successfully solved route reaches disk.
+Команда завершается с кодом 1 и ничего не записывает, если не найден стартовый кружок или в
+пределах лимита времени нет достижимых КП. На диск попадает только успешно рассчитанный маршрут.
 
 ### `rogaine bench`
 
-Solver honesty check: runs exact and heuristic on the same small synthetic instance, prints the
-heuristic-vs-exact score gap (SPEC F13 bar: ≤5%). Always exits 0 — it reports, it never gates.
+Проверяет корректность эвристического решателя: запускает точный и эвристический методы на одном
+небольшом синтетическом примере и выводит разницу в очках (целевой порог SPEC F13 — не более 5%).
+Всегда завершается с кодом 0: команда только выводит результат и не блокирует работу.
 
-| Flag | Default | Meaning |
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--n-candidates` | `10` | Candidate controls in the synthetic instance (hub excluded). Capped at `config.solver.exact_max_controls`. |
-| `--seed` | `0` | Seeds instance generation and the heuristic RNG. |
-| `--time-budget` | `2.0` | Heuristic solver time budget, seconds. |
+| `--n-candidates` | `10` | КП-кандидаты в синтетическом примере (старт не учитывается). Ограничено значением `config.solver.exact_max_controls`. |
+| `--seed` | `0` | Начальное значение для генерации примера и генератора случайных чисел эвристики. |
+| `--time-budget` | `2.0` | Лимит времени работы эвристического решателя, секунды. |
 
 ### `rogaine serve`
 
-Launches the FastAPI web viewer backend (uvicorn).
+Запускает сервер веб-просмотрщика на FastAPI (uvicorn).
 
-| Flag | Default | Meaning |
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--host` | `127.0.0.1` | Bind address. Never `0.0.0.0` on the host directly — the `app` service binds `0.0.0.0` only because that's the only address reachable from inside the container, and `docker-compose.yml` publishes it back out on `127.0.0.1:8001` only. |
-| `--port` | `8000` | Bind port. |
+| `--host` | `127.0.0.1` | Адрес для прослушивания. Не задавайте `0.0.0.0` непосредственно на хосте: сервис `app` использует этот адрес внутри контейнера, а `docker-compose.yml` публикует порт только на `127.0.0.1:8001`. |
+| `--port` | `8000` | Порт сервера. |
 
 ### `rogaine corpus list` / `rogaine corpus check <id>`
 
-Inspect `data/maps/` — see [data/README.md](data/README.md) for the corpus layout (`meta.toml`,
-`controls.csv`, `reference.json`). `list` never fails on an incomplete map, it reports what's
-missing; `check <id>` exits 1 if that one map isn't plannable. Both take `--root` (default
-`data/maps`).
+Проверяют содержимое `data/maps/`. Структура корпуса описана в [data/README.md](data/README.md)
+(`meta.toml`, `controls.csv`, `reference.json`). Команда `list` не завершается ошибкой при неполной
+карте, а сообщает, чего не хватает; `check <id>` завершится с кодом 1, если выбранная карта не
+готова к построению маршрута. Обе команды принимают `--root` (по умолчанию `data/maps`).
 
-### Global
+### Глобальные параметры
 
-`--version` prints the version and exits. `rogaine` with no subcommand prints help.
+`--version` выводит версию и завершает работу. Если запустить `rogaine` без подкоманды, будет
+показана справка.
 
-## Web viewer
+## Веб-интерфейс
 
 ```bash
 docker compose up app
 ```
 
-Open http://localhost:8001. Drop a map file, set scale (1:N + DPI, or drag a calibration line and
-type its length in metres), review/edit the detected controls, set time limit/speed/penalty, press
-Run, inspect the route over the map with a leg table, export JSON/PNG/CSV.
+Откройте http://localhost:8001. Загрузите файл карты, задайте масштаб (1:N и DPI либо длину
+отрезка калибровки в метрах), проверьте и отредактируйте найденные КП, укажите лимит времени,
+скорость и штраф, нажмите «Запустить». Затем можно изучить маршрут поверх карты и таблицу
+участков, а также экспортировать JSON, PNG и CSV.
 
-Each browser session gets a `run_id` (a server-generated UUID); every stage's output persists under
-`runs/<run_id>/` on disk so later stages (detect, plan) can re-enter without redoing earlier work,
-and so `GET /api/runs/{id}/export/{route.json,route.png,controls.csv}` can serve them back. Jobs
-(`segment`/`detect`/`plan`) run as background tasks polled via `GET /api/jobs/{job_id}`; nothing
-here is a substitute for the CLI's own `--out-dir` artefacts, it is the same pipeline exposed over
-HTTP for the interactive flow (SPEC F17). Uploads are sniffed by magic bytes and capped at 200 MB,
-never trusted by client filename or `Content-Type`.
+Для каждой сессии браузера сервер создаёт `run_id` (UUID); результаты каждого этапа сохраняются
+в `runs/<run_id>/`, поэтому следующие этапы (поиск КП и построение маршрута) могут использовать их
+повторно. Файлы доступны через `GET /api/runs/{id}/export/{route.json,route.png,controls.csv}`.
+Задания (`segment`/`detect`/`plan`) выполняются в фоне, статус проверяется через
+`GET /api/jobs/{job_id}`. Этот интерфейс использует тот же конвейер, что и CLI, и не заменяет
+создаваемые CLI файлы в `--out-dir` (SPEC F17). Тип загруженного файла определяется по сигнатуре,
+а размер ограничен 200 МБ; имя файла и `Content-Type`, переданные клиентом, не считаются
+достоверными.
 
-## Config reference
+## Справочник по конфигурации
 
-Every tunable lives in one TOML file, [`config/default.toml`](config/default.toml) (SPEC F18) —
-extensively commented in place, each section citing where its numbers come from (IOF ISOM 2017-2 /
-Appendix 1, or a measurement against a named real scan). Override with `--config my.toml` (a user
-file only needs the keys it changes — it's deep-merged over the shipped default) or `$ROGAINE_CONFIG`;
-individual CLI flags (`--speed`, `--limit`, `--alternatives`, …) override per run on top of that.
-Loading validates that the file covers exactly the terrain contract in `models.py` — a config
-missing a terrain class, or carrying an unknown key (every table is `extra="forbid"`), fails fast.
+Все настраиваемые параметры находятся в одном TOML-файле [`config/default.toml`](config/default.toml)
+(SPEC F18). В нём есть подробные комментарии и ссылки на источник значений (IOF ISOM 2017-2 /
+Appendix 1 либо измерения на конкретном реальном скане). Указать другой файл можно через
+`--config my.toml` (достаточно перечислить изменяемые ключи — настройки будут объединены с
+поставляемыми по умолчанию) или `$ROGAINE_CONFIG`. Параметры CLI (`--speed`, `--limit`,
+`--alternatives` и другие) имеют приоритет для соответствующего запуска.
 
-| Section | Governs |
+При загрузке проверяется, что конфигурация точно соответствует описанию классов местности в
+`models.py`: отсутствие класса или неизвестный ключ (для всех таблиц действует `extra="forbid"`)
+приведут к немедленной ошибке.
+
+| Раздел | Назначение |
 |---|---|
-| `[map]` | Fallback DPI when a raster carries none and the user gives none. |
-| `[palette]` / `[palette.ink]` / `[[palette.shade]]` | CIELAB classification threshold, unknown-fill radius, the six ISOM process inks (CMYK) and every printed shade (ink + tint %) derived from them. |
-| `[[terrain]]` (17 entries) | One row per `TerrainClass`: ISOM symbol code, printed shade, `speed_factor` (fraction of road speed), `passable`. |
-| `[grid]` | Shape thresholds that keep grid/magnetic-north/border lines from misclassifying as water (ADR-012, SPEC F20). |
-| `[linear]` | Nominal printed widths (road/track/footpath) and shape filters (elongation, aspect ratio, minimum length) that split the shared black-ink `road` placeholder into the three linear classes. |
-| `[slope]` | Contour-density blur sigma and the speed penalty it drives (a slope *proxy*, not elevation — ADR-006). |
-| `[detector]` | Control-circle geometry and tolerance, ink hue bands (`ink_hue_ranges` for purple, `red_hue_ranges` with its own tighter saturation/value/channel-gap floor for red, ADR-011/ADR-018), Hough parameters, the scale multipliers swept for oversized hand-drawn circles (ADR-015), control-number OCR search window and points rule (`first_digit` / `constant` / `csv`). |
-| `[graph]` | Grid downsampling factor and the impassable-terrain cost multiplier. |
-| `[solver]` | Solver strategy/dispatch cap, heuristic time budget and GRASP parameters, seed, alternatives count. |
-| `[rules]` | Default points penalty per minute late. |
+| `[map]` | DPI по умолчанию, если он не указан ни в растре, ни пользователем. |
+| `[palette]` / `[palette.ink]` / `[[palette.shade]]` | Порог классификации CIELAB, радиус заполнения неизвестных областей, шесть печатных красок ISOM (CMYK) и все полученные из них оттенки (краска и процент растискивания). |
+| `[[terrain]]` (17 записей) | Строка для каждого `TerrainClass`: код символа ISOM, оттенок, `speed_factor` (доля скорости по дороге), `passable` (проходимость). |
+| `[grid]` | Пороговые значения формы, предотвращающие ошибочную классификацию линий сетки, магнитного севера и рамки как воды (ADR-012, SPEC F20). |
+| `[linear]` | Номинальная ширина дорог, троп и дорожек на отпечатанной карте; геометрические фильтры (вытянутость, соотношение сторон, минимальная длина) разделяют общий класс-заглушку `road` с чёрной краской на три линейных класса. |
+| `[slope]` | Сигма размытия плотности горизонталей и зависящий от неё штраф к скорости (это приближение крутизны, а не высоты — ADR-006). |
+| `[detector]` | Геометрия и допуск для контрольных кружков; диапазоны оттенков (`ink_hue_ranges` для фиолетового, `red_hue_ranges` с более строгими порогами насыщенности/яркости/разницы каналов для красного, ADR-011/ADR-018); параметры Хафа; множители масштаба для крупных кружков, нарисованных вручную (ADR-015); область OCR для номера и правило начисления очков (`first_digit` / `constant` / `csv`). |
+| `[graph]` | Коэффициент уменьшения сетки и множитель стоимости непроходимой местности. |
+| `[solver]` | Выбор решателя и предельное число КП для точного метода, лимит времени и параметры GRASP для эвристики, начальное значение, число альтернатив. |
+| `[rules]` | Штраф по умолчанию за каждую минуту опоздания. |
 
-## Route JSON schema
+## Формат JSON маршрута
 
-`route.json` (written by `plan`/the viewer's `plan` job, schema in
+`route.json` (создаётся командами `plan` и `plan` веб-просмотрщика; схема описана в
 [`src/rogaine/io/route_json.py`](src/rogaine/io/route_json.py)):
 
 ```json
@@ -213,60 +232,60 @@ missing a terrain class, or carrying an unknown key (every table is `extra="forb
 }
 ```
 
-- `order` — control ids in visit order; always starts and ends at the hub.
-- `legs` — one entry per consecutive pair in `order`; `polyline` is pixel `(x, y)` points along the
-  actual walked path; `cumulative_seconds` is elapsed time from the hub through the end of that leg.
-- `solver` — `"exact"` (Held-Karp, proven optimal up to `exact_max_controls`) or `"heuristic"`
-  (GRASP + local search); `optimal` is only ever `true` for the former (ADR-003).
-- `run_config` — the exact `RunConfig` that produced this route (speed, limit, penalty, strategy,
-  seed), embedded so a `route.json` is self-describing.
-- `schema_version` — bump point for future incompatible changes to this shape; currently `1`.
+- `order` — идентификаторы КП в порядке посещения; маршрут всегда начинается и заканчивается на старте.
+- `legs` — участок для каждой пары соседних КП в `order`; `polyline` — пиксельные координаты `(x, y)` фактического пути; `cumulative_seconds` — время от старта к концу этого участка.
+- `solver` — `"exact"` (алгоритм Хелда — Карпа, гарантирует оптимум до `exact_max_controls`) или `"heuristic"` (GRASP и локальный поиск); `optimal` равно `true` только для первого метода (ADR-003).
+- `run_config` — точная конфигурация `RunConfig`, использованная для построения маршрута (скорость, лимит, штраф, метод и начальное значение); она включена в файл, чтобы `route.json` содержал все сведения о запуске.
+- `schema_version` — номер версии для будущих несовместимых изменений формата; сейчас `1`.
 
-`route.png` is the same route drawn over the source map, numbered controls matching the JSON.
+`route.png` — маршрут, нанесённый на исходную карту; номера КП соответствуют JSON.
 
-Controls import/export as a CSV (`id,x,y,number,points,confidence,source,is_hub`) — round-trips
-losslessly; format and hand-editing rules in [data/README.md](data/README.md).
+КП можно импортировать и экспортировать в CSV (`id,x,y,number,points,confidence,source,is_hub`)
+без потери данных. Формат и правила ручного редактирования описаны в [data/README.md](data/README.md).
 
-## Known limitations
+## Известные ограничения
 
-- **OCR is never load-bearing.** Tesseract reads control numbers best-effort; an unreadable number
-  gets `points: null` and a flagged warning rather than a guess. The points rule (`first_digit` by
-  default) or a hand-edited controls CSV are the reliable paths (ADR-009).
-- **Contour density is a slope proxy, not real elevation.** It cannot tell uphill from downhill, so
-  route direction never changes cost (ADR-006).
-- **Grid/border-line and control-ink handling is tuned against a small set of real scans**, not a
-  general solution: the shape/hue heuristics (`[grid]`, `[detector].ink_hue_ranges`, ADR-011,
-  ADR-012) carry the measurements they were fitted to in `config/default.toml`'s own comments, and
-  may need retuning on a very different printer/scanner combination.
-- **Heuristic optimality is unverifiable above `exact_max_controls` (15).** `bench` reports the
-  measured gap wherever the exact solver is computable; the product never claims optimality at
-  30-80 controls, only the objective and, where available, the gap.
-- **Palette classification assumes a render or scan, not a phone photo.** White-balance and
-  illumination normalisation help but are not a substitute for controlled lighting; the optional
-  SegFormer milestone (M7, not built by default — see `docs/TASKS.md`) exists precisely for this
-  case, trained on palette-generated masks, but is not part of the shipped CLI/viewer path.
-- **No GPS georeferencing, GPX/GeoTIFF export, or automatic scale-bar detection.** Scale is always
-  user-supplied (`--scale`+`--dpi` or `--calibrate`).
-- **No VLM-based control detection** (the reference article's Yandex Cloud Qwen path) — detection is
-  classical CV (Hough circles + colour/shape filters) end to end.
-- **No fatigue or time-varying speed modelling** — one `base_speed_mps` scales every terrain class
-  for the whole route.
-- **`.ocd` (OCAD) binary vector geometry is not parsed.** Only rasters rendered from OCAD (or any
-  other source) are supported as map input.
-- **Single-user, single-process, no persistence beyond local run directories.** The viewer's job
-  registry is in-memory (lost on restart); `runs/<uuid>/` on disk is what survives.
+- **Распознавание OCR не является критически важным.** Tesseract пытается распознать номера КП,
+  но неразборчивый номер записывается как `points: null` и отмечается предупреждением, а не
+  угадывается. Для надёжного результата используйте правило начисления очков (`first_digit` по
+  умолчанию) или вручную отредактируйте CSV с КП (ADR-009).
+- **Плотность горизонталей — это приближение крутизны, а не реальная высота.** Она не позволяет
+  отличить подъём от спуска, поэтому стоимость маршрута не зависит от направления (ADR-006).
+- **Обработка линий сетки/рамки и цвета КП настроена по небольшому набору реальных сканов**, а не
+  рассчитана на все случаи. Эвристики формы и оттенка (`[grid]`, `[detector].ink_hue_ranges`,
+  ADR-011, ADR-012) основаны на замерах, указанных в комментариях `config/default.toml`, и могут
+  потребовать перенастройки для другого принтера или сканера.
+- **Для более чем `exact_max_controls` (15) КП нельзя проверить оптимальность эвристики.** Команда
+  `bench` показывает измеренную разницу, когда точный решатель ещё применим; для 30–80 КП продукт
+  не заявляет об оптимальности, а сообщает только целевую функцию и доступную оценку разницы.
+- **Классификация палитры рассчитана на скан или отрисовку, а не на фотографию телефона.**
+  Нормализация баланса белого и освещения помогает, но не заменяет контролируемое освещение.
+  Опциональный этап SegFormer (M7, по умолчанию не собирается; см. `docs/TASKS.md`) предназначен
+  для этого случая и обучается на масках палитры, но не входит в доступный CLI/веб-конвейер.
+- **Нет геопривязки по GPS, экспорта GPX/GeoTIFF и автоматического определения масштабной линейки.**
+  Масштаб всегда задаётся пользователем (`--scale` и `--dpi` либо `--calibrate`).
+- **Нет обнаружения КП с помощью VLM** (в статье-источнике используется Yandex Cloud Qwen):
+  поиск полностью основан на классическом компьютерном зрении (кружки Хафа, фильтры цвета и формы).
+- **Нет моделирования усталости или изменения скорости во времени** — одна `base_speed_mps`
+  масштабирует скорость для всех типов местности на всём маршруте.
+- **Бинарная векторная геометрия `.ocd` (OCAD) не разбирается.** Поддерживаются только растры,
+  в том числе растры, экспортированные из OCAD.
+- **Один пользователь, один процесс; данные хранятся только в локальных каталогах запусков.**
+  Реестр заданий веб-просмотрщика находится в памяти и теряется при перезапуске; на диске
+  сохраняются каталоги `runs/<uuid>/`.
 
-## Development
+## Разработка
 
 ```bash
-docker compose run --rm tests            # full suite (pytest hangs on Windows host — always use this)
+docker compose run --rm tests            # весь набор тестов (pytest зависает в Windows — всегда запускайте в Docker)
 docker compose run --rm tests ruff check .
-docker compose run --rm tests pytest -m "not perf and not corpus"   # skip slow/owner-corpus-only tests
+docker compose run --rm tests pytest -m "not perf and not corpus"   # без медленных тестов и тестов с корпусом карт владельца
 ```
 
-Test markers (`pyproject.toml`): `perf` (slow performance-budget guards), `e2e` (CLI/Playwright
-end-to-end flows), `corpus` (needs the owner's real map corpus under `data/maps`, ADR-010).
+Маркеры тестов (`pyproject.toml`): `perf` (медленные проверки производительности), `e2e`
+(сквозные сценарии CLI/Playwright), `corpus` (нужен корпус реальных карт владельца в `data/maps`,
+ADR-010).
 
-Project docs: [docs/SPEC.md](docs/SPEC.md) (requirements), [docs/PLAN.md](docs/PLAN.md)
-(architecture/file map), [docs/TASKS.md](docs/TASKS.md) (open work), [docs/DECISIONS.md](docs/DECISIONS.md)
-(ADRs), [docs/STATUS.md](docs/STATUS.md) (session handoff).
+Документация проекта: [docs/SPEC.md](docs/SPEC.md) (требования), [docs/PLAN.md](docs/PLAN.md)
+(архитектура и структура файлов), [docs/TASKS.md](docs/TASKS.md) (открытые задачи),
+[docs/DECISIONS.md](docs/DECISIONS.md) (ADR), [docs/STATUS.md](docs/STATUS.md) (передача контекста).
