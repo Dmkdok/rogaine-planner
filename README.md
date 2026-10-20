@@ -6,8 +6,6 @@ per-pixel travel-time field for a given runner speed, computes exact travel time
 controls, and solves the Orienteering Problem (maximise points inside a time limit, start = finish,
 points lost per minute late). Ships as a Python CLI (`rogaine`) plus a local web viewer.
 
-Reference implementation this reproduces: https://habr.com/ru/articles/1065342/
-
 Full requirements and design: [docs/SPEC.md](docs/SPEC.md), [docs/PLAN.md](docs/PLAN.md),
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
